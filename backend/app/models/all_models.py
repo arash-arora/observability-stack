@@ -1,0 +1,45 @@
+from datetime import datetime
+from typing import Optional, List
+from sqlmodel import SQLModel, Field, Relationship
+import uuid
+
+class OrganizationUserLink(SQLModel, table=True):
+    organization_id: uuid.UUID = Field(foreign_key="organization.id", primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", primary_key=True)
+    role: str = "member"
+
+class User(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    email: str = Field(index=True, unique=True)
+    hashed_password: str
+    full_name: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    organizations: List["Organization"] = Relationship(back_populates="users", link_model=OrganizationUserLink)
+
+class Organization(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    users: List[User] = Relationship(back_populates="organizations", link_model=OrganizationUserLink)
+    projects: List["Project"] = Relationship(back_populates="organization")
+
+class Project(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str
+    organization_id: uuid.UUID = Field(foreign_key="organization.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    organization: Organization = Relationship(back_populates="projects")
+    api_keys: List["ApiKey"] = Relationship(back_populates="project")
+
+class ApiKey(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    key: str = Field(index=True, unique=True)
+    name: str
+    project_id: uuid.UUID = Field(foreign_key="project.id")
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    project: Project = Relationship(back_populates="api_keys")

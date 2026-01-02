@@ -1,0 +1,335 @@
+from typing import Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from app.core.clickhouse import get_clickhouse_client
+from app.api.deps import get_current_user
+from app.models.all_models import User
+
+router = APIRouter()
+
+@router.get("/traces")
+async def get_traces(
+    project_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get list of traces for a project with input/output preview.
+    """
+    client = get_clickhouse_client()
+    
+    where_clause = f"t.project_id = '{project_id}' AND t.parent_span_id IS NULL"
+    if search:
+        # Simple search on name or trace_id for now
+        where_clause += f" AND (t.name ILIKE '%{search}%' OR t.trace_id ILIKE '%{search}%')"
+
+    # Join with observations to get input/output and metrics.
+    # We need:
+    # 1. Input/Output (from first observation)
+    # 2. Total Tokens (sum of all observations)
+    # 3. Total Cost (sum of estimated cost)
+    # 4. Metadata (from trace attributes or first observation)
+    
+    # We can do this with a comprehensive subquery on observations
+    
+    query = f"""
+    SELECT 
+        t.trace_id, 
+        t.name, 
+        t.start_time, 
+        t.end_time, 
+        t.duration_ms, 
+        t.status_code, 
+        t.user_id,
+        o_first.input_text,
+        o_first.output_text,
+        o_metrics.total_tokens,
+        0.0 as total_cost, -- Placeholder for cost calculation
+        t.attributes -- Metadata
+    FROM traces t
+    LEFT JOIN (
+        SELECT trace_id, input_text, output_text
+        FROM observations
+        WHERE project_id = '{project_id}'
+        ORDER BY start_time ASC
+        LIMIT 1 BY trace_id
+    ) o_first ON t.trace_id = o_first.trace_id
+    LEFT JOIN (
+        SELECT 
+            trace_id, 
+            sum(
+                CASE 
+                    WHEN isValidJSON(token_usage) THEN 
+                        COALESCE(JSONExtractInt(token_usage, 'total_tokens'), 0)
+                    ELSE 0 
+                END
+            ) as total_tokens
+        FROM observations
+        WHERE project_id = '{project_id}'
+        GROUP BY trace_id
+    ) o_metrics ON t.trace_id = o_metrics.trace_id
+    WHERE {where_clause}
+    ORDER BY t.start_time DESC
+    LIMIT {limit} OFFSET {offset}
+    """
+    
+    try:
+        result = client.query(query)
+        traces = []
+        for row in result.result_rows:
+            # Estimate cost based on tokens (very rough mock: $0.000002 per token)
+            tokens = row[9] or 0
+            est_cost = tokens * 0.000002
+            
+            traces.append({
+                "trace_id": row[0],
+                "name": row[1],
+                "start_time": row[2],
+                "end_time": row[3],
+                "duration_ms": row[4],
+                "status_code": row[5],
+                "user_id": row[6],
+                "input": row[7],
+                "output": row[8],
+                "total_tokens": tokens,
+                "total_cost": est_cost,
+                "metadata": row[11] # Map
+            })
+        return traces
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/traces/{trace_id}")
+async def get_trace_details(
+    trace_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get full trace details including all spans and observations.
+    """
+    client = get_clickhouse_client()
+    
+    # Fetch all spans for this trace
+    spans_query = f"""
+    SELECT 
+        trace_id, span_id, parent_span_id, name, kind, start_time, end_time, 
+        status_code, status_message, attributes, events, links, duration_ms
+    FROM traces 
+    WHERE trace_id = '{trace_id}'
+    ORDER BY start_time ASC
+    """
+    
+    # Fetch all observations for this trace
+    # IMPORTANT: Ensure we select all columns needed for the UI
+    obs_query = f"""
+    SELECT 
+        id, parent_observation_id, name, type, model, start_time, end_time, 
+        input_text, output_text, token_usage, model_parameters, metadata_json, 
+        extra, observation_type, error
+    FROM observations
+    WHERE trace_id = '{trace_id}'
+    ORDER BY start_time ASC
+    """
+    
+    try:
+        spans_res = client.query(spans_query)
+        obs_res = client.query(obs_query)
+        
+        spans = []
+        for row in spans_res.result_rows:
+            spans.append({
+                "trace_id": row[0],
+                "span_id": row[1],
+                "parent_span_id": row[2],
+                "name": row[3],
+                "kind": row[4],
+                "start_time": row[5],
+                "end_time": row[6],
+                "status_code": row[7],
+                "status_message": row[8],
+                "attributes": row[9],
+                # "events": row[10], # JSON string, maybe parse if needed
+                "duration_ms": row[12],
+                "type": "span" # UI helper
+            })
+            
+        observations = []
+        for row in obs_res.result_rows:
+            # Handle potential None for parent_observation_id string conversion
+            parent_id = str(row[1]) if row[1] and str(row[1]) != '0' else None
+            
+            observations.append({
+                "id": str(row[0]), # Convert UInt64 to string
+                "parent_observation_id": parent_id,
+                "name": row[2],
+                "type": row[3], # e.g. generation, span
+                "model": row[4],
+                "start_time": row[5],
+                "end_time": row[6],
+                "input": row[7],
+                "output": row[8],
+                "usage": row[9],
+                "error": row[14],
+                "is_observation": True
+            })
+            
+        return {
+            "spans": spans,
+            "observations": observations
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@router.get("/dashboard")
+async def get_dashboard_stats(
+    project_id: str,
+    from_ts: Optional[float] = None, # Optional timestamp filter
+    to_ts: Optional[float] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get aggregated dashboard statistics for a project.
+    """
+    client = get_clickhouse_client()
+    
+    # Defaults to last 7 days if not provided
+    # For now we query everything for simplicity in demo
+    where_clause = f"project_id = '{project_id}'"
+    
+    # 1. Total Traces
+    traces_query = f"""
+    SELECT count(), toStartOfHour(start_time) as time
+    FROM traces
+    WHERE {where_clause}
+    GROUP BY time
+    ORDER BY time ASC
+    """
+    
+    # 2. Total Observations (Scores, Generations)
+    # Assuming 'score' is a type of observation or we check observation_type
+    scores_query = f"""
+    SELECT name, count(), avg(toFloat64OrZero(output_text))
+    FROM observations
+    WHERE {where_clause} AND type = 'score'
+    GROUP BY name
+    """
+    
+    # 3. Model Usage & Cost
+    # We need to parse token_usage. For now, let's just count generations by model
+    # Real implementation would parse JSON token_usage
+    models_query = f"""
+    SELECT model, count()
+    FROM observations
+    WHERE {where_clause} AND type = 'generation'
+    GROUP BY model
+    """
+    
+    # 4. Latency Percentiles
+    # Traces
+    trace_lat_query = f"""
+    SELECT name, 
+           quantile(0.50)(duration_ms) as p50, 
+           quantile(0.90)(duration_ms) as p90, 
+           quantile(0.95)(duration_ms) as p95, 
+           quantile(0.99)(duration_ms) as p99
+    FROM traces
+    WHERE {where_clause} AND parent_span_id IS NULL
+    GROUP BY name
+    """
+
+    # Generations (observations type='generation')
+    # duration is calculated diff
+    gen_lat_query = f"""
+    SELECT model, 
+           quantile(0.50)(dateDiff('millisecond', start_time, end_time)) as p50, 
+           quantile(0.90)(dateDiff('millisecond', start_time, end_time)) as p90, 
+           quantile(0.95)(dateDiff('millisecond', start_time, end_time)) as p95, 
+           quantile(0.99)(dateDiff('millisecond', start_time, end_time)) as p99
+    FROM observations
+    WHERE {where_clause} AND type = 'generation'
+    GROUP BY model
+    """
+    
+    try:
+        # Execute queries
+        traces_res = client.query(traces_query)
+        scores_res = client.query(scores_query)
+        models_res = client.query(models_query)
+        trace_lat_res = client.query(trace_lat_query)
+        gen_lat_res = client.query(gen_lat_query)
+        
+        # Process Traces (Time Series)
+        trace_series = []
+        total_traces = 0
+        for row in traces_res.result_rows:
+            count = row[0]
+            time_bucket = row[1] # datetime object
+            total_traces += count
+            trace_series.append({
+                "time": time_bucket.strftime("%I:%M %p"), # Format 06:30 PM
+                "traces": count
+            })
+            
+        # Process Scores
+        scores_stats = []
+        total_scores = 0
+        for row in scores_res.result_rows:
+             count = row[1]
+             total_scores += count
+             scores_stats.append({
+                 "name": row[0],
+                 "count": count,
+                 "avg": round(row[2], 2)
+             })
+             
+        # Process Models
+        model_stats = []
+        for row in models_res.result_rows:
+            model_stats.append({
+                "model": row[0] or "unknown",
+                "count": row[1],
+                "cost": round(row[1] * 0.001, 4) # Mock cost calculation
+            })
+        
+        total_cost = sum(m['cost'] for m in model_stats)
+
+        # Process Latencies
+        def process_latencies(rows):
+            stats = []
+            for row in rows:
+                stats.append({
+                    "name": row[0],
+                    "p50": round(row[1], 2),
+                    "p90": round(row[2], 2),
+                    "p95": round(row[3], 2),
+                    "p99": round(row[4], 2)
+                })
+            return stats
+
+        trace_latency = process_latencies(trace_lat_res.result_rows)
+        generation_latency = process_latencies(gen_lat_res.result_rows)
+
+        return {
+            "total_traces": total_traces,
+            "total_cost": total_cost,
+            "total_scores": total_scores,
+            "trace_series": trace_series,
+            "model_stats": model_stats,
+            "scores_stats": scores_stats,
+            "trace_latency": trace_latency,
+            "generation_latency": generation_latency
+        }
+
+    except Exception as e:
+        print(f"Analytics Error: {e}")
+        # Return empty structure on error to prevent UI crash
+        return {
+            "total_traces": 0,
+            "total_cost": 0,
+            "total_scores": 0,
+            "trace_series": [],
+            "model_stats": [],
+            "scores_stats": [],
+            "trace_latency": [],
+            "generation_latency": []
+        }
