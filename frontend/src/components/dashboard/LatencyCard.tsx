@@ -26,7 +26,7 @@ export function LatencyCard({ title, data }: LatencyCardProps) {
                 <tbody className="text-foreground">
                     {data.map((row, i) => (
                         <tr key={i} className="border-b border-border/50 last:border-0 hover:bg-muted/20">
-                            <td className="py-2 font-mono text-[10px] text-cyan-400 max-w-[100px] truncate" title={row.name}>{row.name}</td>
+                            <td className="py-2 font-mono text-[10px] text-primary max-w-[100px] truncate" title={row.name}>{row.name}</td>
                             <td className="py-2 text-right">{row.p50}s</td>
                             <td className="py-2 text-right">{row.p90}s</td>
                             <td className="py-2 text-right">{row.p99}s</td>

@@ -9,7 +9,7 @@ import { CreateProjectModal } from '@/components/dashboard/CreateProjectModal';
 import { 
     Clock, AlertCircle, Search, Filter, PlayCircle, 
     ChevronDown, ChevronRight, X, Calendar, Download, 
-    LayoutList, MoreHorizontal, Star 
+    LayoutList, MoreHorizontal, Star, ArrowUpDown, ArrowUp, ArrowDown 
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -35,12 +35,17 @@ export default function TracesPage() {
   const [traces, setTraces] = useState<Trace[]>([]);
   const [loading, setLoading] = useState(false);
   
+  const [traceNames, setTraceNames] = useState<string[]>([]);
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'timestamp', direction: 'desc' });
+
   // Computed
   const currentProject = projects.find(p => p.id === selectedProjectId);
   const currentOrg = currentProject ? orgs.find(o => o.id === currentProject.organization_id) : null;
   
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [nameFilter, setNameFilter] = useState<string[]>([]);
   
   // Modal State
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
@@ -82,8 +87,24 @@ export default function TracesPage() {
   useEffect(() => {
     if (selectedProjectId) {
       fetchTraces(selectedProjectId);
+      fetchTraceNames(selectedProjectId);
     }
-  }, [selectedProjectId, searchQuery]);
+  }, [selectedProjectId, searchQuery, statusFilter, nameFilter, sortConfig]);
+
+  const toggleStatus = (status: string) => {
+      setStatusFilter(prev => prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]);
+  };
+
+  const toggleName = (name: string) => {
+      setNameFilter(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  };
+
+  const handleSort = (key: string) => {
+      setSortConfig(current => ({
+          key,
+          direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc'
+      }));
+  };
 
   const fetchContext = async () => {
       try {
@@ -99,14 +120,42 @@ export default function TracesPage() {
       }
   };
 
+  const fetchTraceNames = async (projectId: string) => {
+      try {
+          const res = await api.get('/analytics/traces/names', {
+              params: { project_id: projectId }
+          });
+          setTraceNames(res.data);
+      } catch (err) {
+          console.error("Failed to fetch trace names for filter", err);
+      }
+  };
+
   const fetchTraces = async (projectId: string) => {
     try {
       setLoading(true);
+      
       const res = await api.get(`/analytics/traces`, {
         params: { 
             project_id: projectId, 
             limit: 50,
-            search: searchQuery 
+            search: searchQuery,
+            status: statusFilter,
+            name: nameFilter,
+            sort_by: sortConfig.key,
+            order: sortConfig.direction
+        },
+        paramsSerializer: (params) => {
+            const searchParams = new URLSearchParams();
+            for (const key of Object.keys(params)) {
+                const value = params[key];
+                if (Array.isArray(value)) {
+                    value.forEach(v => searchParams.append(key, v));
+                } else if (value !== undefined && value !== null && value !== '') {
+                    searchParams.append(key, value);
+                }
+            }
+            return searchParams.toString();
         }
       });
       setTraces(res.data);
@@ -117,8 +166,6 @@ export default function TracesPage() {
     }
   };
   
-  // Render Helpers
-
   // Render Helpers
   const renderJSONPreview = (jsonStr?: string) => {
     if (!jsonStr) return <span className="text-muted-foreground italic">Empty</span>;
@@ -141,6 +188,13 @@ export default function TracesPage() {
           ))}
           {Object.keys(meta).length > 2 && <span className="text-[10px] text-muted-foreground">+{Object.keys(meta).length - 2}</span>}
       </div>
+  };
+
+  const SortIcon = ({ column }: { column: string }) => {
+      if (sortConfig.key !== column) return <ArrowUpDown size={12} className="ml-1 text-muted-foreground/50" />;
+      return sortConfig.direction === 'asc' 
+        ? <ArrowUp size={12} className="ml-1 text-primary" />
+        : <ArrowDown size={12} className="ml-1 text-primary" />;
   };
 
   return (
@@ -214,10 +268,20 @@ export default function TracesPage() {
                     </div>
                     <div className="space-y-1">
                         <label className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground cursor-pointer">
-                             <input type="checkbox" className="rounded border-border bg-transparent"/> Success
+                             <input 
+                                type="checkbox" 
+                                className="rounded border-border bg-transparent"
+                                checked={statusFilter.includes('SUCCESS')}
+                                onChange={() => toggleStatus('SUCCESS')}
+                             /> Success
                         </label>
                         <label className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground cursor-pointer">
-                             <input type="checkbox" className="rounded border-border bg-transparent"/> Error
+                             <input 
+                                type="checkbox" 
+                                className="rounded border-border bg-transparent"
+                                checked={statusFilter.includes('ERROR')}
+                                onChange={() => toggleStatus('ERROR')}
+                             /> Error
                         </label>
                     </div>
                 </div>
@@ -228,11 +292,17 @@ export default function TracesPage() {
                         <h3 className="text-sm font-semibold text-foreground">Trace Name</h3>
                         <ChevronDown size={14} className="text-muted-foreground"/>
                     </div>
-                    {/* Mock trace name list */}
+                    {/* Dynamic trace name list */}
                     <div className="space-y-1">
-                        {['Execute evaluator', 'QA-Chatbot', 'Data Processing', 'User Login'].map(name => (
+                        {traceNames.length === 0 && <span className="text-xs text-muted-foreground italic px-2">No traces found</span>}
+                        {traceNames.map(name => (
                              <label key={name} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground cursor-pointer">
-                                <input type="checkbox" className="rounded border-border bg-transparent"/> {name}
+                                <input 
+                                    type="checkbox" 
+                                    className="rounded border-border bg-transparent"
+                                    checked={nameFilter.includes(name)}
+                                    onChange={() => toggleName(name)}
+                                /> <span className="truncate" title={name}>{name}</span>
                              </label>
                         ))}
                     </div>
@@ -247,10 +317,38 @@ export default function TracesPage() {
                             <th className="w-10 px-4 py-3 text-center">
                                 <input type="checkbox" className="rounded border-border bg-transparent" />
                             </th>
-                            <th className="px-4 py-3 font-medium whitespace-nowrap">Timestamp</th>
-                            <th className="px-4 py-3 font-medium">Name</th>
-                            <th className="px-4 py-3 font-medium">Latency</th>
-                            <th className="px-4 py-3 font-medium text-right">Tokens</th>
+                            <th 
+                                className="px-4 py-3 font-medium whitespace-nowrap cursor-pointer hover:bg-muted/50 transition-colors"
+                                onClick={() => handleSort('timestamp')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Timestamp <SortIcon column="timestamp" />
+                                </div>
+                            </th>
+                            <th 
+                                className="px-4 py-3 font-medium cursor-pointer hover:bg-muted/50 transition-colors"
+                                onClick={() => handleSort('name')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Name <SortIcon column="name" />
+                                </div>
+                            </th>
+                            <th 
+                                className="px-4 py-3 font-medium cursor-pointer hover:bg-muted/50 transition-colors"
+                                onClick={() => handleSort('latency')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Latency <SortIcon column="latency" />
+                                </div>
+                            </th>
+                            <th 
+                                className="px-4 py-3 font-medium text-right cursor-pointer hover:bg-muted/50 transition-colors"
+                                onClick={() => handleSort('tokens')}
+                            >
+                                <div className="flex items-center justify-end gap-1">
+                                    Tokens <SortIcon column="tokens" />
+                                </div>
+                            </th>
                             <th className="px-4 py-3 font-medium text-right">Cost</th>
                             <th className="px-4 py-3 font-medium w-1/6">Input</th>
                             <th className="px-4 py-3 font-medium w-1/6">Output</th>

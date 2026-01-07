@@ -55,6 +55,7 @@ def init_clickhouse():
         extra Nullable(String),
         observation_type Nullable(String),
         error Nullable(String),
+        total_cost Nullable(Float64),
         created_at DateTime64(9),
         project_id UUID,
         user_id Nullable(String)

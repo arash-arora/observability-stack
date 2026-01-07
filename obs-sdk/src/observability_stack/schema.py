@@ -64,6 +64,7 @@ class Observation(Base):
     extra = Column(types.Nullable(Text))
     observation_type = Column(types.Nullable(String))
     error = Column(types.Nullable(String))
+    total_cost = Column(types.Nullable(Float))
 
     created_at = Column(DateTime)
 

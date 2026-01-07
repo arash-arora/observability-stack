@@ -82,7 +82,7 @@ function SelectionDropdown({
                       onChange({ id: 'create_new', name: 'Create New...' });
                       setIsOpen(false);
                   }}
-                  className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 text-sm outline-none hover:bg-cyan-500/10 hover:text-cyan-400 text-cyan-500 font-medium"
+                  className="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 text-sm outline-none hover:bg-primary/10 hover:text-primary text-primary font-medium"
               >
                   + Create New
               </button>

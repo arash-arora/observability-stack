@@ -5,6 +5,7 @@ import api from '@/lib/api';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { MetricsCards } from '@/components/dashboard/MetricsCards';
 import { TimeChart } from '@/components/dashboard/TimeChart';
+import { TokenTimeChart } from '@/components/dashboard/TokenTimeChart';
 import { ModelUsageChart } from '@/components/dashboard/ModelUsageChart';
 import { CreateOrgModal } from '@/components/dashboard/CreateOrgModal';
 import { CreateProjectModal } from '@/components/dashboard/CreateProjectModal';
@@ -129,16 +130,20 @@ export default function DashboardPage() {
             {/* Row 1: Metrics */}
             <MetricsCards data={stats} />
 
-            {/* Row 2: Charts */}
+            {/* Row 2: Charts (Time Series) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <TimeChart data={stats?.trace_series || []} totalTraces={stats?.total_traces || 0} />
-                <ModelUsageChart data={stats?.model_stats || []} totalCost={stats?.total_cost || 0} />
+                <TokenTimeChart data={stats?.token_series || []} totalTokens={stats?.total_tokens || 0} /> 
             </div>
 
-
-            {/* Row 3: Latencies */}
+            {/* Row 3: Usage & Latency */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <ModelUsageChart data={stats?.model_stats || []} totalCost={stats?.total_cost || 0} />
                 <LatencyCard title="Trace Latency" data={stats?.trace_latency || []} />
+            </div>
+
+             {/* Row 4: Gen Latency */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <LatencyCard title="Generation Latency" data={stats?.generation_latency || []} />
             </div>
           </>

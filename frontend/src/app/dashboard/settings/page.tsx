@@ -297,7 +297,11 @@ function ApiKeySettings() {
                                         {key.key ? (key.key.substring(0, 8) + '...') : '****************'}
                                     </div>
                                 </td>
-                                <td className="px-4 py-3 text-muted-foreground text-xs">{new Date(key.created_at).toLocaleDateString()}</td>
+                                <td className="px-4 py-3 text-muted-foreground text-xs">
+                                    {key.created_at && !isNaN(new Date(key.created_at).getTime()) 
+                                        ? new Date(key.created_at).toLocaleDateString() 
+                                        : '-'}
+                                </td>
                                 <td className="px-4 py-3">
                                     <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${key.is_active ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20'}`}>
                                         {key.is_active ? 'Active' : 'Revoked'}

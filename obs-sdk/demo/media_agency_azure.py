@@ -2,19 +2,52 @@ import os
 import time
 from typing import Annotated, Literal, TypedDict
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from observability_stack import ChatGroq, trace_decorator
+from observability_stack import AzureOpenAI, trace_decorator
 
 # Initialize automatically from .env
-# Ensure GROQ_API_KEY is in .env
+# Env vars: AZURE_OPENAI_KEY, AZURE_API_BASE
 
-if not os.getenv("GROQ_API_KEY"):
-    raise ValueError("GROQ_API_KEY not found in env. Please set it in .env or environment variables.")
+if not os.getenv("AZURE_OPENAI_KEY"):
+    raise ValueError("AZURE_OPENAI_KEY not found in env. Please set it in .env or environment variables.")
+if not os.getenv("AZURE_API_BASE"):
+    raise ValueError("AZURE_API_BASE not found in env.")
 
-llm = ChatGroq(model="openai/gpt-oss-120b")
+# Default values if not strictly provided
+# Env vars: AZURE_DEPLOYMENT_NAME, AZURE_API_VERSION
+deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o")
+api_version = os.getenv("AZURE_API_VERSION", "2024-02-15-preview")
+
+client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_KEY"),
+    azure_endpoint=os.getenv("AZURE_API_BASE"),
+    api_version=api_version
+)
+
+def invoke_native(messages: list[BaseMessage]) -> AIMessage:
+    """Helper to convert LangChain messages to OpenAI format and back."""
+    openai_messages = []
+    for m in messages:
+        if isinstance(m, SystemMessage):
+            openai_messages.append({"role": "system", "content": m.content})
+        elif isinstance(m, HumanMessage):
+             openai_messages.append({"role": "user", "content": m.content})
+        elif isinstance(m, AIMessage):
+             openai_messages.append({"role": "assistant", "content": m.content})
+        else:
+             openai_messages.append({"role": "user", "content": str(m.content)})
+
+    response = client.chat.completions.create(
+        model=deployment_name,
+        messages=openai_messages
+    )
+    
+    content = response.choices[0].message.content
+    return AIMessage(content=content)
+
 
 # --- Tools (Dummy) ---
 
@@ -41,15 +74,12 @@ class AgentState(TypedDict):
 def planner_node(state: AgentState):
     print("\n--- Planner Agent ---")
     messages = state["messages"]
-    # Simulate LLM call with tracing? Ideally ChatGroq itself should be patched
-    # or we wrap the invoke. For this demo, we just use the LLM and valid result.
-    # We can wrap LLM calls if we want detailed LLM obs, but user asked for
-    # "Agents" and "tools". Since Agents are nodes here, decorated.
     
-    response = llm.invoke([
-        SystemMessage(content="You are a Content Planner. Create a brief outline."),
-        *messages
-    ])
+    # Prepend system instruction
+    instructions = [SystemMessage(content="You are a Content Planner. Create a brief outline.")]
+    full_messages = instructions + messages
+    
+    response = invoke_native(full_messages)
     return {"messages": [response]}
 
 # 2. Researcher
@@ -60,7 +90,7 @@ def researcher_node(state: AgentState):
     # Use tool
     search_data = google_search("latest trends in " + last_message.content[:20])
     
-    response = llm.invoke([
+    response = invoke_native([
         SystemMessage(
             content=f"You are a Researcher. Analyze these trends: {search_data}"
         ),
@@ -74,7 +104,7 @@ def writer_node(state: AgentState):
     print("\n--- Writer Agent ---")
     last_message = state["messages"][-1]
     
-    response = llm.invoke([
+    response = invoke_native([
         SystemMessage(
             content="You are a Writer. Write a short blog post based on the research."
         ),
@@ -88,7 +118,7 @@ def editor_node(state: AgentState):
     print("\n--- Editor Agent ---")
     last_message = state["messages"][-1]
     
-    response = llm.invoke([
+    response = invoke_native([
         SystemMessage(content="You are an Editor. Review and polish the content."),
         last_message
     ])
@@ -101,7 +131,7 @@ def qc_node(state: AgentState):
     last_message = state["messages"][-1]
     
     # Simulate failed QC first? No, let's keep it simple.
-    response = llm.invoke([
+    response = invoke_native([
         SystemMessage(
             content="You are QC. Check for compliance. Respond 'APPROVED' if good."
         ),
@@ -146,7 +176,7 @@ app = workflow.compile()
 
 @trace_decorator(name="run_media_agency")
 def run_agency():
-    print("Starting Media Agency Workflow...")
+    print("Starting Media Agency Workflow (Azure Native)...")
     final_state = app.invoke(
         {"messages": [HumanMessage(content="Create a blog post about AI Agents.")]}
     )

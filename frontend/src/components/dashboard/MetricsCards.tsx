@@ -10,7 +10,7 @@ export function MetricsCards({ data }: MetricsCardsProps) {
   const { total_traces = 0, total_cost = 0, total_scores = 0, scores_stats = [] } = data || {};
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-4">
       {/* Card 1: Traces */}
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="mb-4">
@@ -27,7 +27,18 @@ export function MetricsCards({ data }: MetricsCardsProps) {
         </div>
       </div>
 
-      {/* Card 2: Model Costs */}
+      {/* Card 2: Total Tokens */}
+      <div className="rounded-lg border border-border bg-card p-6">
+        <div className="mb-4">
+            <h3 className="text-sm font-medium text-muted-foreground">Total Tokens</h3>
+            <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-3xl font-bold text-foreground">{data?.total_tokens?.toLocaleString() || 0}</span>
+                <span className="text-xs text-muted-foreground">Tokens consumed</span>
+            </div>
+        </div>
+      </div>
+
+      {/* Card 3: Model Costs */}
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="mb-4">
             <h3 className="text-sm font-medium text-muted-foreground">Model costs</h3>
@@ -40,8 +51,9 @@ export function MetricsCards({ data }: MetricsCardsProps) {
         </div>
       </div>
 
-      {/* Card 3: Scores */}
+      {/* Card 4: Scores */}
       <div className="rounded-lg border border-border bg-card p-6">
+
         <div className="mb-4">
             <h3 className="text-sm font-medium text-muted-foreground">Scores</h3>
             <div className="mt-2 flex items-baseline gap-2">
@@ -62,7 +74,7 @@ export function MetricsCards({ data }: MetricsCardsProps) {
                 <tbody className="text-foreground">
                     {scores_stats.map((row: any, i: number) => (
                         <tr key={i} className="border-b border-border/50 last:border-0 hover:bg-muted/20">
-                            <td className="py-2 font-mono text-[10px] text-cyan-400">{row.name}</td>
+                            <td className="py-2 font-mono text-[10px] text-primary">{row.name}</td>
                             <td className="py-2 text-right">{row.count}</td>
                             <td className="py-2 text-right">{row.avg}</td>
                         </tr>

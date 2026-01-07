@@ -13,7 +13,7 @@ export function ModelUsageChart({ data, totalCost }: ModelUsageChartProps) {
       <div className="mb-6">
         <h3 className="text-lg font-semibold text-foreground">Model Usage</h3>
         <div className="flex gap-4 mt-2 border-b border-border">
-            <button className="pb-2 text-sm font-medium text-cyan-400 border-b-2 border-cyan-400">Cost by model</button>
+            <button className="pb-2 text-sm font-medium text-primary border-b-2 border-primary">Cost by model</button>
         </div>
       </div>
       

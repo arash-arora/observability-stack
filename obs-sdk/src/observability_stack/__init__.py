@@ -1,5 +1,5 @@
 from .client import Client
-from .instrumentation import init_observability, trace_decorator
+from .instrumentation import init_observability, trace_decorator, record_score
 
 try:
     from .integrations.groq import ChatGroq
@@ -20,6 +20,7 @@ __all__ = [
     "Client",
     "init_observability",
     "trace_decorator",
+    "record_score",
     "ChatGroq",
     "ChatOpenAI",
     "AzureChatOpenAI",

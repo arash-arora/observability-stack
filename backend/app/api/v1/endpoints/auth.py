@@ -42,7 +42,7 @@ async def create_user(
             detail="The user with this username already exists in the system.",
         )
     user = User(
-        email=user_in.email,
+        email=user_in.email.lower().strip(),
         hashed_password=security.get_password_hash(user_in.password),
         full_name=user_in.full_name,
     )
@@ -59,7 +59,7 @@ async def login_access_token(
     """
     OAuth2 compatible token login, get an access token for future requests.
     """
-    result = await session.execute(select(User).where(User.email == form_data.username))
+    result = await session.execute(select(User).where(User.email == form_data.username.lower().strip()))
     user = result.scalars().first()
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")

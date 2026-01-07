@@ -2,34 +2,34 @@
 
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
-interface TimeChartProps {
+interface TokenTimeChartProps {
   data: any[];
-  totalTraces: number;
+  totalTokens: number;
 }
 
-export function TimeChart({ data, totalTraces }: TimeChartProps) {
+export function TokenTimeChart({ data, totalTokens }: TokenTimeChartProps) {
   return (
     <div className="rounded-lg border border-border bg-card p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
-            <h3 className="text-lg font-semibold text-foreground">Traces by time</h3>
+            <h3 className="text-lg font-semibold text-foreground">Tokens by time</h3>
             <div className="flex gap-4 mt-2 border-b border-border w-full">
-                <button className="pb-2 text-sm font-medium text-primary border-b-2 border-primary">Traces</button>
+                <button className="pb-2 text-sm font-medium text-primary border-b-2 border-primary">Tokens</button>
             </div>
         </div>
       </div>
       
       <div className="h-[250px] w-full">
          <div className="mb-4">
-             <span className="text-3xl font-bold text-foreground">{totalTraces}</span>
-             <span className="ml-2 text-sm text-muted-foreground">Traces tracked</span>
+             <span className="text-3xl font-bold text-foreground">{totalTokens.toLocaleString()}</span>
+             <span className="ml-2 text-sm text-muted-foreground">Total tokens</span>
          </div>
          <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data}>
                 <defs>
-                    <linearGradient id="colorTraces" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#098BCB" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#098BCB" stopOpacity={0}/>
+                    <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
                     </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
@@ -51,11 +51,11 @@ export function TimeChart({ data, totalTraces }: TimeChartProps) {
                 />
                 <Area 
                     type="monotone" 
-                    dataKey="traces" 
-                    stroke="#098BCB" 
+                    dataKey="tokens" 
+                    stroke="#8b5cf6" 
                     strokeWidth={2}
                     fillOpacity={1} 
-                    fill="url(#colorTraces)" 
+                    fill="url(#colorTokens)" 
                 />
             </AreaChart>
          </ResponsiveContainer>

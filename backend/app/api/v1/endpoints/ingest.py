@@ -137,12 +137,13 @@ async def ingest_observations(
                 end_t,
                 obs.get("input_text"),
                 obs.get("output_text"),
-                obs.get("token_usage"),
-                obs.get("model_parameters"),
-                obs.get("metadata_json"),
+                json.dumps(obs.get("token_usage")) if obs.get("token_usage") else None,
+                json.dumps(obs.get("model_parameters")) if obs.get("model_parameters") else None,
+                json.dumps(obs.get("metadata_json")) if obs.get("metadata_json") else None,
                 obs.get("extra"),
                 obs.get("observation_type"),
                 obs.get("error"),
+                obs.get("total_cost"),
                 start_t, # created_at
                 project_id,
                 obs.get("user_id")
@@ -154,7 +155,7 @@ async def ingest_observations(
                 "id", "trace_id", "parent_observation_id", "name", "type", "model",
                 "start_time", "end_time", "input_text", "output_text", "token_usage",
                 "model_parameters", "metadata_json", "extra", "observation_type", "error",
-                "created_at", "project_id", "user_id"
+                "total_cost", "created_at", "project_id", "user_id"
             ])
         
         return {"status": "success", "count": len(data)}

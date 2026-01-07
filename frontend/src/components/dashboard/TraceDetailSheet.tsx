@@ -31,6 +31,7 @@ interface Node {
   usage?: any;
   children: Node[];
   is_obs?: boolean;
+  total_cost?: number;
 }
 
 export default function TraceDetailSheet({ isOpen, onClose, traceId }: TraceDetailSheetProps) {
@@ -107,7 +108,8 @@ export default function TraceDetailSheet({ isOpen, onClose, traceId }: TraceDeta
             model: obs.model,
             usage: safeJson(obs.usage),
             children: [],
-            is_obs: true
+            is_obs: true,
+            total_cost: obs.total_cost
           });
         });
 
@@ -218,18 +220,18 @@ export default function TraceDetailSheet({ isOpen, onClose, traceId }: TraceDeta
             />
             
             {/* Sheet Panel */}
-            <div className="relative w-[85vw] max-w-6xl h-full bg-[#09090b] text-[#e4e4e7] shadow-2xl flex flex-col border-l border-[#27272a] animate-in slide-in-from-right duration-300">
+            <div className="relative w-[85vw] max-w-6xl h-full bg-background text-foreground shadow-2xl flex flex-col border-l border-border animate-slide-in-from-right">
                 {/* Header */}
-                <div className="flex-none h-14 border-b border-[#27272a] flex items-center justify-between px-6 bg-[#09090b]">
+                <div className="flex-none h-14 border-b border-border flex items-center justify-between px-6 bg-background">
                    <div className="flex items-center gap-4">
-                       <div className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-xs font-medium border border-emerald-500/20 flex items-center gap-1.5">
+                       <div className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-medium border border-primary/20 flex items-center gap-1.5">
                            <Box size={12}/> Trace
                        </div>
-                       <span className="font-mono text-sm text-[#a1a1aa]">{traceId}</span>
+                       <span className="font-mono text-sm text-muted-foreground">{traceId}</span>
                    </div>
                    <button 
                        onClick={onClose}
-                       className="p-2 hover:bg-[#27272a] rounded-md text-[#a1a1aa] hover:text-white transition-colors"
+                       className="p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
                    >
                        <X size={18} />
                    </button>
@@ -237,15 +239,15 @@ export default function TraceDetailSheet({ isOpen, onClose, traceId }: TraceDeta
 
                 {loading ? (
                     <div className="flex-1 flex items-center justify-center">
-                        <div className="animate-spin w-6 h-6 border-2 border-[#a1a1aa] border-t-transparent rounded-full"></div>
+                        <div className="animate-spin w-6 h-6 border-2 border-muted-foreground border-t-transparent rounded-full"></div>
                     </div>
                 ) : (
                    <div className="flex-1 flex overflow-hidden">
                        {/* Left Pane: Tree */}
-                       <div className="w-[350px] flex-none border-r border-[#27272a] flex flex-col bg-[#0c0c0e]">
-                            <div className="p-3 border-b border-[#27272a] text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider flex items-center justify-between">
+                       <div className="w-[350px] flex-none border-r border-border flex flex-col bg-muted/10">
+                            <div className="p-3 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
                                 <span>Execution Tree</span>
-                                <span className="text-[10px] bg-[#27272a] px-1.5 rounded">{rootNodes.length} roots</span>
+                                <span className="text-[10px] bg-muted px-1.5 rounded text-foreground">{rootNodes.length} roots</span>
                             </div>
                             <div className="flex-1 overflow-y-auto p-2">
                                 {rootNodes.map(node => (
@@ -261,9 +263,9 @@ export default function TraceDetailSheet({ isOpen, onClose, traceId }: TraceDeta
                        </div>
 
                        {/* Right Pane: Details */}
-                       <div className="flex-1 overflow-y-auto bg-[#09090b]">
+                       <div className="flex-1 overflow-y-auto bg-background">
                             {selectedNode ? <NodeDetailView node={selectedNode} /> : (
-                                <div className="h-full flex flex-col items-center justify-center text-[#a1a1aa]">
+                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
                                     <Layers size={48} className="opacity-20 mb-4" />
                                     <p>Select a node to view details</p>
                                 </div>
@@ -288,7 +290,7 @@ function TreeNode({ node, depth, selectedId, onSelect }: { node: Node, depth: nu
             <div 
                 className={`
                     group flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer text-sm mb-0.5 transition-all
-                    ${isSelected ? 'bg-[#27272a] text-white ring-1 ring-[#3f3f46]' : 'text-[#a1a1aa] hover:bg-[#27272a]/50 hover:text-[#e4e4e7]'}
+                    ${isSelected ? 'bg-primary/10 text-primary ring-1 ring-primary/20' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}
                 `}
                 style={{ paddingLeft: `${depth * 16 + 8}px` }}
                 onClick={() => {
@@ -296,7 +298,7 @@ function TreeNode({ node, depth, selectedId, onSelect }: { node: Node, depth: nu
                 }}
             >
                 <div 
-                    className={`w-4 h-4 flex items-center justify-center rounded hover:bg-[#3f3f46]/50 ${hasChildren ? 'visible' : 'invisible'}`}
+                    className={`w-4 h-4 flex items-center justify-center rounded hover:bg-muted/50 ${hasChildren ? 'visible' : 'invisible'}`}
                     onClick={(e) => {
                         e.stopPropagation();
                         setExpanded(!expanded);
@@ -305,13 +307,13 @@ function TreeNode({ node, depth, selectedId, onSelect }: { node: Node, depth: nu
                     {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 </div>
 
-                <div className={`shrink-0 ${isError ? 'text-red-500' : (node.is_obs ? 'text-blue-400' : 'text-emerald-400')}`}>
+                <div className={`shrink-0 ${isError ? 'text-destructive' : (node.is_obs ? 'text-blue-500' : 'text-emerald-500')}`}>
                     {node.is_obs ? <Terminal size={14} /> : <Layers size={14} />}
                 </div>
 
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                        <span className={`truncate font-mono text-xs ${isSelected ? 'font-semibold' : ''} ${isError ? 'text-red-400' : ''}`}>
+                        <span className={`truncate font-mono text-xs ${isSelected ? 'font-semibold' : ''} ${isError ? 'text-destructive' : ''}`}>
                             {node.name}
                         </span>
                     </div>
@@ -328,7 +330,7 @@ function TreeNode({ node, depth, selectedId, onSelect }: { node: Node, depth: nu
                     {/* Vertical line for children */}
                     {hasChildren && (
                         <div 
-                            className="absolute bg-[#27272a] w-px top-0 bottom-2"
+                            className="absolute bg-border w-px top-0 bottom-2"
                             style={{ left: `${depth * 16 + 15}px`, zIndex: 0 }}
                         />
                     )}
@@ -359,35 +361,35 @@ function NodeDetailView({ node }: { node: Node }) {
              {/* Node Header */}
              <div className="mb-8">
                  <div className="flex items-center gap-3 mb-4">
-                     <h2 className="text-xl font-bold font-mono text-white flex items-center gap-2">
-                         {node.is_obs ? <Terminal className="text-blue-400" /> : <Layers className="text-emerald-400" />}
+                     <h2 className="text-xl font-bold font-mono text-foreground flex items-center gap-2">
+                         {node.is_obs ? <Terminal className="text-blue-500" /> : <Layers className="text-emerald-500" />}
                          {node.name}
-                         <span className="text-xs font-normal text-[#71717a] border border-[#27272a] px-1.5 py-0.5 rounded ml-2">ID: {node.id.slice(0, 8)}</span>
+                         <span className="text-xs font-normal text-muted-foreground border border-border px-1.5 py-0.5 rounded ml-2">ID: {node.id.slice(0, 8)}</span>
                      </h2>
                  </div>
                  
                  {/* Metrics Bar */}
-                 <div className="flex items-center gap-4 text-xs font-mono text-[#a1a1aa] bg-[#27272a]/30 p-3 rounded-lg border border-[#27272a]">
+                 <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground bg-muted/30 p-3 rounded-lg border border-border">
                      <div className="flex items-center gap-1.5">
-                         <Clock size={14} className="text-[#71717a]" />
-                         <span className="text-white">{node.duration_ms.toFixed(3)}s</span>
+                         <Clock size={14} className="text-muted-foreground" />
+                         <span className="text-foreground">{node.duration_ms.toFixed(3)}s</span>
                      </div>
-                     <div className="w-px h-4 bg-[#3f3f46]" />
+                     <div className="w-px h-4 bg-border" />
                      <div className="flex items-center gap-1.5">
-                         <span className="text-[#71717a]">Tokens</span>
-                         <span className="text-white">{node.usage?.total_tokens || 0}</span>
+                         <span className="text-muted-foreground">Tokens</span>
+                         <span className="text-foreground">{node.usage?.total_tokens || 0}</span>
                      </div>
-                     <div className="w-px h-4 bg-[#3f3f46]" />
+                     <div className="w-px h-4 bg-border" />
                      <div className="flex items-center gap-1.5">
-                         <span className="text-[#71717a]">Cost</span>
-                         <span className="text-white">$0.00000</span>
+                         <span className="text-muted-foreground">Cost</span>
+                         <span className="text-foreground">${(node.total_cost || ((node.usage?.total_tokens || 0) * 0.000002)).toFixed(5)}</span>
                      </div>
                      {node.model && (
                          <>
-                             <div className="w-px h-4 bg-[#3f3f46]" />
+                             <div className="w-px h-4 bg-border" />
                              <div className="flex items-center gap-1.5">
-                                 <Cpu size={14} className="text-[#71717a]" />
-                                 <span className="text-blue-400">{node.model}</span>
+                                 <Cpu size={14} className="text-muted-foreground" />
+                                 <span className="text-blue-500">{node.model}</span>
                              </div>
                          </>
                      )}
@@ -395,12 +397,12 @@ function NodeDetailView({ node }: { node: Node }) {
              </div>
 
              {/* Tab Switcher */}
-             <div className="flex border-b border-[#27272a] mb-6">
+             <div className="flex border-b border-border mb-6">
                  {sections.map(s => (
                      <button 
                         key={s.id}
                         className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                            activeSection === s.id ? 'border-blue-500 text-blue-400' : 'border-transparent text-[#71717a] hover:text-[#a1a1aa]'
+                            activeSection === s.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
                         }`}
                         onClick={() => setActiveSection(s.id)}
                      >
@@ -431,14 +433,14 @@ function DataSection({ title, data, isOutput }: { title: string, data: any, isOu
     const content = isString ? data : JSON.stringify(data, null, 2);
 
     return (
-        <div className="rounded-lg border border-[#27272a] overflow-hidden bg-[#0c0c0e]">
-            <div className="px-4 py-2 bg-[#27272a]/50 border-b border-[#27272a] flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#a1a1aa] uppercase">{title}</span>
-                <button className="text-[#71717a] hover:text-white transition-colors" title="Copy">
+        <div className="rounded-lg border border-border overflow-hidden bg-muted/10">
+            <div className="px-4 py-2 bg-muted/30 border-b border-border flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase">{title}</span>
+                <button className="text-muted-foreground hover:text-foreground transition-colors" title="Copy">
                     <Copy size={12} />
                 </button>
             </div>
-            <div className={`p-4 overflow-x-auto text-sm font-mono ${isOutput ? 'text-emerald-400' : 'text-[#e4e4e7]'}`}>
+            <div className={`p-4 overflow-x-auto text-sm font-mono ${isOutput ? 'text-foreground' : 'text-muted-foreground'}`}>
                 <pre>{content}</pre>
             </div>
         </div>

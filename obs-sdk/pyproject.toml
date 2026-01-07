@@ -19,6 +19,13 @@ dependencies = [
     "langchain-core>=0.1.52",
 ]
 
+[project.optional-dependencies]
+eval = [
+    "ragas>=0.1.0",
+    "deepeval>=0.21.0",
+    "arize-phoenix-evals",
+]
+
 [build-system]
 requires = ["uv_build>=0.9.4,<0.10.0"]
 build-backend = "uv_build"

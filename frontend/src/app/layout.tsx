@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Open_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
+const openSans = Open_Sans({
+  subsets: ["latin"],
+  variable: "--font-sans",
+});
+
 export const metadata: Metadata = {
-  title: "ObsSDK Platform",
+  title: "AI Observability",
   description: "Observability for the rest of us",
 };
 
@@ -15,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body suppressHydrationWarning>
+      <body suppressHydrationWarning className={`${openSans.variable} font-sans`}>
         <Providers>{children}</Providers>
       </body>
     </html>
