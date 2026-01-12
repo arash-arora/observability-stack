@@ -32,6 +32,8 @@ services:
       clickhouse:
         condition: service_healthy
     restart: always
+    volumes:
+      - ./backend/app:/app/app
 
   postgres:
     image: postgres:15

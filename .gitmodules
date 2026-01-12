@@ -1,0 +1,6 @@
+[submodule "backend/backend/observix"]
+	path = backend/backend/observix
+	url = git@github.com:arash-arora/observix.git
+[submodule "backend/observix"]
+	path = backend/observix
+	url = git@github.com:arash-arora/observix.git
