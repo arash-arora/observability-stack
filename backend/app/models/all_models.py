@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 import uuid
+from app.models.metric import Metric
+from app.models.evaluation_result import EvaluationResult
 
 class OrganizationUserLink(SQLModel, table=True):
     organization_id: uuid.UUID = Field(foreign_key="organization.id", primary_key=True)
@@ -32,14 +34,23 @@ class Project(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
     organization: Organization = Relationship(back_populates="projects")
-    api_keys: List["ApiKey"] = Relationship(back_populates="project")
+    applications: List["Application"] = Relationship(back_populates="project")
+
+class Application(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str
+    project_id: uuid.UUID = Field(foreign_key="project.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    project: Project = Relationship(back_populates="applications")
+    api_keys: List["ApiKey"] = Relationship(back_populates="application")
 
 class ApiKey(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     key: str = Field(index=True, unique=True)
     name: str
-    project_id: uuid.UUID = Field(foreign_key="project.id")
+    application_id: uuid.UUID = Field(foreign_key="application.id")
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    project: Project = Relationship(back_populates="api_keys")
+    application: Application = Relationship(back_populates="api_keys")

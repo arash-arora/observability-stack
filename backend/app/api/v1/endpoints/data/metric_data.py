@@ -96,6 +96,16 @@ STATIC_METRICS_REGISTRY = [
         code_snippet=get_code_snippet_template("PhoenixToxicityEvaluator")
     ),
     MetricInfo(
+        id="PhoenixHallucinationEvaluator",
+        name="Phoenix Hallucination",
+        description="Determines if the LLM output contains hallucinations based on context.",
+        provider="Phoenix",
+        type="LLM",
+        tags=["phoenix", "preset", "safety"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("PhoenixHallucinationEvaluator")
+    ),
+    MetricInfo(
         id="AgentRoutingEvaluator",
         name="Agent Routing",
         description="Evaluates if the router agent selected the correct downstream tool/agent.",

@@ -1,0 +1,18 @@
+from datetime import datetime
+from typing import Optional, List
+from sqlmodel import SQLModel, Field, Column, JSON
+import uuid
+
+class EvaluationResult(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    trace_id: Optional[str] = Field(default=None, index=True)
+    metric_id: str = Field(index=True)
+    input: Optional[str] = None
+    output: Optional[str] = None
+    context: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    expected_output: Optional[str] = None
+    score: float
+    reason: Optional[str] = None
+    passed: bool
+    metadata_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)

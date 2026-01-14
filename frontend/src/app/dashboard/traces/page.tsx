@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import TraceDetailSheet from '@/components/dashboard/TraceDetailSheet';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -48,11 +49,35 @@ export default function TracesPage() {
   const [nameFilter, setNameFilter] = useState<string[]>([]);
   
   // Modal State
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+
+  // Sync state with URL params on mount/update
+  useEffect(() => {
+      const traceId = searchParams.get('trace_id');
+      if (traceId) {
+          setSelectedTraceId(traceId);
+      } else {
+          setSelectedTraceId(null);
+      }
+  }, [searchParams]);
 
   // Header State
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
+
+  const handleTraceClick = (traceId: string) => {
+      const newParams = new URLSearchParams(searchParams.toString());
+      newParams.set('trace_id', traceId);
+      router.push(`/dashboard/traces?${newParams.toString()}`);
+  };
+
+  const handleCloseTrace = () => {
+      const newParams = new URLSearchParams(searchParams.toString());
+      newParams.delete('trace_id');
+      router.push(`/dashboard/traces?${newParams.toString()}`);
+  };
 
   const handleOrgChange = (org: any) => {
       if (org.id === 'create_new') {
@@ -200,15 +225,7 @@ export default function TracesPage() {
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col bg-background text-foreground overflow-hidden">
         {/* Header */}
-       <DashboardHeader 
-         title="Traces"
-         currentOrg={currentOrg || null}
-         currentProject={currentProject || null}
-         organizations={orgs}
-         projects={projects.filter(p => !currentOrg || p.organization_id === currentOrg?.id)}
-         onOrgChange={handleOrgChange}
-         onProjectChange={handleProjectChange}
-       />
+
 
        {/* Modals */}
         {showCreateOrg && (
@@ -360,7 +377,7 @@ export default function TracesPage() {
                             <tr 
                                 key={trace.trace_id} 
                                 className="group border-b border-border hover:bg-muted/20 cursor-pointer transition-colors"
-                                onClick={() => setSelectedTraceId(trace.trace_id)}
+                                onClick={() => handleTraceClick(trace.trace_id)}
                             >
                                 <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center justify-center gap-2">
@@ -444,7 +461,7 @@ export default function TracesPage() {
        {/* Include Trace Detail Sheet */}
        <TraceDetailSheet 
          isOpen={!!selectedTraceId} 
-         onClose={() => setSelectedTraceId(null)}
+         onClose={handleCloseTrace}
          traceId={selectedTraceId}
        />
     </div>

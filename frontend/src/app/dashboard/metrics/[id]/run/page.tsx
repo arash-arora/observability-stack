@@ -6,9 +6,9 @@ import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { MetricHeader } from "@/components/metrics/MetricHeader";
 import { MetricTabs } from "@/components/metrics/MetricTabs";
-import { MetricInfo } from "@/components/metrics/MetricInfo";
+import { MetricRun } from "@/components/metrics/MetricRun";
 
-export default function MetricDetailPage() {
+export default function MetricRunPage() {
   const router = useRouter();
   const params = useParams();
   const [metric, setMetric] = useState<any>(null);
@@ -65,9 +65,9 @@ export default function MetricDetailPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-6 animate-in fade-in duration-500 py-6">
       <MetricHeader metric={metric} />
-      <MetricTabs metricId={metric.id} activeTab="info" />
+      <MetricTabs metricId={metric.id} activeTab="run" />
       <div className="mt-6">
-        <MetricInfo metric={metric} />
+        <MetricRun metric={metric} />
       </div>
     </div>
   );

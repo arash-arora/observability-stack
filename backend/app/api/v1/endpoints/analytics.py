@@ -62,15 +62,6 @@ async def get_traces(
         col = sort_column_map[sort_by]
         direction = "ASC" if order and order.lower() == 'asc' else "DESC"
         order_clause = f"{col} {direction}"
-
-    # Join with observations to get input/output and metrics.
-    # We need:
-    # 1. Input/Output (from first observation)
-    # 2. Total Tokens (sum of all observations)
-    # 3. Total Cost (sum of estimated cost)
-    # 4. Metadata (from trace attributes or first observation)
-    
-    # We can do this with a comprehensive subquery on observations
     
     query = f"""
     SELECT 
@@ -203,6 +194,8 @@ async def get_trace_details(
     try:
         spans_res = client.query(spans_query)
         obs_res = client.query(obs_query)
+
+        contexts = {}
         
         spans = []
         for row in spans_res.result_rows:
@@ -228,16 +221,17 @@ async def get_trace_details(
             parent_id = str(row[1]) if row[1] and str(row[1]) != '0' else None
             
             observations.append({
-                "id": str(row[0]), # Convert UInt64 to string
+                "id": str(row[0]), 
                 "parent_observation_id": parent_id,
                 "name": row[2],
-                "type": row[3], # e.g. generation, span
+                "type": row[3], 
                 "model": row[4],
                 "start_time": row[5],
                 "end_time": row[6],
                 "input": row[7],
                 "output": row[8],
                 "usage": row[9],
+                "metadata_json": row[11],
                 "error": row[14],
                 "total_cost": row[15],
                 "is_observation": True
@@ -249,6 +243,7 @@ async def get_trace_details(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/dashboard")
 async def get_dashboard_stats(
     project_id: str,

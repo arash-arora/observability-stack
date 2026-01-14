@@ -94,15 +94,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-12">
-      <DashboardHeader 
-        title="Dashboard"
-        currentOrg={currentOrg}
-        currentProject={currentProject}
-        organizations={orgs}
-        projects={projects.filter(p => !currentOrg || p.organization_id === currentOrg.id)}
-        onOrgChange={handleOrgChange}
-        onProjectChange={handleProjectChange}
-      />
+
 
       {/* Modals */}
       {showCreateOrg && (

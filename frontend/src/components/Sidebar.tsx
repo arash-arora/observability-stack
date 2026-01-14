@@ -3,7 +3,13 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Activity, Key, LogOut, Settings, Beaker } from 'lucide-react';
+import { LayoutDashboard, Activity, Key, LogOut, LayoutList,
+  Sparkles,
+  FlaskConical,
+  Settings,
+  Beaker,
+  Boxes,
+} from "lucide-react";
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 
@@ -14,7 +20,9 @@ export default function Sidebar() {
   
   const links = [
     { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
+    { href: '/dashboard/applications', label: 'Applications', icon: Boxes },
     { href: '/dashboard/traces', label: 'Traces', icon: Activity },
+    { href: '/dashboard/evaluations', label: 'Evaluations', icon: FlaskConical },
     { href: '/dashboard/metrics', label: 'Metrics Hub', icon: Beaker },
   ];
 

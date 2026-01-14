@@ -10,6 +10,7 @@ class MetricInfo(BaseModel):
     tags: List[str]
     inputs: List[str]
     code_snippet: Optional[str] = None
+    prompt: Optional[str] = None
 
 class EvaluationRequest(BaseModel):
     metric_id: str
@@ -20,3 +21,4 @@ class EvaluationResponse(BaseModel):
     score: float
     reason: Optional[str] = None
     passed: Optional[bool] = None
+    trace_id: Optional[str] = None

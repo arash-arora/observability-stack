@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.api import deps
 from app.core.database import get_session
-from app.models.all_models import ApiKey, Organization, Project, User, OrganizationUserLink
+from app.models.all_models import ApiKey, Application, Organization, Project, User, OrganizationUserLink
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -30,14 +30,24 @@ class ProjectRead(BaseModel):
 
 class ApiKeyCreate(BaseModel):
     name: str
-    project_id: uuid.UUID
+    application_id: uuid.UUID
 
 class ApiKeyRead(BaseModel):
     id: uuid.UUID
     key: str
     name: str
-    project_id: uuid.UUID
+    application_id: uuid.UUID
     is_active: bool
+
+class ApplicationCreate(BaseModel):
+    name: str
+    project_id: uuid.UUID
+
+class ApplicationRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    project_id: uuid.UUID
+    api_key: str | None = None  # Only populated on creation
 
 # --- Endpoints ---
 
@@ -115,17 +125,17 @@ async def read_projects(
     projects = result.scalars().all()
     return projects
 
-@router.post("/api-keys", response_model=ApiKeyRead)
-async def create_api_key(
-    key_in: ApiKeyCreate,
+@router.post("/applications", response_model=ApplicationRead)
+async def create_application(
+    app_in: ApplicationCreate,
     current_user: User = Depends(deps.get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     """
-    Create new API key for a project.
+    Create new application with auto-generated API key.
     """
     # Verify user has access to project (via org)
-    project_res = await session.get(Project, key_in.project_id)
+    project_res = await session.get(Project, app_in.project_id)
     if not project_res:
         raise HTTPException(status_code=404, detail="Project not found")
     
@@ -137,8 +147,99 @@ async def create_api_key(
     if not result.scalars().first():
          raise HTTPException(status_code=403, detail="Not a member of the project's organization")
 
+    # Create Application
+    application = Application(name=app_in.name, project_id=app_in.project_id)
+    session.add(application)
+    await session.commit()
+    await session.refresh(application)
+    
+    # Auto-generate API key
     new_key = secrets.token_urlsafe(32)
-    api_key_obj = ApiKey(key=f"sk-{new_key}", name=key_in.name, project_id=key_in.project_id)
+    api_key_obj = ApiKey(key=f"sk-{new_key}", name=f"{app_in.name} Key", application_id=application.id)
+    session.add(api_key_obj)
+    await session.commit()
+    
+    return ApplicationRead(
+        id=application.id,
+        name=application.name,
+        project_id=application.project_id,
+        api_key=api_key_obj.key
+    )
+
+@router.get("/applications", response_model=List[ApplicationRead])
+async def read_applications(
+    current_user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """
+    Retrieve applications for current user (via their projects/organizations).
+    """
+    # Join Application -> Project -> Organization -> OrganizationUserLink
+    stmt = select(Application).join(Project).join(Organization).join(OrganizationUserLink).where(
+        OrganizationUserLink.user_id == current_user.id
+    )
+    result = await session.execute(stmt)
+    applications = result.scalars().all()
+    return applications
+
+@router.delete("/applications/{application_id}")
+async def delete_application(
+    application_id: uuid.UUID,
+    current_user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """
+    Delete an application and its API keys.
+    """
+    application = await session.get(Application, application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    
+    # Verify access
+    project_res = await session.get(Project, application.project_id)
+    link_stmt = select(OrganizationUserLink).where(
+        OrganizationUserLink.user_id == current_user.id,
+        OrganizationUserLink.organization_id == project_res.organization_id
+    )
+    result = await session.execute(link_stmt)
+    if not result.scalars().first():
+         raise HTTPException(status_code=403, detail="Not authorized to delete this application")
+    
+    # Delete API keys first
+    key_stmt = select(ApiKey).where(ApiKey.application_id == application_id)
+    keys = await session.execute(key_stmt)
+    for key in keys.scalars().all():
+        await session.delete(key)
+    
+    await session.delete(application)
+    await session.commit()
+    return {"status": "deleted"}
+
+@router.post("/api-keys", response_model=ApiKeyRead)
+async def create_api_key(
+    key_in: ApiKeyCreate,
+    current_user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """
+    Create new API key for an application.
+    """
+    # Verify user has access to application (via project -> org)
+    application = await session.get(Application, key_in.application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    
+    project_res = await session.get(Project, application.project_id)
+    link_stmt = select(OrganizationUserLink).where(
+        OrganizationUserLink.user_id == current_user.id,
+        OrganizationUserLink.organization_id == project_res.organization_id
+    )
+    result = await session.execute(link_stmt)
+    if not result.scalars().first():
+         raise HTTPException(status_code=403, detail="Not a member of the application's organization")
+
+    new_key = secrets.token_urlsafe(32)
+    api_key_obj = ApiKey(key=f"sk-{new_key}", name=key_in.name, application_id=key_in.application_id)
     session.add(api_key_obj)
     await session.commit()
     await session.refresh(api_key_obj)
@@ -150,10 +251,10 @@ async def read_api_keys(
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     """
-    Retrieve API keys for projects accessible to the current user.
+    Retrieve API keys for applications accessible to the current user.
     """
-    # Join ApiKey -> Project -> Organization -> OrganizationUserLink
-    stmt = select(ApiKey).join(Project).join(Organization).join(OrganizationUserLink).where(
+    # Join ApiKey -> Application -> Project -> Organization -> OrganizationUserLink
+    stmt = select(ApiKey).join(Application).join(Project).join(Organization).join(OrganizationUserLink).where(
         OrganizationUserLink.user_id == current_user.id
     )
     result = await session.execute(stmt)

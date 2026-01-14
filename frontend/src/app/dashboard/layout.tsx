@@ -4,6 +4,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import Sidebar from '@/components/Sidebar';
+import { DashboardProvider } from '@/context/DashboardContext';
+import ContextHeader from '@/components/dashboard/ContextHeader';
 
 export default function DashboardLayout({
   children,
@@ -23,13 +25,16 @@ export default function DashboardLayout({
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-background font-sans anti-aliased">
-      <Sidebar />
-      <main className="pl-64 transition-[padding] duration-200 ease-in-out">
-        <div className="container max-w-7xl mx-auto p-8 pt-6">
-          {children}
-        </div>
-      </main>
-    </div>
+    <DashboardProvider>
+      <div className="min-h-screen bg-background font-sans anti-aliased">
+        <Sidebar />
+        <main className="pl-64 transition-[padding] duration-200 ease-in-out">
+          <div className="container max-w-7xl mx-auto p-8 pt-6">
+            <ContextHeader />
+            {children}
+          </div>
+        </main>
+      </div>
+    </DashboardProvider>
   );
 }

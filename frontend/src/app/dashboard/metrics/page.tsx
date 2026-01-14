@@ -138,33 +138,18 @@ export default function MetricsPage() {
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Link
-            href="/dashboard"
-            className="hover:text-foreground transition-colors"
-          >
-            Back
-          </Link>
-          <span>/</span>
-          <span className="text-foreground font-medium flex items-center gap-1">
-            <Beaker size={14} />
-            Metrics Hub
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold tracking-tight bg-linear-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-            Metrics Hub
-          </h1>
-          <Button
-            variant="primary"
-            className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
-            onClick={() => router.push("/dashboard/metrics/new")}
-          >
-            <Plus size={16} />
-            Create Metric
-          </Button>
-        </div>
-      </div>
+         {/* Breadcrumbs removed as they are in global header */}
+         <div className="flex items-center justify-end">
+           <Button
+             variant="primary"
+             className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
+             onClick={() => router.push("/dashboard/metrics/new")}
+           >
+             <Plus size={16} />
+             Create Metric
+           </Button>
+         </div>
+       </div>
 
       <div className="flex gap-8">
         {/* Sidebar Filters */}

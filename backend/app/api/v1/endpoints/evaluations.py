@@ -15,15 +15,45 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Static Registry to avoid Runtime Import/Dependency Issues in Backend Container
-@router.get("/metrics", response_model=List[MetricInfo])
+from sqlmodel import select
+from app.models.metric import Metric
+from app.models.evaluation_result import EvaluationResult
+
+# ... existing imports ...
+
+@router.get("/metrics", response_model=List[Metric])
 async def list_metrics(
     db: AsyncSession = Depends(get_session)
 ):
     """
-    List all available metrics.
-    Currently returns a static registry matching the SDK capabilities.
+    List all available metrics from the database.
+    Seeds the database with static registry if empty.
     """
-    return STATIC_METRICS_REGISTRY
+    result = await db.execute(select(Metric))
+    metrics = result.scalars().all()
+
+    if not metrics:
+        logger.info("No metrics found in DB. Seeding from static registry...")
+        for metric_info in STATIC_METRICS_REGISTRY:
+            metric = Metric(
+                id=metric_info.id,
+                name=metric_info.name,
+                description=metric_info.description,
+                provider=metric_info.provider,
+                type=metric_info.type,
+                tags=metric_info.tags,
+                inputs=metric_info.inputs,
+                code_snippet=metric_info.code_snippet,
+                prompt=metric_info.prompt
+            )
+            db.add(metric)
+        await db.commit()
+        
+        # Re-fetch
+        result = await db.execute(select(Metric))
+        metrics = result.scalars().all()
+        
+    return metrics
 
 
 @router.post("/run", response_model=EvaluationResponse)
@@ -52,8 +82,9 @@ async def run_evaluation(
     context_api_key = user_api_key if observe else None
     context_host = host if observe and user_api_key else None
     
+    # Initialize with request-scoped credentials (idempotent - won't add duplicate processors)
     if context_api_key:
-         init_observability(url=context_host, api_key=context_api_key)
+        init_observability(url=context_host, api_key=context_api_key)
 
     with observability_context(api_key=context_api_key, host=context_host):
         try:
@@ -105,10 +136,36 @@ async def run_evaluation(
                 if inspect.iscoroutine(result):
                     result = await result
                     
+                # Extract trace_id (supported by Phoenix and potentially others)
+                trace_id = result.metadata.get("trace_id")
+                
+                # Save Result to DB (if enabled)
+                persist_result = inputs.get("persist_result", True)
+                if persist_result:
+                    try:
+                        eval_result = EvaluationResult(
+                            trace_id=trace_id,
+                            metric_id=request.metric_id,
+                            input=str(query) if query else None,
+                            output=str(output) if output else None,
+                            context=context if isinstance(context, list) else [str(context)] if context else [],
+                            expected_output=str(expected) if expected else None,
+                            score=result.score,
+                            reason=result.reason,
+                            passed=result.passed,
+                            metadata_json=result.metadata
+                        )
+                        db.add(eval_result)
+                        await db.commit()
+                    except Exception as e:
+                        logger.error(f"Failed to save evaluation result to DB: {e}")
+                        # Don't fail the request if saving fails, just log it
+                
                 return EvaluationResponse(
                     score=result.score,
                     reason=result.reason or "Evaluation completed successfully.",
-                    passed=result.passed
+                    passed=result.passed,
+                    trace_id=trace_id
                 )
                     
             except Exception as e:
@@ -119,3 +176,77 @@ async def run_evaluation(
             logger.error(f"Evaluation Execution Failed: {e}")
             return EvaluationResponse(score=0.0, passed=False, reason=f"Execution Failed: {str(e)}")
 
+
+@router.get("/results", response_model=List[EvaluationResult])
+async def list_evaluation_results(
+    limit: int = 100,
+    offset: int = 0,
+    metric_id: str = None,
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    List historical evaluation results.
+    """
+    query = select(EvaluationResult).order_by(EvaluationResult.created_at.desc()).offset(offset).limit(limit)
+    if metric_id:
+        query = query.where(EvaluationResult.metric_id == metric_id)
+        
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.get("/stats")
+async def get_evaluation_stats(
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Get aggregate statistics for evaluations.
+    """
+    # Total Count
+    result = await db.execute(select(EvaluationResult))
+    all_results = result.scalars().all()
+    total = len(all_results)
+    
+    if total == 0:
+        return {
+            "total": 0,
+            "pass_rate": 0,
+            "avg_score": 0,
+            "breakdown": []
+        }
+
+    # Pass Rate
+    passed = len([r for r in all_results if r.passed])
+    pass_rate = (passed / total) * 100
+    
+    # Average Score
+    avg_score = sum([r.score for r in all_results]) / total
+    
+    # Breakdown by Metric
+    # Simple aggregation (in-memory if dataset is small, otherwise use SQL grouping)
+    breakdown = {}
+    for r in all_results:
+        if r.metric_id not in breakdown:
+            breakdown[r.metric_id] = {"total": 0, "passed": 0, "score_sum": 0}
+        
+        breakdown[r.metric_id]["total"] += 1
+        breakdown[r.metric_id]["score_sum"] += r.score
+        if r.passed:
+            breakdown[r.metric_id]["passed"] += 1
+            
+    breakdown_list = [
+        {
+            "metric_id": k,
+            "total": v["total"],
+            "pass_rate": (v["passed"] / v["total"]) * 100,
+            "avg_score": v["score_sum"] / v["total"]
+        }
+        for k, v in breakdown.items()
+    ]
+    
+    return {
+        "total": total,
+        "pass_rate": pass_rate,
+        "avg_score": avg_score,
+        "breakdown": breakdown_list
+    }
