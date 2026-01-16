@@ -8,8 +8,6 @@ import { MetricsCards } from '@/components/dashboard/MetricsCards';
 import { TimeChart } from '@/components/dashboard/TimeChart';
 import { TokenTimeChart } from '@/components/dashboard/TokenTimeChart';
 import { ModelUsageChart } from '@/components/dashboard/ModelUsageChart';
-import { CreateOrgModal } from '@/components/dashboard/CreateOrgModal';
-import { CreateProjectModal } from '@/components/dashboard/CreateProjectModal';
 import { LatencyCard } from '@/components/dashboard/LatencyCard';
 
 export default function DashboardPage() {

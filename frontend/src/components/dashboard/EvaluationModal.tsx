@@ -150,6 +150,7 @@ export default function EvaluationModal({
           inputs.azure_endpoint = azureEndpoint;
           inputs.api_version = apiVersion;
           inputs.deployment_name = deploymentName;
+          inputs.model = deploymentName; // Use deployment name as model identifier
       }
 
       const payload = {
@@ -309,15 +310,17 @@ export default function EvaluationModal({
                     </>
                 )}
 
-                <div className="space-y-2">
-                    <Label>Model Name</Label>
-                    <Input 
-                        value={model} 
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setModel(e.target.value)} 
-                        placeholder={provider === "azure" ? "Model ID" : "e.g. gpt-4o"}
-                        className="bg-background"
-                    />
-                </div>
+                {provider !== "azure" && (
+                    <div className="space-y-2">
+                        <Label>Model Name</Label>
+                        <Input 
+                            value={model} 
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setModel(e.target.value)} 
+                            placeholder="e.g. gpt-4o"
+                            className="bg-background"
+                        />
+                    </div>
+                )}
              </div>
              
              {/* Trace Configuration */}

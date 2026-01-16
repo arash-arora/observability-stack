@@ -113,7 +113,10 @@ async def run_evaluation(
                     evaluator = EvaluatorClass(provider=provider, model=model, **llm_kwargs)
                 except TypeError:
                      logger.warning(f"Evaluator {request.metric_id} does not accept llm/kwargs in init. Trying default init.")
-                     evaluator = EvaluatorClass()
+                     raise HTTPException(
+                        status_code=400,
+                        detail=f"Evaluator {request.metric_id} init failed: {str(e)}",
+                    )
         
             except Exception as e:
                 logger.error(f"Failed to init Evaluator: {e}")
