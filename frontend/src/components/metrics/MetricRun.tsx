@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useDashboard } from "@/context/DashboardContext";
 import Link from "next/link";
 import { Play, ExternalLink } from "lucide-react";
 import api from "@/lib/api";
@@ -85,6 +86,29 @@ export function MetricRun({ metric }: MetricRunProps) {
   const [obsApiKey, setObsApiKey] = useState("");
   const [obsHost, setObsHost] = useState("http://localhost:8000");
 
+  // Provider Selection
+  const { selectedProject } = useDashboard();
+  const [configMode, setConfigMode] = useState<'registered' | 'custom'>('registered');
+  const [providers, setProviders] = useState<any[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+
+  useEffect(() => {
+    if (selectedProject) {
+        api.get(`/management/providers?project_id=${selectedProject.id}`)
+           .then(res => {
+              setProviders(res.data);
+              if (res.data.length > 0) {
+                  setSelectedProviderId(res.data[0].id);
+                  setConfigMode('registered');
+              } else {
+                  setConfigMode('custom');
+              }
+           })
+           .catch(console.error);
+    }
+  }, [selectedProject]);
+
+
   useEffect(() => {
     if (metric && metric.dummy_data) {
         setEvalInput(metric.dummy_data.query || "");
@@ -142,16 +166,35 @@ export function MetricRun({ metric }: MetricRunProps) {
         output: evalOutput,
         context: evalContext.split("\n").filter(line => line.trim() !== ""),
         expected: evalExpected,
-        provider: evalProvider,
-        model: evalModel,
-        api_key: apiKey,
         persist_result: false,
       };
 
-      if (evalProvider === "azure") {
-        inputs.azure_endpoint = azureEndpoint;
-        inputs.api_version = apiVersion;
-        inputs.deployment_name = deploymentName;
+      if (configMode === 'registered' && selectedProviderId) {
+          const selectedProvider = providers.find(p => p.id === selectedProviderId);
+          if (selectedProvider) {
+              inputs.provider = selectedProvider.provider;
+              inputs.api_key = selectedProvider.api_key;
+              
+              if (selectedProvider.provider === 'azure') {
+                   inputs.azure_endpoint = selectedProvider.base_url;
+                   inputs.api_version = selectedProvider.api_version;
+                   inputs.deployment_name = selectedProvider.deployment_name;
+                   inputs.model = selectedProvider.deployment_name;
+              } else {
+                   inputs.model = selectedProvider.model_name;
+              }
+          }
+      } else {
+          // Custom
+          inputs.provider = evalProvider;
+          inputs.model = evalModel;
+          inputs.api_key = apiKey;
+          
+          if (evalProvider === "azure") {
+            inputs.azure_endpoint = azureEndpoint;
+            inputs.api_version = apiVersion;
+            inputs.deployment_name = deploymentName;
+          }
       }
       
       // Observability settings
@@ -248,73 +291,120 @@ export function MetricRun({ metric }: MetricRunProps) {
 
       <div className="space-y-6">
           <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-sm">Configuration</h3>
-              <div className="space-y-4">
-                  <div className="space-y-2">
-                      <Label>Provider</Label>
-                      <select
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                          value={evalProvider}
-                          onChange={(e) => setEvalProvider(e.target.value)}
-                      >
-                          <option value="openai">OpenAI</option>
-                          <option value="azure">Azure OpenAI</option>
-                          <option value="langchain">Langchain</option>
-                      </select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                      <Label>API Key</Label>
-                      <input
-                          type="password"
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                          placeholder="sk-..."
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                      />
-                  </div>
+              <h3 className="font-semibold text-sm border-b pb-2">Configuration</h3>
+              
+              {/* Config Mode Toggle */}
+              <div className="flex bg-muted p-1 rounded-md mb-4">
+                  <button
+                      className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-all ${configMode === 'registered' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                      onClick={() => setConfigMode('registered')}
+                  >
+                      Registered Model
+                  </button>
+                  <button
+                      className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-all ${configMode === 'custom' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                      onClick={() => setConfigMode('custom')}
+                  >
+                      Custom Config
+                  </button>
+              </div>
 
-                  {evalProvider === "azure" && (
-                      <>
-                          <div className="space-y-2">
-                              <Label>Azure Endpoint</Label>
-                              <input
-                                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                  placeholder="https://your-resource.openai.azure.com/"
-                                  value={azureEndpoint}
-                                  onChange={(e) => setAzureEndpoint(e.target.value)}
-                              />
-                          </div>
-                          <div className="space-y-2">
-                              <Label>API Version</Label>
-                              <input
-                                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                  placeholder="2023-05-15"
-                                  value={apiVersion}
-                                  onChange={(e) => setApiVersion(e.target.value)}
-                              />
-                          </div>
-                          <div className="space-y-2">
-                              <Label>Deployment Name</Label>
-                              <input
-                                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                  placeholder="deployment-name"
-                                  value={deploymentName}
-                                  onChange={(e) => setDeploymentName(e.target.value)}
-                              />
-                          </div>
-                      </>
-                  )}
-
-                  <div className="space-y-2">
-                      <Label>Model Name</Label>
-                      <input
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                          placeholder={evalProvider === "azure" ? "Model ID (if different)" : "e.g. gpt-4o"}
-                          value={evalModel}
-                          onChange={(e) => setEvalModel(e.target.value)}
-                      />
+              {configMode === 'registered' ? (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-left-2 duration-200">
+                      <div className="space-y-2">
+                          <Label>Select Model</Label>
+                          <select 
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                              value={selectedProviderId} 
+                              onChange={(e) => setSelectedProviderId(e.target.value)}
+                          >
+                            {providers.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                    {p.name} ({p.model_name || p.deployment_name})
+                                </option>
+                            ))}
+                          </select>
+                          {providers.length === 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                    No models found. <Link href="/dashboard/models" className="text-primary underline" target="_blank">Register one here</Link>.
+                                </p>
+                          )}
+                      </div>
+                       {selectedProviderId && (
+                            <div className="text-xs text-muted-foreground bg-background p-2 rounded border">
+                                Using registered credentials for <strong>{providers.find(p => p.id === selectedProviderId)?.name}</strong>.
+                            </div>
+                        )}
                   </div>
+              ) : (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+                      <div className="space-y-2">
+                          <Label>Provider</Label>
+                          <select
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                              value={evalProvider}
+                              onChange={(e) => setEvalProvider(e.target.value)}
+                          >
+                              <option value="openai">OpenAI</option>
+                              <option value="azure">Azure OpenAI</option>
+                              <option value="langchain">Langchain</option>
+                          </select>
+                      </div>
+                      
+                      <div className="space-y-2">
+                          <Label>API Key</Label>
+                          <input
+                              type="password"
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                              placeholder="sk-..."
+                              value={apiKey}
+                              onChange={(e) => setApiKey(e.target.value)}
+                          />
+                      </div>
+
+                      {evalProvider === "azure" && (
+                          <>
+                              <div className="space-y-2">
+                                  <Label>Azure Endpoint</Label>
+                                  <input
+                                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                      placeholder="https://your-resource.openai.azure.com/"
+                                      value={azureEndpoint}
+                                      onChange={(e) => setAzureEndpoint(e.target.value)}
+                                  />
+                              </div>
+                              <div className="space-y-2">
+                                  <Label>API Version</Label>
+                                  <input
+                                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                      placeholder="2023-05-15"
+                                      value={apiVersion}
+                                      onChange={(e) => setApiVersion(e.target.value)}
+                                  />
+                              </div>
+                              <div className="space-y-2">
+                                  <Label>Deployment Name</Label>
+                                  <input
+                                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                      placeholder="deployment-name"
+                                      value={deploymentName}
+                                      onChange={(e) => setDeploymentName(e.target.value)}
+                                  />
+                              </div>
+                          </>
+                      )}
+
+                      <div className="space-y-2">
+                          <Label>Model Name</Label>
+                          <input
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                              placeholder={evalProvider === "azure" ? "Model ID (if different)" : "e.g. gpt-4o"}
+                              value={evalModel}
+                              onChange={(e) => setEvalModel(e.target.value)}
+                          />
+                      </div>
+                  </div>
+              )}
                   
                   <div className="pt-4 border-t space-y-4">
                       <div className="flex items-center space-x-2">
@@ -372,7 +462,6 @@ export function MetricRun({ metric }: MetricRunProps) {
                           </div>
                       )}
                   </div>
-              </div>
           </Card>
 
         {testResult && (

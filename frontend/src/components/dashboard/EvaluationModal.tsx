@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Play } from "lucide-react";
 import api from "@/lib/api";
+import { useDashboard } from "@/context/DashboardContext";
 
 type EvaluationModalProps = {
   isOpen: boolean;
@@ -57,6 +58,12 @@ export default function EvaluationModal({
   const [traceHost, setTraceHost] = useState("http://localhost:8000");
   const [traceApiKey, setTraceApiKey] = useState("");
 
+  // Provider Selection State 
+  const { selectedProject } = useDashboard();
+  const [configMode, setConfigMode] = useState<'registered' | 'custom'>('registered');
+  const [providers, setProviders] = useState<any[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
     score: number;
@@ -85,8 +92,23 @@ export default function EvaluationModal({
       
       // Reset observe to default
       setObserve(defaultObserve);
+
+      // Fetch providers
+      if (selectedProject) {
+          api.get(`/management/providers?project_id=${selectedProject.id}`)
+             .then(res => {
+                setProviders(res.data);
+                if (res.data.length > 0) {
+                    setSelectedProviderId(res.data[0].id);
+                    setConfigMode('registered');
+                } else {
+                    setConfigMode('custom');
+                }
+             })
+             .catch(console.error);
+      }
     }
-  }, [isOpen, initialData, defaultObserve]);
+  }, [isOpen, initialData, defaultObserve, selectedProject]);
 
   const [apiKeys, setApiKeys] = useState<{key: string; name: string}[]>([]);
 
@@ -135,9 +157,6 @@ export default function EvaluationModal({
           output: output,
           context: contextList,
           expected: expectedOutput,
-          provider: provider,
-          model: model,
-          api_key: apiKey,
           persist_result: true,
           application_name: initialData.application_name,
           
@@ -147,11 +166,33 @@ export default function EvaluationModal({
           user_api_key: traceApiKey
       };
 
-      if (provider === "azure") {
-          inputs.azure_endpoint = azureEndpoint;
-          inputs.api_version = apiVersion;
-          inputs.deployment_name = deploymentName;
-          inputs.model = deploymentName; // Use deployment name as model identifier
+      if (configMode === 'registered' && selectedProviderId) {
+          const selectedProvider = providers.find(p => p.id === selectedProviderId);
+          if (selectedProvider) {
+              inputs.provider = selectedProvider.provider;
+              inputs.api_key = selectedProvider.api_key;
+              
+              if (selectedProvider.provider === 'azure') {
+                   inputs.azure_endpoint = selectedProvider.base_url;
+                   inputs.api_version = selectedProvider.api_version;
+                   inputs.deployment_name = selectedProvider.deployment_name;
+                   inputs.model = selectedProvider.deployment_name;
+              } else {
+                   inputs.model = selectedProvider.model_name;
+              }
+          }
+      } else {
+        // Custom Config
+        inputs.provider = provider;
+        inputs.model = model;
+        inputs.api_key = apiKey;
+
+        if (provider === "azure") {
+            inputs.azure_endpoint = azureEndpoint;
+            inputs.api_version = apiVersion;
+            inputs.deployment_name = deploymentName;
+            inputs.model = deploymentName; 
+        }
       }
 
       const payload = {
@@ -252,74 +293,124 @@ export default function EvaluationModal({
           <div className="space-y-6">
              {/* Configuration Section */}
              <div className="space-y-4 p-4 rounded-lg border bg-muted/10">
-                <h3 className="font-semibold text-sm border-b pb-2">Evaluator Configuration</h3>
+                <div className="flex items-center justify-between border-b pb-2 mb-2">
+                    <h3 className="font-semibold text-sm">Evaluator Configuration</h3>
+                </div>
                 
-                <div className="space-y-2">
-                    <Label>Provider</Label>
-                    <Select value={provider} onValueChange={setProvider}>
-                        <SelectTrigger>
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="openai">OpenAI</SelectItem>
-                            <SelectItem value="azure">Azure OpenAI</SelectItem>
-                            <SelectItem value="langchain">Langchain</SelectItem>
-                        </SelectContent>
-                    </Select>
+                {/* Config Mode Toggle */}
+                <div className="flex bg-muted p-1 rounded-md mb-4">
+                    <button
+                        className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-all ${configMode === 'registered' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setConfigMode('registered')}
+                    >
+                        Registered Model
+                    </button>
+                    <button
+                        className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-all ${configMode === 'custom' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setConfigMode('custom')}
+                    >
+                        Custom Config
+                    </button>
                 </div>
 
-                <div className="space-y-2">
-                    <Label>LLM API Key</Label>
-                    <Input 
-                        type="password" 
-                        value={apiKey} 
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiKey(e.target.value)} 
-                        placeholder="sk-..." 
-                        className="bg-background"
-                    />
-                </div>
+                {configMode === 'registered' ? (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-left-2 duration-200">
+                        <div className="space-y-2">
+                            <Label>Select Model</Label>
+                            <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select a registered model" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {providers.map((p) => (
+                                        <SelectItem key={p.id} value={p.id}>
+                                            {p.name} ({p.model_name || p.deployment_name})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {providers.length === 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                    No models found. <a href="/dashboard/models" className="text-primary underline" target="_blank">Register one here</a>.
+                                </p>
+                            )}
+                        </div>
+                        {selectedProviderId && (
+                            <div className="text-xs text-muted-foreground bg-background p-2 rounded border">
+                                Using registered credentials for <strong>{providers.find(p => p.id === selectedProviderId)?.name}</strong>.
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+                        <div className="space-y-2">
+                            <Label>Provider</Label>
+                            <Select value={provider} onValueChange={setProvider}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="openai">OpenAI</SelectItem>
+                                    <SelectItem value="azure">Azure OpenAI</SelectItem>
+                                    <SelectItem value="langchain">Langchain</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
 
-                {provider === "azure" && (
-                    <>
                         <div className="space-y-2">
-                            <Label>Azure Endpoint</Label>
+                            <Label>LLM API Key</Label>
                             <Input 
-                                value={azureEndpoint} 
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAzureEndpoint(e.target.value)} 
-                                placeholder="https://..." 
+                                type="password" 
+                                value={apiKey} 
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiKey(e.target.value)} 
+                                placeholder="sk-..." 
                                 className="bg-background"
                             />
                         </div>
-                        <div className="space-y-2">
-                            <Label>API Version</Label>
-                            <Input 
-                                value={apiVersion} 
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiVersion(e.target.value)} 
-                                placeholder="2023-05-15"
-                                className="bg-background"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Deployment Name</Label>
-                            <Input 
-                                value={deploymentName} 
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeploymentName(e.target.value)} 
-                                placeholder="deployment-name"
-                                className="bg-background"
-                            />
-                        </div>
-                    </>
-                )}
 
-                {provider !== "azure" && (
-                    <div className="space-y-2">
-                        <Label>Model Name</Label>
-                        <Input 
-                            value={model} 
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setModel(e.target.value)} 
-                            placeholder="e.g. gpt-4o"
-                            className="bg-background"
-                        />
+                        {provider === "azure" && (
+                            <>
+                                <div className="space-y-2">
+                                    <Label>Azure Endpoint</Label>
+                                    <Input 
+                                        value={azureEndpoint} 
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAzureEndpoint(e.target.value)} 
+                                        placeholder="https://..." 
+                                        className="bg-background"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>API Version</Label>
+                                    <Input 
+                                        value={apiVersion} 
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiVersion(e.target.value)} 
+                                        placeholder="2023-05-15"
+                                        className="bg-background"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Deployment Name</Label>
+                                    <Input 
+                                        value={deploymentName} 
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDeploymentName(e.target.value)} 
+                                        placeholder="deployment-name"
+                                        className="bg-background"
+                                    />
+                                </div>
+                            </>
+                        )}
+
+                        {provider !== "azure" && (
+                            <div className="space-y-2">
+                                <Label>Model Name</Label>
+                                <Input 
+                                    value={model} 
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setModel(e.target.value)} 
+                                    placeholder="e.g. gpt-4o"
+                                    className="bg-background"
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
              </div>
