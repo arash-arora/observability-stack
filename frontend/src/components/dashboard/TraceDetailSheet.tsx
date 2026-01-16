@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import api from "@/lib/api";
+import { extractContent, safeParseJSON } from "@/lib/traceUtils";
 
 interface TraceDetailSheetProps {
   isOpen: boolean;
@@ -104,47 +105,6 @@ export default function TraceDetailSheet({
     // And build a map of SpanID -> ObsID replacement
     const spanToObsMap = new Map<string, string>();
 
-    const safeJson = (val: any) => {
-      let curr = val;
-      if (typeof curr === 'string') {
-        try {
-           // 1. Unwrap multiple layers of JSON strings (e.g. "\"{\"a\": 1}\"")
-           while (typeof curr === 'string') {
-             try {
-               const parsed = JSON.parse(curr);
-               curr = parsed;
-             } catch {
-               break; // Stop if it's not valid JSON anymore
-             }
-           }
-        } catch (e) {
-           // Ignore
-        }
-      }
-
-      // 2. Handle Python-style dict strings (e.g. "{'a': 1, 'b': None}")
-      // This is a fallback if the result is still a string that looks like an object
-      if (typeof curr === 'string' && curr.trim().startsWith('{')) {
-          try {
-             // Replace single quotes just for keys and simple values? 
-             // Global replace is risky but effective for simple cases. 
-             // Also handle Python constants.
-             // We use a regex sequence to try and target keys and structure quoting.
-             let fixed = curr
-                .replace(/'/g, '"') // Replace all single quotes with double
-                .replace(/True/g, 'true')
-                .replace(/False/g, 'false')
-                .replace(/None/g, 'null');
-             
-             return JSON.parse(fixed);
-          } catch {
-              // If fallback fails, just return strict string
-              return curr;
-          }
-      }
-      return curr;
-    };
-
     observations.forEach((obs) => {
       const obsId = String(obs.id);
       nodeMap.set(obsId, {
@@ -156,10 +116,10 @@ export default function TraceDetailSheet({
         duration_ms:
           new Date(obs.end_time).getTime() - new Date(obs.start_time).getTime(),
         error: obs.error,
-        input: safeJson(obs.input),
-        output: safeJson(obs.output),
+        input: safeParseJSON(obs.input),
+        output: safeParseJSON(obs.output),
         model: obs.model,
-        usage: safeJson(obs.usage),
+        usage: safeParseJSON(obs.usage),
         children: [],
         is_obs: true,
         total_cost: obs.total_cost,
@@ -621,45 +581,20 @@ function DataSection({
       } catch (e) {}
   }
 
-  const renderContent = (content: any) => {
-      // 1. Array of messages (Chat History)
-      if (Array.isArray(content)) {
-          // Check if it looks like a message list
-          const isMessageList = content.every(item => typeof item === 'object' && item !== null && ('role' in item || 'content' in item));
-          
-          if (isMessageList) {
-              return (
-                  <div className="space-y-4">
-                      {content.map((msg, i) => (
-                          <div key={i} className="flex flex-col gap-1">
-                              {msg.role && (
-                                  <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground bg-muted/50 w-fit px-1.5 rounded">
-                                      {msg.role}
-                                  </span>
-                              )}
-                              <div className="whitespace-pre-wrap font-mono text-xs opacity-90 pl-1 border-l-2 border-border">
-                                  {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || msg, null, 2)}
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-              );
-          }
-      }
-      
-      // 2. Single Object with 'content' or 'text' key (Common Wrappers)
-      if (typeof content === 'object' && content !== null) {
-          if ('content' in content && typeof content.content === 'string') {
-               return <div className="whitespace-pre-wrap font-mono text-sm">{content.content}</div>;
-          }
-           if ('text' in content && typeof content.text === 'string') {
-               return <div className="whitespace-pre-wrap font-mono text-sm">{content.text}</div>;
-          }
-      }
+  const extracted = extractContent(parsed);
 
-      // 3. Fallback: Pretty JSON or String
-      const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      return <pre className="whitespace-pre-wrap font-mono text-sm">{text}</pre>;
+  const renderContent = (content: any) => {
+      // If we are strictly outputting content (not raw), we should just show the extracted string.
+      // But if title is "Metadata" or generic, maybe we still want JSON?
+      // Requirement: "for the input and output we should only show content"
+      
+      // If it's pure string content now, just show it.
+      if (typeof content === 'string') {
+           return <div className="whitespace-pre-wrap font-mono text-sm">{content}</div>;
+      }
+     
+      // Fallback
+      return <pre className="whitespace-pre-wrap font-mono text-sm">{JSON.stringify(content, null, 2)}</pre>;
   };
 
   return (
@@ -681,7 +616,7 @@ function DataSection({
           isOutput ? "text-foreground" : "text-muted-foreground"
         }`}
       >
-        {renderContent(parsed)}
+        {renderContent(extracted)}
       </div>
     </div>
   );

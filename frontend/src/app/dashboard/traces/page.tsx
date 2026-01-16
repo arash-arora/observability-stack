@@ -12,6 +12,7 @@ import {
     LayoutList, MoreHorizontal, Star, ArrowUpDown, ArrowUp, ArrowDown 
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getPreviewString } from '@/lib/traceUtils';
 
 export default function TracesPage() {
   const { selectedProject, selectedOrg } = useDashboard();
@@ -148,13 +149,8 @@ export default function TracesPage() {
   // Render Helpers
   const renderJSONPreview = (jsonStr?: string) => {
     if (!jsonStr) return <span className="text-muted-foreground italic">Empty</span>;
-    try {
-        const parsed = JSON.parse(jsonStr);
-        const preview = JSON.stringify(parsed);
-        return <span className="font-mono text-xs text-muted-foreground truncate block max-w-[150px]">{preview}</span>;
-    } catch (e) {
-        return <span className="font-mono text-xs text-muted-foreground truncate block max-w-[150px]">{jsonStr}</span>;
-    }
+    const preview = getPreviewString(jsonStr, 150);
+    return <span className="font-mono text-xs text-muted-foreground truncate block max-w-[150px]" title={preview}>{preview}</span>;
   };
 
   const renderMetadata = (meta?: any) => {
