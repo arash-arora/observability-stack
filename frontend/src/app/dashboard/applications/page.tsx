@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import ApplicationModal from "@/components/applications/ApplicationModal";
 import { useDashboard } from "@/context/DashboardContext";
 import PageHeader from '@/components/PageHeader';
@@ -63,15 +63,16 @@ export default function ApplicationsPage() {
     }
   };
 
+// ... imports
+
+
+// ... existing code ...
+
   const handleCreated = (app: Application) => {
     if (app.api_key) {
       setNewApiKey(app.api_key);
     }
     fetchData();
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
   };
 
   // Filter applications by selected project if one is selected
@@ -109,9 +110,7 @@ export default function ApplicationsPage() {
                 Copy this key now. You won't be able to see it again.
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => copyToClipboard(newApiKey)}>
-              <Copy className="mr-2 h-4 w-4" /> Copy Key
-            </Button>
+            <CopyButton text={newApiKey} label="Copy Key" variant="outline" />
           </div>
           <code className="mt-2 block p-2 rounded bg-muted font-mono text-sm break-all">
             {newApiKey}
@@ -140,7 +139,14 @@ export default function ApplicationsPage() {
                   <Badge variant="outline">{getProjectName(app.project_id)}</Badge>
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
-                  sk-****...****
+                    {app.api_key ? (
+                        <div className="flex items-center gap-2">
+                            <span>{app.api_key}</span>
+                            <CopyButton text={app.api_key} size="icon" />
+                        </div>
+                    ) : (
+                        "sk-****...****"
+                    )}
                 </TableCell>
                 <TableCell className="text-right">
                   <Button
@@ -173,4 +179,47 @@ export default function ApplicationsPage() {
       />
     </div>
   );
+}
+
+function CopyButton({ text, label, variant = "ghost", size = "sm" }: { text: string, label?: string, variant?: any, size?: any }) {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = async () => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+        } catch (err) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                setCopied(true);
+            } catch (e) {
+                console.error('Copy failed', e);
+            }
+            document.body.removeChild(textArea);
+        }
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    if (size === "icon") {
+        return (
+            <button 
+                onClick={handleCopy} 
+                className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+                title="Copy API Key"
+            >
+                {copied ? <Check size={14} className="text-green-500"/> : <Copy size={14}/>}
+            </button>
+        );
+    }
+
+    return (
+        <Button variant={variant} size={size} onClick={handleCopy}>
+            {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+            {copied ? "Copied" : (label || "Copy")}
+        </Button>
+    );
 }

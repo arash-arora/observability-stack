@@ -13,11 +13,12 @@ import {
   Terminal,
   Cpu,
   Play,
-  FlaskConical
+  FlaskConical,
+  Check
 } from "lucide-react";
 
 import api from "@/lib/api";
-import { extractContent, safeParseJSON } from "@/lib/traceUtils";
+import { extractContent, extractSystemMessage, safeParseJSON } from "@/lib/traceUtils";
 
 interface TraceDetailSheetProps {
   isOpen: boolean;
@@ -543,6 +544,7 @@ function NodeDetailView({ node }: { node: Node }) {
 
       {/* Content */}
       <div className="space-y-6">
+        <DataSection title="System Message" data={extractSystemMessage(node.input)} />
         <DataSection title="Input" data={node.input} />
         <DataSection title="Output" data={node.output} isOutput />
         <DataSection
@@ -559,6 +561,8 @@ function NodeDetailView({ node }: { node: Node }) {
   );
 }
 
+
+
 function DataSection({
   title,
   data,
@@ -568,13 +572,14 @@ function DataSection({
   data: any;
   isOutput?: boolean;
 }) {
+  const [copied, setCopied] = useState(false);
+
   if (!data || (typeof data === "object" && Object.keys(data).length === 0))
     return null;
 
   let parsed = data;
   if (typeof data === 'string') {
       try {
-           // Only parse if it looks like an object/array to avoid parsing simple strings
            if (data.trim().startsWith('{') || data.trim().startsWith('[')) {
                parsed = JSON.parse(data);
            }
@@ -583,17 +588,34 @@ function DataSection({
 
   const extracted = extractContent(parsed);
 
-  const renderContent = (content: any) => {
-      // If we are strictly outputting content (not raw), we should just show the extracted string.
-      // But if title is "Metadata" or generic, maybe we still want JSON?
-      // Requirement: "for the input and output we should only show content"
+  const handleCopy = async () => {
+      const textToCopy = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
       
-      // If it's pure string content now, just show it.
+      try {
+          await navigator.clipboard.writeText(textToCopy);
+          setCopied(true);
+      } catch (err) {
+          // Fallback
+          const textArea = document.createElement("textarea");
+          textArea.value = textToCopy;
+          document.body.appendChild(textArea);
+          textArea.select();
+          try {
+              document.execCommand('copy');
+              setCopied(true);
+          } catch (e) {
+              console.error('Copy failed', e);
+          }
+          document.body.removeChild(textArea);
+      }
+      
+      setTimeout(() => setCopied(false), 2000);
+  };
+
+  const renderContent = (content: any) => {
       if (typeof content === 'string') {
            return <div className="whitespace-pre-wrap font-mono text-sm">{content}</div>;
       }
-     
-      // Fallback
       return <pre className="whitespace-pre-wrap font-mono text-sm">{JSON.stringify(content, null, 2)}</pre>;
   };
 
@@ -604,11 +626,12 @@ function DataSection({
           {title}
         </span>
         <button
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+          onClick={handleCopy}
           title="Copy"
-          onClick={() => navigator.clipboard.writeText(typeof data === 'string' ? data : JSON.stringify(data, null, 2))}
         >
-          <Copy size={12} />
+          {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+          {copied && <span className="text-[10px] text-green-500 font-medium">Copied</span>}
         </button>
       </div>
       <div

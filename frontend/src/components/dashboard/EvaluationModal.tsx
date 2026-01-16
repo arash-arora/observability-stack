@@ -62,6 +62,7 @@ export default function EvaluationModal({
     score: number;
     passed: boolean;
     reason: string;
+    trace_id?: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -393,6 +394,20 @@ export default function EvaluationModal({
                     <span className="font-mono text-sm">Score: {result.score.toFixed(3)}</span>
                 </div>
                 <p className="text-sm text-foreground/80">{result.reason}</p>
+                {/* Trace Link */}
+                {result.trace_id && (
+                     <div className="mt-3 pt-3 border-t border-dashed border-muted text-xs">
+                        <span className="text-muted-foreground mr-2">Trace captured:</span>
+                        <a 
+                            href={`/dashboard/traces?trace_id=${result.trace_id}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline font-mono"
+                        >
+                            {result.trace_id}
+                        </a>
+                     </div>
+                )}
                 </div>
             )}
           </div>

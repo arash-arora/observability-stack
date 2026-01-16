@@ -175,12 +175,24 @@ async def read_applications(
     Retrieve applications for current user (via their projects/organizations).
     """
     # Join Application -> Project -> Organization -> OrganizationUserLink
-    stmt = select(Application).join(Project).join(Organization).join(OrganizationUserLink).where(
+    # Also eager load api_keys
+    from sqlalchemy.orm import selectinload
+    stmt = select(Application).options(selectinload(Application.api_keys)).join(Project).join(Organization).join(OrganizationUserLink).where(
         OrganizationUserLink.user_id == current_user.id
     )
     result = await session.execute(stmt)
     applications = result.scalars().all()
-    return applications
+    
+    # Map to ApplicationRead
+    return [
+        ApplicationRead(
+            id=app.id, 
+            name=app.name, 
+            project_id=app.project_id,
+            api_key=app.api_keys[0].key if app.api_keys else None
+        )
+        for app in applications
+    ]
 
 @router.delete("/applications/{application_id}")
 async def delete_application(

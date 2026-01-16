@@ -9,6 +9,8 @@ import { TimeChart } from '@/components/dashboard/TimeChart';
 import { TokenTimeChart } from '@/components/dashboard/TokenTimeChart';
 import { ModelUsageChart } from '@/components/dashboard/ModelUsageChart';
 import { LatencyCard } from '@/components/dashboard/LatencyCard';
+import { AdvancedCharts } from '@/components/dashboard/AdvancedCharts';
+import { EvaluationTrendCard } from '@/components/dashboard/EvaluationTrendCard';
 
 export default function DashboardPage() {
   const { selectedProject, selectedOrg, organizations, projects, setSelectedOrg, setSelectedProject } = useDashboard();
@@ -57,10 +59,14 @@ export default function DashboardPage() {
                 <LatencyCard title="Trace Latency" data={stats?.trace_latency || []} />
             </div>
 
-             {/* Row 4: Gen Latency */}
+             {/* Row 4: Gen Latency & Eval Trend */}
              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <LatencyCard title="Generation Latency" data={stats?.generation_latency || []} />
+                <EvaluationTrendCard data={stats?.eval_trend || []} />
             </div>
+
+            {/* Advanced Application & General Analytics */}
+            <AdvancedCharts data={stats} />
           </>
       ) : (
           <div className="text-center py-20 text-muted-foreground">

@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from opentelemetry import trace
 from app.core.database import get_session
 from app.core.schema import MetricInfo, EvaluationRequest, EvaluationResponse
 from app.api.v1.endpoints.data.metric_data import STATIC_METRICS_REGISTRY
@@ -128,19 +129,32 @@ async def run_evaluation(
                 context = inputs.get("context")
                 output = inputs.get("output") or inputs.get("response")    
                 expected = inputs.get("expected")
-                        
-                result = evaluator.evaluate(
-                    input_query=query,
-                    output=output,
-                    context=context if isinstance(context, list) else [str(context)] if context else [],
-                    expected=expected
-                )
                 
-                if inspect.iscoroutine(result):
-                    result = await result
-                    
-                # Extract trace_id (supported by Phoenix and potentially others)
-                trace_id = result.metadata.get("trace_id")
+                trace_id = None
+                
+                async def _execute_eval():
+                    res = evaluator.evaluate(
+                        input_query=query,
+                        output=output,
+                        context=context if isinstance(context, list) else [str(context)] if context else [],
+                        expected=expected
+                    )
+                    if inspect.iscoroutine(res):
+                        res = await res
+                    return res
+
+                if observe:
+                    tracer = trace.get_tracer("observix")
+                    with tracer.start_as_current_span(
+                        f"evaluation_{request.metric_id}",
+                        kind=trace.SpanKind.CLIENT
+                    ) as span:
+                        trace_id = f"{span.get_span_context().trace_id:032x}"
+                        result = await _execute_eval()
+                else:
+                    result = await _execute_eval()
+                    # Fallback if evaluator returns trace_id in metadata
+                    trace_id = result.metadata.get("trace_id")
                 
                 # Save Result to DB (if enabled)
                 persist_result = inputs.get("persist_result", True)

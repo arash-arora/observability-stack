@@ -16,15 +16,19 @@ function ProfileSettings() {
     const [errorMsg, setErrorMsg] = useState('');
 
     useEffect(() => {
-        // Fetch current user details
-        // We probably need a /auth/me endpoint or stick it in AuthContext
-        // For now, let's assume we can get it from localStorage or context if available.
-        // Actually, we can decrypt the token or just fetch from the new /users/me endpoint if we made it return data?
-        // Wait, I only made PUT /users/me. I should probably add GET /users/me or just set name empty initially.
-        // Let's implement a quick fetch if possible, or just let them overwrite.
-        // Better: let's try to fetch user info.
-        // Since I didn't verify a GET /users/me, let's assume we start blank/placeholder or fetch from context.
-        // For this demo, I'll just allow setting new values.
+        const fetchUser = async () => {
+            try {
+                const res = await api.get('/users/me');
+                if (res.data) {
+                    setName(res.data.full_name || '');
+                    setEmail(res.data.email || '');
+                }
+            } catch (e) {
+                console.error("Failed to fetch user details", e);
+            }
+        };
+
+        fetchUser();
     }, []);
 
     const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -85,6 +89,7 @@ function ProfileSettings() {
                             type="email" 
                             className="bg-background-subtle border border-border rounded-md pl-10 pr-3 py-2 w-full text-sm cursor-not-allowed"
                             placeholder="name@example.com"
+                            value={email}
                             disabled
                          />
                          <p className="text-[10px] text-muted-foreground mt-1">Email change is not supported yet.</p>
