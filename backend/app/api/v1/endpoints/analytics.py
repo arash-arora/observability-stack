@@ -14,8 +14,11 @@ async def get_traces(
     search: Optional[str] = None,
     status: Optional[List[str]] = Query(None),
     name: Optional[List[str]] = Query(None),
+    application: Optional[List[str]] = Query(None),
     sort_by: Optional[str] = None,
     order: Optional[str] = 'desc',
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -24,6 +27,12 @@ async def get_traces(
     client = get_clickhouse_client()
     
     where_clause = f"t.project_id = '{project_id}' AND t.parent_span_id IS NULL"
+    
+    if from_ts:
+        where_clause += f" AND t.start_time >= toDateTime64({from_ts}, 9)"
+    if to_ts:
+        where_clause += f" AND t.start_time <= toDateTime64({to_ts}, 9)"
+
     if search:
         # Simple search on name or trace_id for now
         where_clause += f" AND (t.name ILIKE '%{search}%' OR t.trace_id ILIKE '%{search}%')"
@@ -46,6 +55,10 @@ async def get_traces(
     if name:
         name_list = "', '".join(name)
         where_clause += f" AND t.name IN ('{name_list}')"
+
+    if application:
+        app_list = "', '".join(application)
+        where_clause += f" AND t.application_name IN ('{app_list}')"
 
     # Sorting Logic
     sort_column_map = {
@@ -76,7 +89,8 @@ async def get_traces(
         o_last.output_text,
         o_metrics.total_tokens,
         0.0 as total_cost, -- Placeholder for cost calculation
-        t.attributes -- Metadata
+        t.attributes, -- Metadata
+        t.application_name
     FROM traces t
     LEFT JOIN (
         SELECT trace_id, input_text
@@ -131,9 +145,32 @@ async def get_traces(
                 "output": row[8],
                 "total_tokens": tokens,
                 "total_cost": est_cost,
-                "metadata": row[11] # Map
+                "metadata": row[11], # Map
+                "application_name": row[12]
             })
         return traces
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/traces/applications")
+async def get_application_names(
+    project_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get unique application names for a project to populate filters.
+    """
+    client = get_clickhouse_client()
+    query = f"""
+    SELECT DISTINCT application_name 
+    FROM traces 
+    WHERE project_id = '{project_id}' AND parent_span_id IS NULL AND application_name IS NOT NULL
+    ORDER BY application_name ASC
+    """
+    try:
+        result = client.query(query)
+        names = [row[0] for row in result.result_rows]
+        return names
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -173,7 +210,7 @@ async def get_trace_details(
     spans_query = f"""
     SELECT 
         trace_id, span_id, parent_span_id, name, kind, start_time, end_time, 
-        status_code, status_message, attributes, events, links, duration_ms
+        status_code, status_message, attributes, events, links, duration_ms, application_name
     FROM traces 
     WHERE trace_id = '{trace_id}'
     ORDER BY start_time ASC
@@ -212,6 +249,7 @@ async def get_trace_details(
                 "attributes": row[9],
                 # "events": row[10], # JSON string, maybe parse if needed
                 "duration_ms": row[12],
+                "application_name": row[13],
                 "type": "span" # UI helper
             })
             

@@ -4,9 +4,8 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import TraceDetailSheet from '@/components/dashboard/TraceDetailSheet';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { CreateOrgModal } from '@/components/dashboard/CreateOrgModal';
-import { CreateProjectModal } from '@/components/dashboard/CreateProjectModal';
+import { useDashboard } from '@/context/DashboardContext';
+import PageHeader from '@/components/PageHeader';
 import { 
     Clock, AlertCircle, Search, Filter, PlayCircle, 
     ChevronDown, ChevronRight, X, Calendar, Download, 
@@ -14,39 +13,23 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Simple utility if utils not present
-const classNames = (...classes: any[]) => classes.filter(Boolean).join(' ');
-
-interface Trace {
-  trace_id: string;
-  name: string;
-  duration_ms: number;
-  start_time: string;
-  status_code: string;
-  user_id?: string;
-  input?: string;
-  output?: string;
-}
-
 export default function TracesPage() {
+  const { selectedProject, selectedOrg } = useDashboard();
+  
   // State
-  const [projects, setProjects] = useState<any[]>([]);
-  const [orgs, setOrgs] = useState<any[]>([]); // New: Orgs
-  const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [traces, setTraces] = useState<Trace[]>([]);
+  const [traces, setTraces] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   
-  const [traceNames, setTraceNames] = useState<string[]>([]);
+  const [appNames, setAppNames] = useState<string[]>([]);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'timestamp', direction: 'desc' });
+  const [dateRange, setDateRange] = useState("24h"); // 24h, 3d, 7d, custom
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
-  // Computed
-  const currentProject = projects.find(p => p.id === selectedProjectId);
-  const currentOrg = currentProject ? orgs.find(o => o.id === currentProject.organization_id) : null;
-  
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [nameFilter, setNameFilter] = useState<string[]>([]);
+  const [appFilter, setAppFilter] = useState<string[]>([]);
   
   // Modal State
   const searchParams = useSearchParams();
@@ -63,10 +46,6 @@ export default function TracesPage() {
       }
   }, [searchParams]);
 
-  // Header State
-  const [showCreateOrg, setShowCreateOrg] = useState(false);
-  const [showCreateProject, setShowCreateProject] = useState(false);
-
   const handleTraceClick = (traceId: string) => {
       const newParams = new URLSearchParams(searchParams.toString());
       newParams.set('trace_id', traceId);
@@ -79,49 +58,21 @@ export default function TracesPage() {
       router.push(`/dashboard/traces?${newParams.toString()}`);
   };
 
-  const handleOrgChange = (org: any) => {
-      if (org.id === 'create_new') {
-          setShowCreateOrg(true);
-      } else {
-          // Find first project for this org
-          const orgProjects = projects.filter(p => p.organization_id === org.id);
-          if (orgProjects.length > 0) {
-              setSelectedProjectId(orgProjects[0].id);
-          } else {
-              setSelectedProjectId(''); // No projects
-          }
-      }
-  };
-
-  const handleProjectChange = (proj: any) => {
-     if (proj.id === 'create_new') {
-         if (!currentOrg) {
-             alert("Please select an organization first.");
-             return;
-         }
-         setShowCreateProject(true);
-     } else {
-         setSelectedProjectId(proj.id);
-     }
-  };
-
   useEffect(() => {
-    fetchContext(); // Fetch both projects and orgs
-  }, []);
-
-  useEffect(() => {
-    if (selectedProjectId) {
-      fetchTraces(selectedProjectId);
-      fetchTraceNames(selectedProjectId);
+    if (selectedProject) {
+      fetchTraces(selectedProject.id);
+      fetchAppNames(selectedProject.id);
+    } else {
+        setTraces([]);
     }
-  }, [selectedProjectId, searchQuery, statusFilter, nameFilter, sortConfig]);
+  }, [selectedProject, searchQuery, statusFilter, appFilter, sortConfig, dateRange, customStart, customEnd]);
 
   const toggleStatus = (status: string) => {
       setStatusFilter(prev => prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]);
   };
 
-  const toggleName = (name: string) => {
-      setNameFilter(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  const toggleApp = (name: string) => {
+      setAppFilter(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   };
 
   const handleSort = (key: string) => {
@@ -131,28 +82,14 @@ export default function TracesPage() {
       }));
   };
 
-  const fetchContext = async () => {
+  const fetchAppNames = async (projectId: string) => {
       try {
-          const [pRes, oRes] = await Promise.all([
-              api.get('/management/projects'),
-              api.get('/management/organizations')
-          ]);
-          setProjects(pRes.data);
-          setOrgs(oRes.data);
-          if (pRes.data.length > 0) setSelectedProjectId(pRes.data[0].id);
-      } catch (err) {
-          console.error('Failed to fetch context');
-      }
-  };
-
-  const fetchTraceNames = async (projectId: string) => {
-      try {
-          const res = await api.get('/analytics/traces/names', {
+          const res = await api.get('/analytics/traces/applications', {
               params: { project_id: projectId }
           });
-          setTraceNames(res.data);
+          setAppNames(res.data);
       } catch (err) {
-          console.error("Failed to fetch trace names for filter", err);
+          console.error("Failed to fetch app names for filter", err);
       }
   };
 
@@ -160,15 +97,32 @@ export default function TracesPage() {
     try {
       setLoading(true);
       
+      let from_ts: number | undefined = undefined;
+      let to_ts: number | undefined = undefined;
+
+      const now = new Date();
+      if (dateRange === "24h") {
+          from_ts = new Date(now.getTime() - 24 * 60 * 60 * 1000).getTime() / 1000;
+      } else if (dateRange === "3d") {
+          from_ts = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).getTime() / 1000;
+      } else if (dateRange === "7d") {
+          from_ts = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).getTime() / 1000;
+      } else if (dateRange === "custom") {
+          if (customStart) from_ts = new Date(customStart).getTime() / 1000;
+          if (customEnd) to_ts = new Date(customEnd).getTime() / 1000;
+      }
+
       const res = await api.get(`/analytics/traces`, {
         params: { 
             project_id: projectId, 
             limit: 50,
             search: searchQuery,
             status: statusFilter,
-            name: nameFilter,
+            application: appFilter,
             sort_by: sortConfig.key,
-            order: sortConfig.direction
+            order: sortConfig.direction,
+            from_ts: from_ts,
+            to_ts: to_ts
         },
         paramsSerializer: (params) => {
             const searchParams = new URLSearchParams();
@@ -223,34 +177,14 @@ export default function TracesPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col bg-background text-foreground overflow-hidden">
-        {/* Header */}
-
-
-       {/* Modals */}
-        {showCreateOrg && (
-            <CreateOrgModal 
-                onClose={() => setShowCreateOrg(false)}
-                onCreated={(newOrg) => {
-                    setOrgs([...orgs, newOrg]);
-                    // Auto select? 
-                    // handleOrgChange(newOrg);
-                }}
-            />
-        )}
-        {showCreateProject && currentOrg && (
-            <CreateProjectModal 
-                orgId={currentOrg.id}
-                onClose={() => setShowCreateProject(false)}
-                onCreated={(newProj) => {
-                    setProjects([...projects, newProj]);
-                    setSelectedProjectId(newProj.id);
-                }}
-            />
-        )}
-
+    <div className="h-[calc(100vh-4rem)] flex flex-col text-foreground overflow-hidden">
+        <PageHeader 
+            title="Traces" 
+            infoTooltip="Detailed logs of your application's executions, including chain of thought, latency, and costs." 
+        />
+        
        {/* Toolbar */}
-       <div className="flex-none px-6 py-3 border-b border-border flex items-center gap-4 bg-background-subtle/30">
+       <div className="flex-none px-1 py-3 border-b border-border flex items-center gap-4 bg-background-subtle/30">
             <div className="flex-1 max-w-xl relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
                 <input 
@@ -263,13 +197,36 @@ export default function TracesPage() {
             </div>
             
             <div className="flex items-center gap-2 ml-auto">
-                <button className="flex items-center gap-2 px-3 py-1.5 bg-background border border-border rounded text-sm hover:bg-muted font-medium">
-                    <Filter size={14} /> Filters
-                </button>
-                <div className="w-px h-6 bg-border mx-1" />
-                <button className="flex items-center gap-2 px-3 py-1.5 bg-background border border-border rounded text-sm hover:bg-muted">
-                    Columns <span className="bg-muted px-1 rounded text-xs">19/31</span>
-                </button>
+                <div className="flex items-center gap-2">
+                    <Calendar size={14} className="text-muted-foreground"/>
+                    <select 
+                        className="bg-background border border-border rounded text-sm px-2 py-1.5 h-9 focus:ring-1 focus:ring-primary"
+                        value={dateRange}
+                        onChange={(e) => setDateRange(e.target.value)}
+                    >
+                        <option value="24h">Last 24 Hours</option>
+                        <option value="3d">Last 3 Days</option>
+                        <option value="7d">Last 7 Days</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                </div>
+                {dateRange === 'custom' && (
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="datetime-local" 
+                            className="bg-background border border-border rounded text-sm px-2 py-1.5 h-9"
+                            value={customStart}
+                            onChange={(e) => setCustomStart(e.target.value)}
+                        />
+                        <span className="text-muted-foreground">-</span>
+                        <input 
+                            type="datetime-local" 
+                            className="bg-background border border-border rounded text-sm px-2 py-1.5 h-9"
+                            value={customEnd}
+                            onChange={(e) => setCustomEnd(e.target.value)}
+                        />
+                    </div>
+                )}
             </div>
        </div>
 
@@ -303,22 +260,22 @@ export default function TracesPage() {
                     </div>
                 </div>
                 
-                {/* Filter Group: Trace Name */}
+                {/* Filter Group: Application Name */}
                 <div>
                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-semibold text-foreground">Trace Name</h3>
+                        <h3 className="text-sm font-semibold text-foreground">Application Name</h3>
                         <ChevronDown size={14} className="text-muted-foreground"/>
                     </div>
-                    {/* Dynamic trace name list */}
+                    {/* Dynamic app name list */}
                     <div className="space-y-1">
-                        {traceNames.length === 0 && <span className="text-xs text-muted-foreground italic px-2">No traces found</span>}
-                        {traceNames.map(name => (
+                        {appNames.length === 0 && <span className="text-xs text-muted-foreground italic px-2">No applications found</span>}
+                        {appNames.map(name => (
                              <label key={name} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground cursor-pointer">
                                 <input 
                                     type="checkbox" 
                                     className="rounded border-border bg-transparent"
-                                    checked={nameFilter.includes(name)}
-                                    onChange={() => toggleName(name)}
+                                    checked={appFilter.includes(name)}
+                                    onChange={() => toggleApp(name)}
                                 /> <span className="truncate" title={name}>{name}</span>
                              </label>
                         ))}
@@ -350,6 +307,7 @@ export default function TracesPage() {
                                     Name <SortIcon column="name" />
                                 </div>
                             </th>
+                            <th className="px-4 py-3 font-medium whitespace-nowrap">Application Name</th>
                             <th 
                                 className="px-4 py-3 font-medium cursor-pointer hover:bg-muted/50 transition-colors"
                                 onClick={() => handleSort('latency')}
@@ -381,8 +339,8 @@ export default function TracesPage() {
                             >
                                 <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center justify-center gap-2">
-                                        <input type="checkbox" className="rounded border-border bg-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                                        <Star size={14} className="text-muted-foreground hover:text-yellow-500 cursor-pointer opacity-0 group-hover:opacity-100" />
+                                        <input type="checkbox" className="rounded border-border bg-transparent" />
+                                        <Star size={14} className="text-muted-foreground hover:text-yellow-500 cursor-pointer" />
                                     </div>
                                 </td>
                                 <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap font-mono">
@@ -400,6 +358,9 @@ export default function TracesPage() {
                                     <div className="text-[10px] text-muted-foreground font-mono mt-0.5 opacity-70">
                                         {trace.trace_id.slice(0, 8)}
                                     </div>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-muted-foreground">
+                                    {trace.application_name || <span className="italic opacity-50">Unknown</span>}
                                 </td>
                                 <td className="px-4 py-3 text-xs font-mono text-muted-foreground">
                                     {trace.duration_ms ? `${trace.duration_ms.toFixed(3)}s` : '-'}

@@ -32,7 +32,8 @@ def init_clickhouse():
         resource_attributes Map(String, String),
         duration_ms Float64,
         project_id UUID,
-        user_id Nullable(String)
+        user_id Nullable(String),
+        application_name Nullable(String)
     ) ENGINE = MergeTree()
     ORDER BY (project_id, start_time)
     """)

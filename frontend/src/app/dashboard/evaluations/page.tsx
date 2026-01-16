@@ -1,11 +1,15 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import EvaluationsOverview from "@/components/evaluations/EvaluationsOverview";
 import EvaluationsList from "@/components/evaluations/EvaluationsList";
+import PageHeader from "@/components/PageHeader";
 
 export default function EvaluationsPage() {
   return (
-    <div className="container mx-auto py-6 space-y-6">
-
+    <div className="container mx-auto space-y-6">
+      <PageHeader 
+        title="Evaluations" 
+        infoTooltip="Run and analyze evaluations for your LLM applications." 
+      />
       
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>

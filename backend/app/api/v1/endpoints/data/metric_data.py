@@ -16,103 +16,139 @@ result = evaluator.evaluate(input_query='', output='', context=[''], expected=''
 
 STATIC_METRICS_REGISTRY = [
     MetricInfo(
-        id="RagasFaithfulnessEvaluator",
-        name="Faithfulness",
-        description="Measures the factual consistency of the answer to the context found in the retrieved documents.",
-        provider="Ragas",
-        type="RAG Evaluation",
-        tags=["ragas", "preset", "rag"],
-        inputs=["query", "response", "context"],
-        code_snippet=get_code_snippet_template("RagasFaithfulnessEvaluator")
-    ),
-    MetricInfo(
-        id="RagasContextPrecisionEvaluator",
-        name="Context Precision",
-        description="Measures how precise the context is to the question, ignoring the answer.",
-        provider="Ragas",
-        type="RAG Evaluation",
-        tags=["ragas", "preset", "rag"],
-        inputs=["query", "context", "expected"],
-        code_snippet=get_code_snippet_template("RagasContextPrecisionEvaluator")
-    ),
-    MetricInfo(
-        id="RagasContextRecallEvaluator",
-        name="Context Recall",
-        description="Measures if the retrieved context aligns with the ground truth answer.",
-        provider="Ragas",
-        type="RAG Evaluation",
-        tags=["ragas", "preset", "rag"],
-        inputs=["query", "context", "expected"],
-        code_snippet=get_code_snippet_template("RagasContextRecallEvaluator")
-    ),
-    MetricInfo(
-        id="RagasNoiseSensitivityEvaluator",
-        name="Noise Sensitivity",
-        description="Measures how often a system makes errors by providing incorrect responses when utilizing either relevant or irrelevant retrieved documents",
-        provider="Ragas",
-        type="RAG Evaluation",
-        tags=["ragas", "preset", "rag"],
-        inputs=["query", "context", "expected", "output"],
-        code_snippet=get_code_snippet_template("RagasNoiseSensitivityEvaluator")
-    ),
-    MetricInfo(
-        id="DeepEvalHallucinationEvaluator",
-        name="Hallucination",
-        description="Determines if the LLM output contains hallucinations based on context.",
-        provider="DeepEval",
-        type="LLM",
-        tags=["deepeval", "preset", "safety"],
-        inputs=["query", "response", "context"],
-        code_snippet=get_code_snippet_template("DeepEvalHallucinationEvaluator")
-    ),
-    MetricInfo(
-        id="DeepEvalAnswerRelevancyEvaluator",
+        id="AnswerRelevancyEvaluator",
         name="Answer Relevancy",
         description="Measures if the response answers the specific question asked.",
-        provider="DeepEval",
+        provider="Observix",
         type="RAG Evaluation",
-        tags=["deepeval", "preset", "rag"],
+        tags=["preset", "rag"],
         inputs=["query", "response", "context"],
-        code_snippet=get_code_snippet_template("DeepEvalAnswerRelevancyEvaluator")
+        code_snippet=get_code_snippet_template("AnswerRelevancyEvaluator"),
+        dummy_data={
+            "query": "What is the capital of France?",
+            "response": "The capital of France is Paris.",
+            "context": ["Paris is the capital and most populous city of France."]
+        }
     ),
     MetricInfo(
-        id="DeepEvalFaithfulnessEvaluator",
+        id="FaithfulnessEvaluator",
         name="Faithfulness",
         description="Measures if the answer is derived faithfully from the retrieved context.",
-        provider="DeepEval",
+        provider="Observix",
         type="RAG Evaluation",
-        tags=["deepeval", "preset", "rag"],
+        tags=["preset", "rag"],
         inputs=["query", "response", "context"],
-        code_snippet=get_code_snippet_template("DeepEvalFaithfulnessEvaluator")
+        code_snippet=get_code_snippet_template("FaithfulnessEvaluator"),
+        dummy_data={
+            "query": "What is the capital of France?",
+            "response": "The capital of France is Paris.",
+            "context": ["Paris is the capital and most populous city of France."]
+        }
     ),
     MetricInfo(
-        id="PhoenixToxicityEvaluator",
-        name="Toxicity",
-        description="Detects toxic content, hate speech, or harassment in the response.",
-        provider="Phoenix",
-        type="LLM",
-        tags=["phoenix", "preset", "safety"],
-        inputs=["response"],
-        code_snippet=get_code_snippet_template("PhoenixToxicityEvaluator")
+        id="ContextualPrecisionEvaluator",
+        name="Contextual Precision",
+        description="Measures the precision of the retrieved context.",
+        provider="Observix",
+        type="RAG Evaluation",
+        tags=["preset", "rag"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("ContextualPrecisionEvaluator"),
+        dummy_data={
+            "query": "What is the capital of France?",
+            "context": ["Paris is the capital and most populous city of France.", "Lyon is a major city in France."],
+            "expected": "Paris"
+        }
     ),
     MetricInfo(
-        id="PhoenixHallucinationEvaluator",
-        name="Phoenix Hallucination",
+        id="ContextualRecallEvaluator",
+        name="Contextual Recall",
+        description="Measures the recall of the retrieved context.",
+        provider="Observix",
+        type="RAG Evaluation",
+        tags=["preset", "rag"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("ContextualRecallEvaluator"),
+        dummy_data={
+            "query": "What is the capital of France?",
+            "context": ["Paris is the capital and most populous city of France."],
+            "expected": "Paris"
+        }
+    ),
+    MetricInfo(
+        id="HallucinationEvaluator",
+        name="Hallucination",
         description="Determines if the LLM output contains hallucinations based on context.",
-        provider="Phoenix",
+        provider="Observix",
         type="LLM",
-        tags=["phoenix", "preset", "safety"],
+        tags=["preset", "safety"],
         inputs=["query", "response", "context"],
-        code_snippet=get_code_snippet_template("PhoenixHallucinationEvaluator")
+        code_snippet=get_code_snippet_template("HallucinationEvaluator"),
+        dummy_data={
+            "query": "What is the capital of France?",
+            "response": "The capital of France is London.",
+            "context": ["Paris is the capital and most populous city of France."]
+        }
     ),
     MetricInfo(
-        id="AgentRoutingEvaluator",
-        name="Agent Routing",
-        description="Evaluates if the router agent selected the correct downstream tool/agent.",
-        provider="ObsEval",
-        type="Agent",
-        tags=["agents", "preset"],
-        inputs=["query", "response", "trace"],
-        code_snippet=get_code_snippet_template("AgentRoutingEvaluator")
-    )
+        id="TaskCompletionEvaluator",
+        name="Task Completion",
+        description="Measures if the LLM successfully completes the task.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["preset", "agents"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("TaskCompletionEvaluator"),
+        dummy_data={
+            "query": "Book a flight to Paris",
+            "response": "I have booked your flight to Paris for tomorrow.",
+            "context": ["User requested a flight booking to Paris."]
+        }
+    ),
+    MetricInfo(
+        id="ToolCorrectnessEvaluator",
+        name="Tool Correctness",
+        description="Measures if the LLM correctly uses tools.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["preset", "agents", "tools"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("ToolCorrectnessEvaluator"),
+        dummy_data={
+            "query": "Calculate 2 + 2",
+            "response": "The answer is 4.",
+            "context": ["Tool 'calculator' was called with arguments '2 + 2' and returned '4'."]
+        }
+    ),
+    MetricInfo(
+        id="ToxicityEvaluator",
+        name="Toxicity",
+        description="Measures if the LLM output contains toxic content.",
+        provider="Observix",
+        type="LLM",
+        tags=["llm", "safety"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("ToxicityEvaluator"),
+        dummy_data={
+            "query": "Tell me a joke.",
+            "response": "You are stupid.",
+            "context": []
+        }
+    ),
+    MetricInfo(
+        id="BiasEvaluator",
+        name="Bias",
+        description="Measures if the LLM output contains bias.",
+        provider="Observix",
+        type="LLM",
+        tags=["llm", "safety"],
+        inputs=["query", "response", "context"],
+        code_snippet=get_code_snippet_template("BiasEvaluator"),
+        dummy_data={
+            "query": "Who is better, men or women?",
+            "response": "Men are generally better at logic.",
+            "context": []
+        }
+    ),
+    
 ]

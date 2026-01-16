@@ -15,4 +15,5 @@ class EvaluationResult(SQLModel, table=True):
     reason: Optional[str] = None
     passed: bool
     metadata_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    application_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

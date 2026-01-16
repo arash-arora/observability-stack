@@ -27,15 +27,18 @@ type EvaluationModalProps = {
     input?: string;
     output?: string;
     context?: string | string[];
+    application_name?: string;
   };
+  defaultObserve?: boolean;
 };
 
 export default function EvaluationModal({
   isOpen,
   onClose,
   initialData,
+  defaultObserve = false,
 }: EvaluationModalProps) {
-  const [metric, setMetric] = useState("DeepEvalFaithfulnessEvaluator");
+  const [metric, setMetric] = useState("FaithfulnessEvaluator");
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
   const [context, setContext] = useState("");
@@ -48,6 +51,11 @@ export default function EvaluationModal({
   const [azureEndpoint, setAzureEndpoint] = useState("");
   const [apiVersion, setApiVersion] = useState("");
   const [deploymentName, setDeploymentName] = useState("");
+
+  // Observability State
+  const [observe, setObserve] = useState(defaultObserve);
+  const [traceHost, setTraceHost] = useState("http://localhost:8000");
+  const [traceApiKey, setTraceApiKey] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
@@ -73,10 +81,44 @@ export default function EvaluationModal({
       setExpectedOutput("");
       setResult(null);
       setError(null);
-      // Reset config defaults if needed, or keep them consistent across runs?
-      // Keeping them consistent is usually better UX
+      
+      // Reset observe to default
+      setObserve(defaultObserve);
     }
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, defaultObserve]);
+
+  const [apiKeys, setApiKeys] = useState<{key: string; name: string}[]>([]);
+
+  // Auto-fetch API Keys
+  useEffect(() => {
+      const fetchKeys = async () => {
+          try {
+              const res = await api.get("/management/api-keys"); // This points to projects/api-keys if routed there, or management/api-keys. Assuming valid endpoint.
+              // Note: Based on previous file, the route might be /management/api-keys or /projects/api-keys. 
+              // Existing code used /management/api-keys so I will assume it maps correctly or stick to it.
+              // Logic: fetch keys, set available keys. 
+              if (res.data && Array.isArray(res.data)) {
+                  setApiKeys(res.data);
+                  // If observing and no key set, set first active one
+                  if (observe && !traceApiKey && res.data.length > 0) {
+                       const activeKey = res.data.find((k: any) => k.is_active);
+                       if (activeKey) {
+                           setTraceApiKey(activeKey.key);
+                       }
+                  }
+              }
+          } catch (e) {
+              console.error("Failed to fetch API keys", e);
+          }
+      };
+      
+      // Fetch if observe is enabled or just once on mount? 
+      // Better to fetch when observe is toggled on, or on mount. 
+      // I'll fetch when observe becomes true.
+      if (observe) {
+          fetchKeys();
+      }
+  }, [observe]); // Removed traceApiKey dependency to avoid loops, added handling inside
 
   const handleRunEvaluation = async () => {
     setLoading(true);
@@ -96,6 +138,12 @@ export default function EvaluationModal({
           model: model,
           api_key: apiKey,
           persist_result: true,
+          application_name: initialData.application_name,
+          
+          // Observability Params
+          observe: observe,
+          host: traceHost,
+          user_api_key: traceApiKey
       };
 
       if (provider === "azure") {
@@ -130,6 +178,13 @@ export default function EvaluationModal({
           {/* Left Column: Trace Data */}
           <div className="space-y-4">
             <h3 className="font-semibold text-sm border-b pb-2">Trace Data</h3>
+            
+            {initialData.application_name && (
+                 <div className="text-xs text-muted-foreground mb-2">
+                    Application: <span className="font-medium text-foreground">{initialData.application_name}</span>
+                 </div>
+            )}
+
             <div className="space-y-2">
               <Label>Metric</Label>
               <Select value={metric} onValueChange={setMetric}>
@@ -137,11 +192,15 @@ export default function EvaluationModal({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="DeepEvalFaithfulnessEvaluator">Faithfulness</SelectItem>
-                  <SelectItem value="DeepEvalAnswerRelevancyEvaluator">Answer Relevancy</SelectItem>
-                  <SelectItem value="DeepEvalContextualPrecisionEvaluator">Contextual Precision</SelectItem>
-                  <SelectItem value="DeepEvalHallucinationEvaluator">Hallucination</SelectItem>
-                  <SelectItem value="PhoenixToxicityEvaluator">Toxicity</SelectItem>
+                  <SelectItem value="FaithfulnessEvaluator">Faithfulness</SelectItem>
+                  <SelectItem value="AnswerRelevancyEvaluator">Answer Relevancy</SelectItem>
+                  <SelectItem value="ContextualPrecisionEvaluator">Contextual Precision</SelectItem>
+                  <SelectItem value="ContextualRecallEvaluator">Contextual Recall</SelectItem>
+                  <SelectItem value="HallucinationEvaluator">Hallucination</SelectItem>
+                  <SelectItem value="TaskCompletionEvaluator">Task Completion</SelectItem>
+                  <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem>
+                  <SelectItem value="ToxicityEvaluator">Toxicity</SelectItem>
+                  <SelectItem value="BiasEvaluator">Bias</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -191,7 +250,7 @@ export default function EvaluationModal({
           <div className="space-y-6">
              {/* Configuration Section */}
              <div className="space-y-4 p-4 rounded-lg border bg-muted/10">
-                <h3 className="font-semibold text-sm border-b pb-2">Configuration</h3>
+                <h3 className="font-semibold text-sm border-b pb-2">Evaluator Configuration</h3>
                 
                 <div className="space-y-2">
                     <Label>Provider</Label>
@@ -208,7 +267,7 @@ export default function EvaluationModal({
                 </div>
 
                 <div className="space-y-2">
-                    <Label>API Key</Label>
+                    <Label>LLM API Key</Label>
                     <Input 
                         type="password" 
                         value={apiKey} 
@@ -259,6 +318,60 @@ export default function EvaluationModal({
                         className="bg-background"
                     />
                 </div>
+             </div>
+             
+             {/* Trace Configuration */}
+             <div className="space-y-4 p-4 rounded-lg border bg-muted/10">
+                <div className="flex items-center justify-between border-b pb-2">
+                    <h3 className="font-semibold text-sm">Tracing</h3>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={observe} 
+                            onChange={(e) => setObserve(e.target.checked)}
+                            className="rounded border-border"
+                        /> Trace this evaluation
+                    </label>
+                </div>
+                
+                {observe && (
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="space-y-1">
+                            <Label className="text-xs">Observix Host</Label>
+                            <Input 
+                                value={traceHost}
+                                onChange={(e) => setTraceHost(e.target.value)}
+                                className="bg-background h-8 text-xs"
+                                placeholder="http://localhost:8000"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-xs">Observix API Key (Ingest)</Label>
+                            {apiKeys.length > 0 ? (
+                                <Select value={traceApiKey} onValueChange={setTraceApiKey}>
+                                    <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder="Select API Key" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {apiKeys.map((k) => (
+                                            <SelectItem key={k.key} value={k.key}>
+                                                {k.name} ({k.key.slice(0, 8)}...)
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            ) : (
+                                <Input 
+                                    type="password"
+                                    value={traceApiKey}
+                                    onChange={(e) => setTraceApiKey(e.target.value)}
+                                    className="bg-background h-8 text-xs"
+                                    placeholder="sk-observix-..."
+                                />
+                            )}
+                        </div>
+                    </div>
+                )}
              </div>
 
              {/* Results Section */}

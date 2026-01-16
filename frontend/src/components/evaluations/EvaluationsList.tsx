@@ -28,6 +28,7 @@ interface EvaluationResult {
   score: number;
   passed: boolean;
   reason: string;
+  application_name?: string;
 }
 
 export default function EvaluationsList() {
@@ -70,6 +71,7 @@ export default function EvaluationsList() {
           <TableHeader>
             <TableRow>
               <TableHead>Timestamp</TableHead>
+              <TableHead>Application</TableHead>
               <TableHead>Metric</TableHead>
               <TableHead>Input Preview</TableHead>
               <TableHead>Status</TableHead>
@@ -82,6 +84,9 @@ export default function EvaluationsList() {
               <TableRow key={result.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedResult(result)}>
                 <TableCell className="font-mono text-xs">
                   {format(new Date(result.created_at), "MMM d, HH:mm")}
+                </TableCell>
+                <TableCell className="text-sm text-foreground/80">
+                   {result.application_name || "-"}
                 </TableCell>
                 <TableCell>
                     <Badge variant="outline" className="font-mono text-xs">

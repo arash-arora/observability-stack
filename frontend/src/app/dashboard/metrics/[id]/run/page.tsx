@@ -32,6 +32,7 @@ export default function MetricRunPage() {
             description: found.description,
             code: found.code_snippet,
             prompt: found.prompt,
+            dummy_data: found.dummy_data,
           });
         }
       } catch (_e) {

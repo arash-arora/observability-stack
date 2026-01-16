@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
+import PageHeader from "@/components/PageHeader";
 
 // --- Inline Components ---
 const Button = ({
@@ -136,20 +137,19 @@ export default function MetricsPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-         {/* Breadcrumbs removed as they are in global header */}
-         <div className="flex items-center justify-end">
-           <Button
-             variant="primary"
-             className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
-             onClick={() => router.push("/dashboard/metrics/new")}
-           >
-             <Plus size={16} />
-             Create Metric
-           </Button>
-         </div>
-       </div>
+      <PageHeader 
+        title="Metrics Hub" 
+        infoTooltip="Manage and explore your evaluation metrics. Define custom metrics or use preset ones." 
+      >
+        <Button
+            variant="primary"
+            className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
+            onClick={() => router.push("/dashboard/metrics/new")}
+        >
+            <Plus size={16} />
+            Create Metric
+        </Button>
+      </PageHeader>
 
       <div className="flex gap-8">
         {/* Sidebar Filters */}

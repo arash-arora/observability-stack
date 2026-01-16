@@ -11,3 +11,4 @@ class Metric(SQLModel, table=True):
     inputs: List[str] = Field(sa_column=Column(JSON))
     code_snippet: str
     prompt: Optional[str] = None
+    dummy_data: Optional[dict] = Field(default=None, sa_column=Column(JSON))

@@ -153,7 +153,8 @@ async def run_evaluation(
                             score=result.score,
                             reason=result.reason,
                             passed=result.passed,
-                            metadata_json=result.metadata
+                            metadata_json=result.metadata,
+                            application_name=inputs.get("application_name")
                         )
                         db.add(eval_result)
                         await db.commit()

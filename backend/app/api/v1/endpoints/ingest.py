@@ -7,6 +7,7 @@ from app.models.all_models import ApiKey
 from app.core.clickhouse import get_clickhouse_client
 import json
 from datetime import datetime
+from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
@@ -21,7 +22,9 @@ async def ingest_traces(
     """
     try:
         # 1. Validate API Key
-        result = await session.execute(select(ApiKey).where(ApiKey.key == x_api_key))
+        result = await session.execute(
+            select(ApiKey).options(selectinload(ApiKey.application)).where(ApiKey.key == x_api_key)
+        )
         api_key_obj = result.scalars().first()
         
         if not api_key_obj:
@@ -30,7 +33,8 @@ async def ingest_traces(
         if not api_key_obj.is_active:
             raise HTTPException(status_code=403, detail="API Key is inactive")
             
-        project_id = api_key_obj.project_id
+        project_id = api_key_obj.application.project_id
+        application_name = api_key_obj.application.name
         
         # 2. Process data
         spans = payload
@@ -69,7 +73,8 @@ async def ingest_traces(
                 span.get("resource", {}).get("attributes", {}),
                 duration,
                 project_id,
-                span.get("attributes", {}).get("enduser.id", "")
+                span.get("attributes", {}).get("enduser.id", ""),
+                application_name
             ]
             data.append(row)
             
@@ -77,7 +82,7 @@ async def ingest_traces(
             client.insert("traces", data, column_names=[
                 "trace_id", "span_id", "parent_span_id", "name", "kind", 
                 "start_time", "end_time", "status_code", "status_message", 
-                "attributes", "events", "links", "resource_attributes", "duration_ms", "project_id", "user_id"
+                "attributes", "events", "links", "resource_attributes", "duration_ms", "project_id", "user_id", "application_name"
             ])
         
         return {"status": "success", "count": len(data)}
@@ -100,7 +105,9 @@ async def ingest_observations(
     """
     try:
         # 1. Validate API Key
-        result = await session.execute(select(ApiKey).where(ApiKey.key == x_api_key))
+        result = await session.execute(
+            select(ApiKey).options(selectinload(ApiKey.application)).where(ApiKey.key == x_api_key)
+        )
         api_key_obj = result.scalars().first()
         
         if not api_key_obj:
@@ -109,7 +116,7 @@ async def ingest_observations(
         if not api_key_obj.is_active:
             raise HTTPException(status_code=403, detail="API Key is inactive")
             
-        project_id = api_key_obj.project_id
+        project_id = api_key_obj.application.project_id
         
         # 2. Process data
         observations = payload

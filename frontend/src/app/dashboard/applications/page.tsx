@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import ApplicationModal from "@/components/applications/ApplicationModal";
 import { useDashboard } from "@/context/DashboardContext";
+import PageHeader from '@/components/PageHeader';
 
 interface Application {
   id: string;
@@ -31,14 +32,9 @@ export default function ApplicationsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
 
-  // Filter projects available for creation (current selected project or all available project)
-  // If a project is selected in context, we pre-select it in modal.
-  // If not, we pass all available projects to modal.
-
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Corrected API endpoint prefix '/management'
       const appsRes = await api.get("/management/applications");
       setApplications(appsRes.data);
     } catch (e) {
@@ -86,22 +82,26 @@ export default function ApplicationsPage() {
   const modalProjects = selectedProject ? [selectedProject] : projects;
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
-      <div className="flex items-center justify-end">
-        <Button onClick={() => setIsModalOpen(true)}>
+    <div className="container mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+         <PageHeader 
+            title="Applications" 
+            infoTooltip="Manage your applications and their API keys." 
+         />
+         <Button onClick={() => setIsModalOpen(true)}>
           <Plus className="mr-2 h-4 w-4" /> New Application
         </Button>
       </div>
 
       {selectedProject && (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground -mt-4 mb-4">
               Showing applications for project: <span className="font-semibold text-foreground">{selectedProject.name}</span>
           </p>
       )}
 
       {/* New API Key Alert */}
       {newApiKey && (
-        <div className="p-4 rounded-lg border border-green-500/50 bg-green-500/10">
+        <div className="p-4 rounded-lg border border-green-500/50 bg-green-500/10 mb-6">
           <div className="flex items-center justify-between">
             <div>
               <p className="font-semibold text-green-400">API Key Created!</p>
@@ -168,7 +168,7 @@ export default function ApplicationsPage() {
       <ApplicationModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        projects={projects} // Pass all projects so user can select regardless of current filter context, or restrict to modalProjects if strict
+        projects={projects} 
         onCreated={handleCreated}
       />
     </div>

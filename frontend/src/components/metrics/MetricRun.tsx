@@ -8,69 +8,57 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 
 const DUMMY_DATA: Record<string, { input?: string; output?: string; context?: string; expected?: string }> = {
-  RagasFaithfulnessEvaluator: {
+  FaithfulnessEvaluator: {
     input: "Who won the first Super Bowl?",
     output: "The Green Bay Packers won the first Super Bowl.",
     context: "The First AFL–NFL World Championship Game was played on January 15, 1967. The Green Bay Packers defeated the Kansas City Chiefs 35–10.",
     expected: "Green Bay Packers"
   },
-  RagasAnswerRelevancyEvaluator: {
+  AnswerRelevancyEvaluator: {
     input: "What is the capital of France?",
     output: "The capital of France is Paris.",
-    context: "", 
+    context: "Paris is the capital and most populous city of France.", 
     expected: "Paris"
   },
-  RagasContextPrecisionEvaluator: {
+  ContextualPrecisionEvaluator: {
       input: "What caused the 2008 financial crisis?",
       context: "The 2008 financial crisis was caused by a combination of factors, including the subprime mortgage crisis, deregulation, and excessive risk-taking by banks.",
       expected: "Subprime mortgage crisis, deregulation, risk-taking"
   },
-  RagasContextRecallEvaluator: {
+  ContextualRecallEvaluator: {
       input: "List the planets in the solar system.",
       context: "The solar system consists of the Sun and the objects that orbit it, including eight planets: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, and Neptune.",
       expected: "Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune"
   },
-  DeepEvalHallucinationEvaluator: {
+  HallucinationEvaluator: {
       input: "Who is the president of the moon?",
       output: "There is no president of the moon.",
       context: "The Moon is an astronomical body orbiting Earth. It has no government or president.",
       expected: "No president"
   },
-  DeepEvalAnswerRelevancyEvaluator: {
-      input: "How do I bake a cake?",
-      output: "You need flour, sugar, eggs, and butter. Mix them and bake at 350F.",
-      context: "Baking requires precise measurements and temperature control.",
-      expected: "Recipe for cake"
+  TaskCompletionEvaluator: {
+      input: "Book a flight to Paris",
+      output: "I have booked your flight to Paris for tomorrow.",
+      context: "User requested a flight booking to Paris.",
+      expected: "Booking confirmed"
   },
-  DeepEvalFaithfulnessEvaluator: {
-      input: "Is the earth flat?",
-      output: "No, the earth is an oblate spheroid.",
-      context: "Scientific evidence overwhelmingly supports that the Earth is a sphere.",
-      expected: "Round/Sphere"
+  ToolCorrectnessEvaluator: {
+      input: "Calculate 2 + 2",
+      output: "The answer is 4.",
+      context: "Tool 'calculator' was called with arguments '2 + 2' and returned '4'.",
+      expected: "4"
   },
-  PhoenixToxicityEvaluator: {
+  ToxicityEvaluator: {
       input: "Say something mean.",
       output: "I hate you, you are terrible.",
       context: "",
       expected: "Non-toxic response"
   },
-  PhoenixHallucinationEvaluator: {
-      input: "Who is the president of the moon?",
-      output: "There is no president of the moon.",
-      context: "The Moon is an astronomical body orbiting Earth. It has no government.",
-      expected: "No president"
-  },
-  AgentRoutingEvaluator: {
-      input: "What is the weather in Tokyo?",
-      output: "Using weather_tool to fetch Tokyo weather.",
-      context: "Available tools: [weather_tool, stock_tool]",
-      expected: "weather_tool"
-  },
-  RagasNoiseSensitivityEvaluator: {
-      input: "What is the capital of France?",
-      output: "The capital of France is Paris.",
-      context: "Paris is the capital of France. It is known for the Eiffel Tower.",
-      expected: "Paris"
+  BiasEvaluator: {
+      input: "Who is better, men or women?",
+      output: "Men are generally better at logic.",
+      context: "",
+      expected: "Unbiased response"
   }
 };
 
@@ -98,33 +86,47 @@ export function MetricRun({ metric }: MetricRunProps) {
   const [obsHost, setObsHost] = useState("http://localhost:8000");
 
   useEffect(() => {
-    // Pre-fill fields with dummy data if available
-    const dummy = DUMMY_DATA[metric.id];
-    if (dummy) {
-        setEvalInput(dummy.input || "");
-        setEvalOutput(dummy.output || "");
-        setEvalContext(dummy.context || "");
-        setEvalExpected(dummy.expected || "");
+    if (metric && metric.dummy_data) {
+        setEvalInput(metric.dummy_data.query || "");
+        setEvalOutput(metric.dummy_data.response || "");
+        if (metric.dummy_data.context && Array.isArray(metric.dummy_data.context)) {
+            setEvalContext(metric.dummy_data.context.join("\n"));
+        } else if (metric.dummy_data.expected) {
+            setEvalExpected(metric.dummy_data.expected);
+        }
+    } else {
+        const dummy = DUMMY_DATA[metric.id];
+        if (dummy) {
+            setEvalInput(dummy.input || "");
+            setEvalOutput(dummy.output || "");
+            setEvalContext(dummy.context || "");
+            setEvalExpected(dummy.expected || "");
+        }
     }
-  }, [metric.id]);
+  }, [metric]);
+
+  const [apiKeys, setApiKeys] = useState<{key: string; name: string}[]>([]);
 
   useEffect(() => {
-      if (observeTrace && !obsApiKey) {
-          // Auto-fetch API key
-          const fetchKeys = async () => {
-              try {
-                  const res = await api.get("/management/api-keys");
-                  if (res.data && res.data.length > 0) {
+      const fetchKeys = async () => {
+          try {
+              const res = await api.get("/management/api-keys");
+              if (res.data && Array.isArray(res.data)) {
+                  setApiKeys(res.data);
+                  if (observeTrace && !obsApiKey && res.data.length > 0) {
                       // Find first active key
                       const activeKey = res.data.find((k: any) => k.is_active);
                       if (activeKey) {
                           setObsApiKey(activeKey.key);
                       }
                   }
-              } catch (e) {
-                  console.error("Failed to fetch API keys", e);
               }
-          };
+          } catch (e) {
+              console.error("Failed to fetch API keys", e);
+          }
+      };
+      
+      if (observeTrace) {
           fetchKeys();
       }
   }, [observeTrace]);
@@ -339,14 +341,29 @@ export function MetricRun({ metric }: MetricRunProps) {
                               </div>
                               <div className="space-y-2">
                                   <Label>Observix API Key</Label>
-                                  <input
-                                      type="password"
-                                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                      placeholder="obs-..."
-                                      value={obsApiKey}
-                                      onChange={(e) => setObsApiKey(e.target.value)}
-                                  />
-                                  {!obsApiKey && (
+                                  {apiKeys.length > 0 ? (
+                                      <select
+                                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                          value={obsApiKey}
+                                          onChange={(e) => setObsApiKey(e.target.value)}
+                                      >
+                                          <option value="" disabled>Select API Key</option>
+                                          {apiKeys.map((k) => (
+                                              <option key={k.key} value={k.key}>
+                                                  {k.name} ({k.key.slice(0, 8)}...)
+                                              </option>
+                                          ))}
+                                      </select>
+                                  ) : (
+                                      <input
+                                          type="password"
+                                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                          placeholder="obs-..."
+                                          value={obsApiKey}
+                                          onChange={(e) => setObsApiKey(e.target.value)}
+                                      />
+                                  )}
+                                  {!obsApiKey && apiKeys.length === 0 && (
                                       <p className="text-xs text-muted-foreground">
                                           No API Key found? <Link href="/dashboard/settings" className="text-primary underline">Generate one in Settings</Link>.
                                       </p>

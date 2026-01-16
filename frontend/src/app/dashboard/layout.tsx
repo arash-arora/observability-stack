@@ -6,6 +6,29 @@ import { useEffect } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { DashboardProvider } from '@/context/DashboardContext';
 import ContextHeader from '@/components/dashboard/ContextHeader';
+import { useLayout, LayoutProvider } from '@/context/LayoutContext';
+import { cn } from '@/lib/utils';
+
+function DashboardContent({ children }: { children: React.ReactNode }) {
+  const { isSidebarCollapsed } = useLayout();
+  
+  return (
+    <div className="min-h-screen bg-background font-sans anti-aliased">
+      <Sidebar />
+      <main 
+        className={cn(
+          "transition-[padding] duration-200 ease-in-out",
+          isSidebarCollapsed ? "pl-16" : "pl-64"
+        )}
+      >
+        <div className="container max-w-7xl mx-auto p-8 pt-6">
+          <ContextHeader />
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+}
 
 export default function DashboardLayout({
   children,
@@ -26,15 +49,11 @@ export default function DashboardLayout({
 
   return (
     <DashboardProvider>
-      <div className="min-h-screen bg-background font-sans anti-aliased">
-        <Sidebar />
-        <main className="pl-64 transition-[padding] duration-200 ease-in-out">
-          <div className="container max-w-7xl mx-auto p-8 pt-6">
-            <ContextHeader />
-            {children}
-          </div>
-        </main>
-      </div>
+      <LayoutProvider>
+        <DashboardContent>
+          {children}
+        </DashboardContent>
+      </LayoutProvider>
     </DashboardProvider>
   );
 }

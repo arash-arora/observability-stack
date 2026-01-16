@@ -11,6 +11,7 @@ class MetricInfo(BaseModel):
     inputs: List[str]
     code_snippet: Optional[str] = None
     prompt: Optional[str] = None
+    dummy_data: Optional[Dict[str, Any]] = None
 
 class EvaluationRequest(BaseModel):
     metric_id: str

@@ -41,6 +41,7 @@ interface Node {
   children: Node[];
   is_obs?: boolean;
   total_cost?: number;
+  application_name?: string;
 }
 
 export default function TraceDetailSheet({
@@ -95,6 +96,7 @@ export default function TraceDetailSheet({
         status: span.status_code,
         attributes: span.attributes,
         children: [],
+        application_name: span.application_name
       });
     });
 
@@ -182,6 +184,10 @@ export default function TraceDetailSheet({
                 ...currentAttrs,
                 ...span.attributes
             };
+            // Propagate application_name if span has it and obs doesn't (or overwrite?)
+            if (span.application_name) {
+                obsNode.application_name = span.application_name;
+            }
         }
       }
     });
@@ -487,8 +493,10 @@ function NodeDetailView({ node }: { node: Node }) {
         initialData={{
             input: prepareData(node.input),
             output: prepareData(node.output),
-            context: node.attributes?.context
+            context: node.attributes?.context,
+            application_name: node.application_name
         }}
+        defaultObserve={true}
       />
 
       {/* Node Header */}
@@ -603,8 +611,56 @@ function DataSection({
   if (!data || (typeof data === "object" && Object.keys(data).length === 0))
     return null;
 
-  const isString = typeof data === "string";
-  const content = isString ? data : JSON.stringify(data, null, 2);
+  let parsed = data;
+  if (typeof data === 'string') {
+      try {
+           // Only parse if it looks like an object/array to avoid parsing simple strings
+           if (data.trim().startsWith('{') || data.trim().startsWith('[')) {
+               parsed = JSON.parse(data);
+           }
+      } catch (e) {}
+  }
+
+  const renderContent = (content: any) => {
+      // 1. Array of messages (Chat History)
+      if (Array.isArray(content)) {
+          // Check if it looks like a message list
+          const isMessageList = content.every(item => typeof item === 'object' && item !== null && ('role' in item || 'content' in item));
+          
+          if (isMessageList) {
+              return (
+                  <div className="space-y-4">
+                      {content.map((msg, i) => (
+                          <div key={i} className="flex flex-col gap-1">
+                              {msg.role && (
+                                  <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground bg-muted/50 w-fit px-1.5 rounded">
+                                      {msg.role}
+                                  </span>
+                              )}
+                              <div className="whitespace-pre-wrap font-mono text-xs opacity-90 pl-1 border-l-2 border-border">
+                                  {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || msg, null, 2)}
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              );
+          }
+      }
+      
+      // 2. Single Object with 'content' or 'text' key (Common Wrappers)
+      if (typeof content === 'object' && content !== null) {
+          if ('content' in content && typeof content.content === 'string') {
+               return <div className="whitespace-pre-wrap font-mono text-sm">{content.content}</div>;
+          }
+           if ('text' in content && typeof content.text === 'string') {
+               return <div className="whitespace-pre-wrap font-mono text-sm">{content.text}</div>;
+          }
+      }
+
+      // 3. Fallback: Pretty JSON or String
+      const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+      return <pre className="whitespace-pre-wrap font-mono text-sm">{text}</pre>;
+  };
 
   return (
     <div className="rounded-lg border border-border overflow-hidden bg-muted/10">
@@ -615,16 +671,17 @@ function DataSection({
         <button
           className="text-muted-foreground hover:text-foreground transition-colors"
           title="Copy"
+          onClick={() => navigator.clipboard.writeText(typeof data === 'string' ? data : JSON.stringify(data, null, 2))}
         >
           <Copy size={12} />
         </button>
       </div>
       <div
-        className={`p-4 overflow-x-auto text-sm font-mono ${
+        className={`p-4 overflow-x-auto text-sm ${
           isOutput ? "text-foreground" : "text-muted-foreground"
         }`}
       >
-        <pre>{content}</pre>
+        {renderContent(parsed)}
       </div>
     </div>
   );
