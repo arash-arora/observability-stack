@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import Link from "next/link";
 import { format } from "date-fns";
 import {
   Table,
@@ -134,7 +135,11 @@ export default function ApplicationsPage() {
           <TableBody>
             {filteredApplications.map((app) => (
               <TableRow key={app.id}>
-                <TableCell className="font-medium">{app.name}</TableCell>
+                <TableCell className="font-medium">
+                    <Link href={`/dashboard/applications/${app.id}`} className="hover:underline text-primary">
+                        {app.name}
+                    </Link>
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline">{getProjectName(app.project_id)}</Badge>
                 </TableCell>

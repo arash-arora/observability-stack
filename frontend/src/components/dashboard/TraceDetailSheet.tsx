@@ -613,10 +613,25 @@ function DataSection({
   };
 
   const renderContent = (content: any) => {
-      if (typeof content === 'string') {
-           return <div className="whitespace-pre-wrap font-mono text-sm">{content}</div>;
+      // If content is an object (and wasn't extracted to a string), pretty print it
+      if (typeof content === 'object' && content !== null) {
+          return <pre className="whitespace-pre-wrap font-mono text-sm">{JSON.stringify(content, null, 2)}</pre>;
       }
-      return <pre className="whitespace-pre-wrap font-mono text-sm">{JSON.stringify(content, null, 2)}</pre>;
+      
+      // If content is a string but looks like JSON object/list, try to pretty print it
+      if (typeof content === 'string') {
+           const trimmed = content.trim();
+           if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+               try {
+                   const parsed = JSON.parse(content);
+                   return <pre className="whitespace-pre-wrap font-mono text-sm">{JSON.stringify(parsed, null, 2)}</pre>;
+               } catch (e) {
+                   // Not valid JSON, return as string
+               }
+           }
+      }
+
+      return <div className="whitespace-pre-wrap font-mono text-sm">{content}</div>;
   };
 
   return (

@@ -16,13 +16,13 @@ export default function ModelHubPage() {
         infoTooltip="Register and test your LLMs to reuse credentials across the platform." 
       />
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col gap-4">
           <TabsList className="w-fit">
               <TabsTrigger value="registry">Model Registry</TabsTrigger>
               <TabsTrigger value="playground">Playground</TabsTrigger>
           </TabsList>
           
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-auto space-y-4">
               <TabsContent value="registry" className="m-0 h-full">
                   <ModelRegistry />
               </TabsContent>

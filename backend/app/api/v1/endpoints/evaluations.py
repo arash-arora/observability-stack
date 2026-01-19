@@ -213,6 +213,28 @@ async def list_evaluation_results(
     return result.scalars().all()
 
 
+@router.get("/results/{id}", response_model=EvaluationResult)
+async def get_evaluation_result(
+    id: str,
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Get a single evaluation result by ID.
+    """
+    try:
+        # Validate UUID
+        import uuid
+        uuid_obj = uuid.UUID(id)
+    except ValueError:
+         raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    result = await db.get(EvaluationResult, uuid_obj)
+    if not result:
+        raise HTTPException(status_code=404, detail="Evaluation result not found")
+        
+    return result
+
+
 @router.get("/stats")
 async def get_evaluation_stats(
     db: AsyncSession = Depends(get_session)

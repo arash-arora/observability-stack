@@ -13,9 +13,10 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, RefreshCw } from "lucide-react";
-import EvaluationDetailSheet from "./EvaluationDetailSheet";
+import { ExternalLink, RefreshCw, Activity } from "lucide-react";
 import EvaluationModal from "@/components/dashboard/EvaluationModal";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface EvaluationResult {
   id: string;
@@ -29,9 +30,11 @@ interface EvaluationResult {
   passed: boolean;
   reason: string;
   application_name?: string;
+  trace_id?: string;
 }
 
 export default function EvaluationsList() {
+  const router = useRouter();
   const [results, setResults] = useState<EvaluationResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedResult, setSelectedResult] = useState<EvaluationResult | null>(null);
@@ -72,6 +75,7 @@ export default function EvaluationsList() {
             <TableRow>
               <TableHead>Timestamp</TableHead>
               <TableHead>Application</TableHead>
+              <TableHead>Trace</TableHead>
               <TableHead>Metric</TableHead>
               <TableHead>Input Preview</TableHead>
               <TableHead>Status</TableHead>
@@ -81,12 +85,27 @@ export default function EvaluationsList() {
           </TableHeader>
           <TableBody>
             {results.map((result) => (
-              <TableRow key={result.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedResult(result)}>
+              <TableRow 
+                key={result.id} 
+                className="cursor-pointer hover:bg-muted/50" 
+                onClick={() => router.push(`/dashboard/evaluations/run?evaluation_id=${result.id}`)}
+              >
                 <TableCell className="font-mono text-xs">
                   {format(new Date(result.created_at), "MMM d, HH:mm")}
                 </TableCell>
                 <TableCell className="text-sm text-foreground/80">
                    {result.application_name || "-"}
+                </TableCell>
+                <TableCell>
+                  {result.trace_id ? (
+                    <Link href={`/dashboard/traces/${result.trace_id}`} onClick={(e) => e.stopPropagation()}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                            <Activity className="h-4 w-4 text-blue-500" />
+                        </Button>
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
                 </TableCell>
                 <TableCell>
                     <Badge variant="outline" className="font-mono text-xs">
@@ -120,7 +139,7 @@ export default function EvaluationsList() {
             ))}
             {!loading && results.length === 0 && (
                 <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                         No evaluations found.
                     </TableCell>
                 </TableRow>
@@ -128,16 +147,6 @@ export default function EvaluationsList() {
           </TableBody>
         </Table>
       </div>
-
-      {/* Details Sheet */}
-      {selectedResult && (
-          <EvaluationDetailSheet 
-            isOpen={!!selectedResult && !isRerunOpen} 
-            onClose={() => setSelectedResult(null)} 
-            result={selectedResult}
-            onRerun={() => setIsRerunOpen(true)}
-          />
-      )}
 
       {/* Rerun Modal */}
       {selectedResult && (

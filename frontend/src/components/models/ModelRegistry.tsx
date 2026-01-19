@@ -120,8 +120,7 @@ export default function ModelRegistry() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-medium">Registered Models</h3>
+      <div className="flex justify-end items-center">
         <Button onClick={() => setIsDialogOpen(true)} size="sm">
             <Plus className="w-4 h-4 mr-2" />
             Add Model

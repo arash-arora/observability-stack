@@ -194,6 +194,42 @@ async def read_applications(
         for app in applications
     ]
 
+@router.get("/applications/{application_id}", response_model=ApplicationRead)
+async def read_application(
+    application_id: uuid.UUID,
+    current_user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """
+    Get application by ID.
+    """
+    from sqlalchemy.orm import selectinload
+    
+    # Check access via OrganizationUserLink
+    application = await session.get(Application, application_id, options=[selectinload(Application.api_keys)])
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+        
+    project_res = await session.get(Project, application.project_id)
+    if not project_res:
+         # Should not happen ideally
+         raise HTTPException(status_code=404, detail="Project for application not found")
+
+    link_stmt = select(OrganizationUserLink).where(
+        OrganizationUserLink.user_id == current_user.id,
+        OrganizationUserLink.organization_id == project_res.organization_id
+    )
+    result = await session.execute(link_stmt)
+    if not result.scalars().first():
+         raise HTTPException(status_code=403, detail="Not authorized to access this application")
+         
+    return ApplicationRead(
+        id=application.id, 
+        name=application.name, 
+        project_id=application.project_id,
+        api_key=application.api_keys[0].key if application.api_keys else None
+    )
+
 @router.delete("/applications/{application_id}")
 async def delete_application(
     application_id: uuid.UUID,

@@ -75,12 +75,10 @@ interface Metric {
   id: string;
   name: string;
   type: string;
-  level: string;
   tags: string[];
-  owner: string;
-  lastEdit: string;
   description: string;
   code: string;
+  inputs: string[];
 }
 
 export default function MetricsPage() {
@@ -96,19 +94,14 @@ export default function MetricsPage() {
     const fetchMetrics = async () => {
       try {
         const res = await api.get("/evaluations/metrics");
-        // Transform backend data to frontend model (if needed)
-        // Backend returns: MetricInfo (id, name, description, provider, type, tags, inputs, code_snippet)
         const mapped = res.data.map((m: any) => ({
           id: m.id,
           name: m.name,
           type: m.type,
-          level: "Trace", // Default to Trace for now as not explicitly in current backend model
           tags: m.tags || [],
-          owner: m.provider,
-          lastEdit: "-", // Not in backend schema yet
           description: m.description,
           code: m.code_snippet,
-          // Add prompt if it exists (future)
+          inputs: m.inputs || [],
         }));
         setMetrics(mapped);
       } catch (err) {
@@ -189,13 +182,12 @@ export default function MetricsPage() {
             </h3>
             <div className="flex flex-wrap gap-2">
               {[
-                "ragas",
-                "deepeval",
-                "phoenix",
                 "preset",
                 "custom",
                 "rag",
                 "safety",
+                "agents",
+                "tools"
               ].map((tag) => (
                 <Badge
                   key={tag}
@@ -226,30 +218,23 @@ export default function MetricsPage() {
           <div className="rounded-md border bg-card shadow-sm overflow-hidden">
             <div className="w-full overflow-auto">
               <table className="w-full caption-bottom text-sm text-left">
-                <thead className="[&_tr]:border-b bg-muted/50">
-                  <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                    <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-75">
-                      Metric Name
+                <thead className="bg-muted/50">
+                  <tr className="border-b transition-colors">
+                    <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-[400px]">
+                      Metric Details
                     </th>
                     <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">
                       Type
                     </th>
                     <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">
-                      Level
+                      Required Inputs
                     </th>
                     <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">
                       Tags
                     </th>
-                    <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">
-                      Owner
-                    </th>
-                    <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">
-                      Last Edit
-                    </th>
-                    <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-12.5"></th>
                   </tr>
                 </thead>
-                <tbody className="[&_tr:last-child]:border-0">
+                <tbody className="[&_tr:last-child]:border-0 bg-card">
                   {filteredMetrics.map((metric) => (
                     <tr
                       key={metric.id}
@@ -258,57 +243,46 @@ export default function MetricsPage() {
                         router.push(`/dashboard/metrics/${metric.id}`)
                       }
                     >
-                      <td className="p-4 align-middle font-medium">
-                        <div className="flex items-center gap-2">
-                          {metric.name}
-                          <div className="group relative">
-                            <Info className="w-3 h-3 text-muted-foreground opacity-50 cursor-help" />
-                            <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-48 z-10">
-                              {metric.description}
-                            </div>
-                          </div>
+                      <td className="p-4 align-top">
+                        <div className="flex flex-col gap-1">
+                          <span className="font-medium text-sm text-foreground">{metric.name}</span>
+                          <span className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                            {metric.description}
+                          </span>
                         </div>
                       </td>
-                      <td className="p-4 align-middle">{metric.type}</td>
-                      <td className="p-4 align-middle">{metric.level}</td>
-                      <td className="p-4 align-middle">
-                        <div className="flex gap-1 flex-wrap">
-                          {metric.tags.slice(0, 2).map((tag) => (
+                      <td className="p-4 align-top">
+                         <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-primary/10 text-primary hover:bg-primary/20">
+                            {metric.type}
+                         </div>
+                      </td>
+                      <td className="p-4 align-top">
+                        <div className="flex flex-wrap gap-1.5">
+                            {metric.inputs.map((input) => (
+                                <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
+                                    {input}
+                                </code>
+                            ))}
+                            {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
+                        </div>
+                      </td>
+                      <td className="p-4 align-top">
+                        <div className="flex gap-1.5 flex-wrap">
+                          {metric.tags.slice(0, 3).map((tag) => (
                             <Badge
                               key={tag}
                               variant="secondary"
-                              className="text-[10px] px-1.5 py-0 h-5 font-normal"
+                              className="text-[10px] px-1.5 py-0 h-5 font-normal border border-border"
                             >
                               {tag}
                             </Badge>
                           ))}
-                          {metric.tags.length > 2 && (
-                            <Badge
-                              variant="secondary"
-                              className="text-[10px] px-1.5 py-0 h-5 font-normal"
-                            >
-                              +{metric.tags.length - 2}
-                            </Badge>
+                          {metric.tags.length > 3 && (
+                            <span className="text-xs text-muted-foreground self-center ml-1">
+                              +{metric.tags.length - 3}
+                            </span>
                           )}
                         </div>
-                      </td>
-                      <td className="p-4 align-middle">
-                        <div className="flex items-center gap-2">
-                          <div className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold ring-1 ring-primary/20">
-                            {metric.owner[0]}
-                          </div>
-                          <span className="text-xs text-muted-foreground">
-                            {metric.owner}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-4 align-middle text-xs text-muted-foreground">
-                        {metric.lastEdit}
-                      </td>
-                      <td className="p-4 align-middle">
-                        <Button variant="ghost" className="h-8 w-8 p-0">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
                       </td>
                     </tr>
                   ))}

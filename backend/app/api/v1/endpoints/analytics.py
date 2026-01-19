@@ -6,7 +6,7 @@ from app.api.deps import get_current_user
 from app.models.all_models import User
 from app.models.evaluation_result import EvaluationResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 
 router = APIRouter()
 
@@ -798,6 +798,289 @@ async def get_evaluation_stats(
             "avg_scores": avg_scores,
             "score_trend": score_trend
         }
+    except Exception as e:
+        print(f"Eval Stats Error: {e}")
+        return {}
+
+@router.get("/applications/{app_name}/stats")
+async def get_application_stats(
+    project_id: str,
+    app_name: str,
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Get detailed statistics for a specific application.
+    """
+    client = get_clickhouse_client()
+    
+    where_clause = f"project_id = '{project_id}' AND application_name = '{app_name}'"
+    
+    if from_ts:
+        where_clause += f" AND start_time >= toDateTime64({from_ts}, 9)"
+    if to_ts:
+        where_clause += f" AND start_time <= toDateTime64({to_ts}, 9)"
+
+    # 1. Overview Metrics
+    overview_query = f"""
+    SELECT 
+        count() as total_requests,
+        sum(duration_ms) as total_duration,
+        avg(duration_ms) as avg_latency,
+        quantile(0.95)(duration_ms) as p95_latency,
+        countIf(status_code = 'ERROR') as error_count
+    FROM traces
+    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    """
+    
+    # 2. Token & Cost (Joined)
+    cost_tokens_query = f"""
+    SELECT 
+        sum(o.total_cost),
+        sum(
+             CASE 
+                WHEN isValidJSON(o.token_usage) THEN 
+                COALESCE(JSONExtractInt(o.token_usage, 'total_tokens'), 0)
+                ELSE 0 
+            END
+        )
+    FROM traces t
+    INNER JOIN observations o ON t.trace_id = o.trace_id
+    WHERE {where_clause.replace("project_id", "t.project_id").replace("application_name", "t.application_name")}
+      AND (t.parent_span_id IS NULL OR t.parent_span_id = '')
+    """
+    
+    # 3. Requests & Latency Over Time (Chart 1 & 2)
+    series_query = f"""
+    SELECT 
+        toStartOfHour(start_time) as time,
+        count() as count,
+        avg(duration_ms) as avg_lat
+    FROM traces
+    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    GROUP BY time
+    ORDER BY time ASC
+    """
+    
+    # 4. Status Distribution
+    status_query = f"""
+    SELECT 
+        if(status_code = '' OR status_code IS NULL OR status_code = 'UNSET', 'OK', status_code) as status, 
+        count()
+    FROM traces
+    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    GROUP BY status
+    """
+    
+    # 5. Top Models
+    models_query = f"""
+    SELECT 
+        if(o.model = '' OR o.model IS NULL, 'Unknown', o.model) as model_name,
+        count() as count
+    FROM traces t
+    INNER JOIN observations o ON t.trace_id = o.trace_id
+    WHERE {where_clause.replace("project_id", "t.project_id").replace("application_name", "t.application_name")}
+    GROUP BY model_name
+    ORDER BY count DESC
+    LIMIT 10
+    """
+    
+    # 6. Top Users
+    users_query = f"""
+    SELECT 
+        if(user_id = '' OR user_id IS NULL, 'Unknown', user_id) as user,
+        count()
+    FROM traces
+    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    GROUP BY user
+    ORDER BY count() DESC
+    LIMIT 10
+    """
+    
+    # New Graph Queries
+    
+    # 7. Token Usage Over Time
+    token_series_query = f"""
+    SELECT 
+        toStartOfHour(t.start_time) as time,
+        sum(
+             CASE 
+                WHEN isValidJSON(o.token_usage) THEN 
+                COALESCE(JSONExtractInt(o.token_usage, 'total_tokens'), 0)
+                ELSE 0 
+            END
+        ) as total_tokens
+    FROM traces t
+    LEFT JOIN observations o ON t.trace_id = o.trace_id
+    WHERE {where_clause.replace("project_id", "t.project_id").replace("application_name", "t.application_name")}
+      AND (t.parent_span_id IS NULL OR t.parent_span_id = '')
+    GROUP BY time
+    ORDER BY time ASC
+    """
+    
+    # 8. Cost Over Time
+    cost_series_query = f"""
+    SELECT 
+        toStartOfHour(t.start_time) as time,
+        sum(o.total_cost) as total_cost,
+        sum(
+             CASE 
+                WHEN isValidJSON(o.token_usage) THEN 
+                COALESCE(JSONExtractInt(o.token_usage, 'total_tokens'), 0)
+                ELSE 0 
+            END
+        ) as total_tokens
+    FROM traces t
+    LEFT JOIN observations o ON t.trace_id = o.trace_id
+    WHERE {where_clause.replace("project_id", "t.project_id").replace("application_name", "t.application_name")}
+      AND (t.parent_span_id IS NULL OR t.parent_span_id = '')
+    GROUP BY time
+    ORDER BY time ASC
+    """
+
+    try:
+        overview_res = client.query(overview_query)
+        cost_res = client.query(cost_tokens_query)
+        series_res = client.query(series_query)
+        status_res = client.query(status_query)
+        models_res = client.query(models_query)
+        users_res = client.query(users_query)
+        token_series_res = client.query(token_series_query)
+        cost_series_res = client.query(cost_series_query)
+        
+        # Parse Overview
+        row = overview_res.result_rows[0]
+        total_requests = row[0]
+        total_duration = row[1]
+        avg_latency = row[2]
+        p95_latency = row[3]
+        error_count = row[4]
+        error_rate = (error_count / total_requests * 100) if total_requests > 0 else 0
+        
+        # Parse Cost
+        c_row = cost_res.result_rows[0]
+        total_cost = c_row[0] or 0.0
+        total_tokens = c_row[1] or 0
+        
+        if total_cost == 0 and total_tokens > 0:
+            total_cost = total_tokens * 0.000002
+            
+        # Helper for date formatting
+        def fmt_time(dt):
+            return dt.strftime("%b %d, %I:%M %p")
+
+        # Parse Series
+        request_series = []
+        latency_series = []
+        for r in series_res.result_rows:
+            t_str = fmt_time(r[0])
+            request_series.append({"time": t_str, "requests": r[1]})
+            latency_series.append({"time": t_str, "latency": round(r[2], 2)})
+            
+        # Parse Token & Cost Series
+        token_series = []
+        for r in token_series_res.result_rows:
+            token_series.append({"time": fmt_time(r[0]), "tokens": r[1]})
+            
+        cost_series = []
+        for r in cost_series_res.result_rows:
+            # If cost is 0, estimate
+            val = r[1] or 0.0
+            if val == 0 and r[2] > 0:
+                val = r[2] * 0.000002
+            cost_series.append({"time": fmt_time(r[0]), "cost": round(val, 5)})
+            
+        # Parse Status
+        status_dist = [{"name": r[0] or 'OK', "value": r[1]} for r in status_res.result_rows]
+        
+        # Parse Models
+        model_usage = [{"name": r[0], "value": r[1]} for r in models_res.result_rows]
+        
+        # Parse Users
+        top_users = [{"user": r[0], "count": r[1]} for r in users_res.result_rows]
+        
+        # --- Postgres Evaluations for this App ---
+        eval_metrics = {
+            "total_evals": 0,
+            "pass_rate": 0,
+            "avg_score": 0,
+            "score_trend": [],
+            "pass_fail_trend": [] # New Chart
+        }
+        
+        try:
+             # Total & Pass Rate
+             stmt = select(
+                 func.count().label('total'),
+                 func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label('passed'),
+                 func.avg(EvaluationResult.score).label('avg_score')
+             ).where(EvaluationResult.application_name == app_name)
+             
+             pg_res = await session.execute(stmt)
+             pg_row = pg_res.one()
+             
+             total_evals = pg_row.total or 0
+             passed_evals = pg_row.passed or 0
+             
+             eval_metrics["total_evals"] = total_evals
+             eval_metrics["avg_score"] = round(pg_row.avg_score, 2) if pg_row.avg_score else 0
+             eval_metrics["pass_rate"] = round((passed_evals / total_evals * 100), 1) if total_evals > 0 else 0
+             
+             # Eval Trend
+             trend_stmt = select(
+                 func.to_char(EvaluationResult.created_at, 'YYYY-MM-DD').label('day'), 
+                 func.avg(EvaluationResult.score),
+                 func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label('passed_count'),
+                 func.count().label('total_count')
+             ).where(EvaluationResult.application_name == app_name).group_by('day').order_by('day').limit(30)
+             
+             trend_pg_res = await session.execute(trend_stmt)
+             for day, avg, passed, total in trend_pg_res.all():
+                 avg = avg or 0
+                 # Reformat Day? YYYY-MM-DD is fine for X axis, maybe format in frontend
+                 # But let's try to match style if possible. 
+                 # Actually simpler to keep YYYY-MM-DD for eval trend usually.
+                 eval_metrics["score_trend"].append({"date": day, "score": round(avg, 2)})
+                 
+                 # Pass/Fail Trend
+                 failed = total - passed
+                 eval_metrics["pass_fail_trend"].append({
+                     "date": day,
+                     "passed": passed,
+                     "failed": failed
+                 })
+                 
+        except Exception as e:
+            print(f"App Eval Stats Error: {e}")
+        
+        
+        return {
+            "overview": {
+                "total_requests": total_requests,
+                "avg_latency": round(avg_latency, 2),
+                "p95_latency": round(p95_latency, 2),
+                "error_rate": round(error_rate, 2),
+                "total_tokens": total_tokens,
+                "total_cost": round(total_cost, 4)
+            },
+            "charts": {
+                "requests_over_time": request_series,
+                "latency_over_time": latency_series,
+                "status_distribution": status_dist,
+                "model_usage": model_usage,
+                "top_users": top_users,
+                "tokens_over_time": token_series, # New
+                "cost_over_time": cost_series,    # New
+                "pass_fail_trend": eval_metrics["pass_fail_trend"] # New
+            },
+            "evaluations": eval_metrics
+        }
+        
+    except Exception as e:
+        print(f"App Stats Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         print(f"Eval Stats Error: {e}")
         return {
