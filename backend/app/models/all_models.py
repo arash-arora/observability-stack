@@ -46,6 +46,18 @@ class Application(SQLModel, table=True):
     
     project: Project = Relationship(back_populates="applications")
     api_keys: List["ApiKey"] = Relationship(back_populates="application")
+    rubric_prompt: Optional[str] = Field(default="""CONSISTENT SCORING GUIDELINES:
+Score Distribution:
+•  90-100 (Exceptional): Top 10% performance, benchmark quality
+•  70-80 (Proficient): Top 25% performance, production ready
+•  50-60 (Adequate): Meets basic requirements, needs optimization
+•  30-40 (Below Standard): Significant issues, requires improvement
+•  10-20 (Unacceptable): Critical failures, not functional
+Scoring Criteria:
+•  Score based on OBJECTIVE evidence from trace data
+•  Each score band must have specific, measurable criteria
+•  Consistency across all evaluation dimensions
+•  No score inflation - use full 1-10 range appropriately""")
 
 class ApiKey(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)

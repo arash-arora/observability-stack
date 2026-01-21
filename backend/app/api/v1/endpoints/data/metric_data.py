@@ -151,4 +151,117 @@ STATIC_METRICS_REGISTRY = [
         }
     ),
     
+    MetricInfo(
+        id="ToolSelectionEvaluator",
+        name="Tool Selection",
+        description="Measures if the agent selected the correct tool for the task.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["observix", "agents", "tools"],
+        inputs=["query", "trace_data", "workflow_details"],
+        code_snippet=get_code_snippet_template("ToolSelectionEvaluator"),
+        dummy_data={
+            "query": "Calculate 2+2",
+            "context": ["Agent selected 'calculator' tool."]
+        }
+    ),
+    MetricInfo(
+        id="ToolInputStructureEvaluator",
+        name="Tool Input Structure",
+        description="Measures if the tool input arguments follow the correct schema.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["observix", "agents", "tools"],
+        inputs=["query", "trace_data", "workflow_details"],
+        code_snippet=get_code_snippet_template("ToolInputStructureEvaluator"),
+        dummy_data={
+             "query": "Calculate 2+2",
+             "context": ["Input {'expression': '2+2'} is valid."]
+        }
+    ),
+    MetricInfo(
+        id="ToolSequenceEvaluator",
+        name="Tool Sequence",
+        description="Measures if the sequence of tool calls is logical and efficient.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["observix", "agents", "tools"],
+        inputs=["query", "trace_data", "workflow_details"],
+        code_snippet=get_code_snippet_template("ToolSequenceEvaluator"),
+        dummy_data={
+             "query": "Search for weather then calculate average",
+             "context": ["Agent searched weather, then called calculator."]
+        }
+    ),
+    MetricInfo(
+        id="AgentRoutingEvaluator",
+        name="Agent Routing",
+        description="Measures if the request was routed to the correct specialized agent.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["observix", "agents", "routing"],
+        inputs=["query", "trace_data", "workflow_details"],
+        code_snippet=get_code_snippet_template("AgentRoutingEvaluator"),
+        dummy_data={
+             "query": "Book a flight",
+             "context": ["Router sent request to TravelAgent."]
+        }
+    ),
+    MetricInfo(
+        id="HITLEvaluator",
+        name="Human-in-the-Loop",
+        description="Measures if the agent correctly identified when to ask for human intervention.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["observix", "agents", "safety"],
+        inputs=["query", "trace_data", "workflow_details"],
+        code_snippet=get_code_snippet_template("HITLEvaluator"),
+        dummy_data={
+             "query": "Transfer $1M to unknown account",
+             "context": ["Agent paused and requested human approval."]
+        }
+    ),
+    MetricInfo(
+        id="WorkflowCompletionEvaluator",
+        name="Workflow Completion",
+        description="Measures if the overall multi-step workflow was completed successfully.",
+        provider="Observix",
+        type="Agentic AI",
+        tags=["observix", "agents", "workflow"],
+        inputs=["query", "trace_data", "workflow_details"],
+        code_snippet=get_code_snippet_template("WorkflowCompletionEvaluator"),
+        dummy_data={
+             "query": "Plan a trip to Paris",
+             "context": ["Agent researched, booked flight, and reserved hotel."]
+        }
+    ),
+    MetricInfo(
+        id="CustomEvaluator",
+        name="Custom Metric",
+        description="Evaluates based on a custom prompt provided in the evaluation request.",
+        provider="Observix",
+        type="Custom",
+        tags=["observix", "custom"],
+        inputs=["query", "response", "custom_prompt"],
+        code_snippet=get_code_snippet_template("CustomEvaluator"),
+        dummy_data={
+             "query": "Summarize text",
+             "context": ["Summary is concise."]
+        }
+    ),
+    MetricInfo(
+        id="AccuracyEvaluator",
+        name="Accuracy",
+        description="Measures the accuracy of the response against a ground truth or logic.",
+        provider="Observix",
+        type="Core",
+        tags=["observix", "accuracy"],
+        inputs=["query", "response", "expected"],
+        code_snippet=get_code_snippet_template("AccuracyEvaluator"),
+        dummy_data={
+             "query": "2+2",
+             "response": "4",
+             "expected": "4"
+        }
+    )
 ]

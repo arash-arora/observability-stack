@@ -9,8 +9,9 @@ import PageHeader from '@/components/PageHeader';
 import { 
     Clock, AlertCircle, Search, Filter, PlayCircle, 
     ChevronDown, ChevronRight, X, Calendar, Download, 
-    LayoutList, MoreHorizontal, Star, ArrowUpDown, ArrowUp, ArrowDown 
+    LayoutList, MoreHorizontal, Star, ArrowUpDown, ArrowUp, ArrowDown, FlaskConical
 } from 'lucide-react';
+import EvaluationModal from '@/components/dashboard/EvaluationModal';
 import { cn } from '@/lib/utils';
 import { getPreviewString } from '@/lib/traceUtils';
 
@@ -36,6 +37,10 @@ export default function TracesPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+
+  // Manual Evaluation State
+  const [evalModalOpen, setEvalModalOpen] = useState(false);
+  const [evalTraceData, setEvalTraceData] = useState<any>(null);
 
   // Sync state with URL params on mount/update
   useEffect(() => {
@@ -149,18 +154,22 @@ export default function TracesPage() {
   // Render Helpers
   const renderJSONPreview = (jsonStr?: string) => {
     if (!jsonStr) return <span className="text-muted-foreground italic">Empty</span>;
-    const preview = getPreviewString(jsonStr, 150);
+    const preview = getPreviewString(jsonStr, 50);
     return <span className="font-mono text-xs text-muted-foreground truncate block max-w-[150px]" title={preview}>{preview}</span>;
   };
 
   const renderMetadata = (meta?: any) => {
       if (!meta || Object.keys(meta).length === 0) return <span className="text-muted-foreground">-</span>;
-      return <div className="flex gap-1 flex-wrap">
-          {Object.entries(meta).slice(0, 2).map(([k, v]: any) => (
-              <span key={k} className="px-1.5 py-0.5 bg-muted/50 rounded text-[10px] font-mono border border-border">
-                  {k}={String(v)}
-              </span>
-          ))}
+      return <div className="flex gap-1 flex-wrap max-w-full overflow-hidden">
+          {Object.entries(meta).slice(0, 2).map(([k, v]: any) => {
+              const valStr = typeof v === 'string' ? v : JSON.stringify(v);
+              const preview = getPreviewString(valStr, 40);
+              return (
+                <span key={k} className="px-1.5 py-0.5 bg-muted/50 rounded text-[10px] font-mono border border-border truncate max-w-[200px]" title={`${k}=${valStr}`}>
+                    {k}={preview}
+                </span>
+              );
+          })}
           {Object.keys(meta).length > 2 && <span className="text-[10px] text-muted-foreground">+{Object.keys(meta).length - 2}</span>}
       </div>
   };
@@ -350,6 +359,12 @@ export default function TracesPage() {
                                             <PlayCircle size={14} className="text-indigo-400"/>
                                         )}
                                         {trace.name}
+                                        {(trace.name.startsWith('evaluation_') || trace.metadata?.is_evaluation) && (
+                                            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[10px] border border-blue-500/20 font-normal ml-2">
+                                                <FlaskConical size={10} />
+                                                Eval
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="text-[10px] text-muted-foreground font-mono mt-0.5 opacity-70">
                                         {trace.trace_id.slice(0, 8)}
@@ -421,6 +436,20 @@ export default function TracesPage() {
          onClose={handleCloseTrace}
          traceId={selectedTraceId}
        />
+
+        {/* Evaluation Modal for Row Actions */}
+        <EvaluationModal
+            isOpen={evalModalOpen}
+            onClose={() => setEvalModalOpen(false)}
+            initialData={{
+                input: "",
+                output: "",
+                context: "",
+                application_name: "", 
+                trace: evalTraceData
+            }}
+            defaultObserve={true}
+        />
     </div>
   );
 }

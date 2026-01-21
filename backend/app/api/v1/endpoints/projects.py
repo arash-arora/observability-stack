@@ -43,10 +43,16 @@ class ApplicationCreate(BaseModel):
     name: str
     project_id: uuid.UUID
 
+
+class ApplicationUpdate(BaseModel):
+    name: str | None = None
+    rubric_prompt: str | None = None
+
 class ApplicationRead(BaseModel):
     id: uuid.UUID
     name: str
     project_id: uuid.UUID
+    rubric_prompt: str | None = None
     api_key: str | None = None  # Only populated on creation
 
 # --- Endpoints ---
@@ -163,6 +169,7 @@ async def create_application(
         id=application.id,
         name=application.name,
         project_id=application.project_id,
+        rubric_prompt=application.rubric_prompt,
         api_key=api_key_obj.key
     )
 
@@ -189,6 +196,7 @@ async def read_applications(
             id=app.id, 
             name=app.name, 
             project_id=app.project_id,
+            rubric_prompt=app.rubric_prompt,
             api_key=app.api_keys[0].key if app.api_keys else None
         )
         for app in applications
@@ -227,7 +235,56 @@ async def read_application(
         id=application.id, 
         name=application.name, 
         project_id=application.project_id,
+        rubric_prompt=application.rubric_prompt,
         api_key=application.api_keys[0].key if application.api_keys else None
+    )
+
+@router.patch("/applications/{application_id}", response_model=ApplicationRead)
+async def update_application(
+    application_id: uuid.UUID,
+    app_in: ApplicationUpdate,
+    current_user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """
+    Update an application.
+    """
+    application = await session.get(Application, application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+        
+    # Verify access
+    project_res = await session.get(Project, application.project_id)
+    link_stmt = select(OrganizationUserLink).where(
+        OrganizationUserLink.user_id == current_user.id,
+        OrganizationUserLink.organization_id == project_res.organization_id
+    )
+    result = await session.execute(link_stmt)
+    if not result.scalars().first():
+         raise HTTPException(status_code=403, detail="Not authorized to update this application")
+         
+    if app_in.name is not None:
+        application.name = app_in.name
+    if app_in.rubric_prompt is not None:
+        application.rubric_prompt = app_in.rubric_prompt
+        
+    session.add(application)
+    await session.commit()
+    await session.refresh(application)
+    
+    # Reload keys for response
+    # In a real scenario we might want another DB call or just pass empty if not needed
+    # But ApplicationRead structure expects api_key possibly
+    # We can just retrieve it again to be safe and consistent with other endpoints
+    from sqlalchemy.orm import selectinload
+    app_reloaded = await session.get(Application, application_id, options=[selectinload(Application.api_keys)])
+    
+    return ApplicationRead(
+        id=app_reloaded.id, 
+        name=app_reloaded.name, 
+        project_id=app_reloaded.project_id,
+        rubric_prompt=app_reloaded.rubric_prompt,
+        api_key=app_reloaded.api_keys[0].key if app_reloaded.api_keys else None
     )
 
 @router.delete("/applications/{application_id}")

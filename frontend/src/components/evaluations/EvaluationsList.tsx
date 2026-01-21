@@ -98,7 +98,7 @@ export default function EvaluationsList() {
                 </TableCell>
                 <TableCell>
                   {result.trace_id ? (
-                    <Link href={`/dashboard/traces/${result.trace_id}`} onClick={(e) => e.stopPropagation()}>
+                    <Link href={`/dashboard/traces?trace_id=${result.trace_id}`} onClick={(e) => e.stopPropagation()}>
                         <Button variant="ghost" size="icon" className="h-6 w-6">
                             <Activity className="h-4 w-4 text-blue-500" />
                         </Button>

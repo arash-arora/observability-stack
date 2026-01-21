@@ -29,9 +29,22 @@ type EvaluationModalProps = {
     output?: string;
     context?: string | string[];
     application_name?: string;
+    trace?: any;
+    workflow_details?: any;
   };
   defaultObserve?: boolean;
 };
+
+const OBSERVIX_METRICS = [
+    "ToolSelectionEvaluator", 
+    "ToolInputStructureEvaluator",
+    "ToolSequenceEvaluator",
+    "AgentRoutingEvaluator",
+    "HITLEvaluator",
+    "WorkflowCompletionEvaluator",
+    "CustomEvaluator",
+    "AccuracyEvaluator"
+];
 
 export default function EvaluationModal({
   isOpen,
@@ -44,6 +57,10 @@ export default function EvaluationModal({
   const [output, setOutput] = useState("");
   const [context, setContext] = useState("");
   const [expectedOutput, setExpectedOutput] = useState("");
+  const [traceData, setTraceData] = useState("");
+  const [workflowDetails, setWorkflowDetails] = useState("");
+  
+  const isObservixMetric = OBSERVIX_METRICS.includes(metric);
   
   // Configuration State
   const [provider, setProvider] = useState("openai");
@@ -87,6 +104,19 @@ export default function EvaluationModal({
       }
       
       setExpectedOutput("");
+      
+      if (initialData.trace) {
+          setTraceData(JSON.stringify(initialData.trace, null, 2));
+      } else {
+          setTraceData("");
+      }
+
+      if (initialData.workflow_details) {
+          setWorkflowDetails(JSON.stringify(initialData.workflow_details, null, 2));
+      } else {
+          setWorkflowDetails("");
+      }
+
       setResult(null);
       setError(null);
       
@@ -166,6 +196,22 @@ export default function EvaluationModal({
           user_api_key: traceApiKey
       };
 
+      if (traceData.trim()) {
+           try {
+               inputs.trace = JSON.parse(traceData);
+           } catch (e) {
+               console.error("Invalid Trace JSON", e);
+           }
+      }
+
+      if (workflowDetails.trim()) {
+           try {
+               inputs.workflow_details = JSON.parse(workflowDetails);
+           } catch (e) {
+               console.error("Invalid Workflow Details JSON", e);
+           }
+      }
+
       if (configMode === 'registered' && selectedProviderId) {
           const selectedProvider = providers.find(p => p.id === selectedProviderId);
           if (selectedProvider) {
@@ -244,49 +290,84 @@ export default function EvaluationModal({
                   <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem>
                   <SelectItem value="ToxicityEvaluator">Toxicity</SelectItem>
                   <SelectItem value="BiasEvaluator">Bias</SelectItem>
+                  
+                  {/* Observix Exclusive */}
+                  <SelectItem value="ToolSelectionEvaluator">Tool Selection</SelectItem>
+                  <SelectItem value="ToolInputStructureEvaluator">Tool Input Structure</SelectItem>
+                  <SelectItem value="ToolSequenceEvaluator">Tool Sequence</SelectItem>
+                  <SelectItem value="AgentRoutingEvaluator">Agent Routing</SelectItem>
+                  <SelectItem value="HITLEvaluator">Human-in-the-Loop</SelectItem>
+                  <SelectItem value="WorkflowCompletionEvaluator">Workflow Completion</SelectItem>
+                  <SelectItem value="CustomEvaluator">Custom Metric</SelectItem>
+                  <SelectItem value="AccuracyEvaluator">Accuracy</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label>Input Payload / Query</Label>
-              <Textarea
-                className="font-mono text-xs min-h-[80px]"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="User query..."
-              />
-            </div>
+            {!isObservixMetric ? (
+                <>
+                    <div className="space-y-2">
+                    <Label>Input Payload / Query</Label>
+                    <Textarea
+                        className="font-mono text-xs min-h-[80px]"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder="User query..."
+                    />
+                    </div>
 
-            <div className="space-y-2">
-              <Label>Output / Response</Label>
-              <Textarea
-                className="font-mono text-xs min-h-[80px]"
-                value={output}
-                onChange={(e) => setOutput(e.target.value)}
-                placeholder="LLM response..."
-              />
-            </div>
+                    <div className="space-y-2">
+                    <Label>Output / Response</Label>
+                    <Textarea
+                        className="font-mono text-xs min-h-[80px]"
+                        value={output}
+                        onChange={(e) => setOutput(e.target.value)}
+                        placeholder="LLM response..."
+                    />
+                    </div>
 
-            <div className="space-y-2">
-              <Label>Retrieval Context (Split by double newline)</Label>
-              <Textarea
-                className="font-mono text-xs min-h-[120px]"
-                value={context}
-                onChange={(e) => setContext(e.target.value)}
-                placeholder="Retrieved context chunks..."
-              />
-            </div>
+                    <div className="space-y-2">
+                    <Label>Retrieval Context (Split by double newline)</Label>
+                    <Textarea
+                        className="font-mono text-xs min-h-[120px]"
+                        value={context}
+                        onChange={(e) => setContext(e.target.value)}
+                        placeholder="Retrieved context chunks..."
+                    />
+                    </div>
 
-            <div className="space-y-2">
-              <Label>Expected Output (Optional)</Label>
-              <Textarea
-                className="font-mono text-xs min-h-[60px]"
-                value={expectedOutput}
-                onChange={(e) => setExpectedOutput(e.target.value)}
-                placeholder="Ground truth..."
-              />
-            </div>
+                    <div className="space-y-2">
+                    <Label>Expected Output (Optional)</Label>
+                    <Textarea
+                        className="font-mono text-xs min-h-[60px]"
+                        value={expectedOutput}
+                        onChange={(e) => setExpectedOutput(e.target.value)}
+                        placeholder="Ground truth..."
+                    />
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className="space-y-2">
+                        <Label>Trace JSON (Required for Observix)</Label>
+                        <Textarea
+                            className="font-mono text-xs min-h-[250px]"
+                            value={traceData}
+                            onChange={(e) => setTraceData(e.target.value)}
+                            placeholder="{ ... }"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Workflow Details (Optional, JSON)</Label>
+                        <Textarea
+                            className="font-mono text-xs min-h-[100px]"
+                            value={workflowDetails}
+                            onChange={(e) => setWorkflowDetails(e.target.value)}
+                            placeholder='{ "valid_tools": [...] }'
+                        />
+                    </div>
+                </>
+            )}
           </div>
 
           {/* Right Column: Configuration & Results */}

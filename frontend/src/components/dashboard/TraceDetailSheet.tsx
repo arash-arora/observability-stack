@@ -14,7 +14,9 @@ import {
   Cpu,
   Play,
   FlaskConical,
-  Check
+  Check,
+  Bot,
+  Wrench
 } from "lucide-react";
 
 import api from "@/lib/api";
@@ -57,6 +59,7 @@ export default function TraceDetailSheet({
     observations: any[];
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isFullTraceEvalOpen, setIsFullTraceEvalOpen] = useState(false);
 
   // Fetch details when traceId changes
   useEffect(() => {
@@ -269,13 +272,37 @@ export default function TraceDetailSheet({
               {traceId}
             </span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+               disabled={loading || !data}
+               onClick={() => setIsFullTraceEvalOpen(true)}
+               className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-md text-sm font-medium transition-colors shadow-sm"
+            >
+                <FlaskConical size={14} />
+                Evaluate Trace
+            </button>
+            <button
+                onClick={onClose}
+                className="p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
+            >
+                <X size={18} />
+            </button>
+          </div>
         </div>
+
+        {/* Full Trace Evaluation Modal */}
+        <EvaluationModal 
+            isOpen={isFullTraceEvalOpen}
+            onClose={() => setIsFullTraceEvalOpen(false)}
+            initialData={{
+                input: "",
+                output: "",
+                context: "",
+                application_name: "", // Extract?
+                trace: data
+            }}
+            defaultObserve={true}
+        />
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
@@ -307,7 +334,7 @@ export default function TraceDetailSheet({
             {/* Right Pane: Details */}
             <div className="flex-1 overflow-y-auto bg-background">
               {selectedNode ? (
-                <NodeDetailView node={selectedNode} />
+                <NodeDetailView node={selectedNode} traceData={data} />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
                   <Layers size={48} className="opacity-20 mb-4" />
@@ -423,7 +450,7 @@ function TreeNode({
   );
 }
 
-function NodeDetailView({ node }: { node: Node }) {
+function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
   const sections = [
     { id: "preview", label: "Preview" },
     { id: "log", label: "Log View" },
@@ -438,12 +465,13 @@ function NodeDetailView({ node }: { node: Node }) {
       return JSON.stringify(val, null, 2);
   };
 
-  // Check if evaluation is possible (needs input and output)
+  // Check if evaluation is possible (needs input and output OR trace data)
   const canEvaluate = Boolean(
-      node.input && 
+      (node.input && 
       node.output && 
       (typeof node.input === 'string' ? node.input.trim().length > 0 : Object.keys(node.input).length > 0) &&
-      (typeof node.output === 'string' ? node.output.trim().length > 0 : Object.keys(node.output).length > 0)
+      (typeof node.output === 'string' ? node.output.trim().length > 0 : Object.keys(node.output).length > 0)) ||
+      (traceData && (traceData.observations?.length > 0 || traceData.spans?.length > 0))
   );
 
   return (
@@ -455,7 +483,11 @@ function NodeDetailView({ node }: { node: Node }) {
             input: prepareData(node.input),
             output: prepareData(node.output),
             context: node.attributes?.context,
-            application_name: node.application_name
+            application_name: node.application_name,
+            trace: {
+                trace_id: traceData?.trace_id,
+                observations: [node] // Wrap single node as the only observation for specific eval
+            }
         }}
         defaultObserve={true}
       />
@@ -471,6 +503,19 @@ function NodeDetailView({ node }: { node: Node }) {
                 <Layers className="text-emerald-500" />
                 )}
                 {node.name}
+
+                {/* Agent/Tool Badges */}
+                {node.type?.toLowerCase() === 'agent' && (
+                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 text-[10px] border border-purple-500/20 font-medium uppercase tracking-wide ml-2">
+                        <Bot size={12} /> Agent
+                    </span>
+                )}
+                {node.type?.toLowerCase() === 'tool' && (
+                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 text-[10px] border border-amber-500/20 font-medium uppercase tracking-wide ml-2">
+                        <Wrench size={12} /> Tool
+                    </span>
+                )}
+
                 <span className="text-xs font-normal text-muted-foreground border border-border px-1.5 py-0.5 rounded ml-2">
                 ID: {node.id.slice(0, 8)}
                 </span>
@@ -480,10 +525,10 @@ function NodeDetailView({ node }: { node: Node }) {
             {canEvaluate && (
                 <button
                     onClick={() => setIsEvalOpen(true)}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-md text-sm font-medium transition-colors"
+                    className="flex items-center gap-2 px-3 py-1.5 bg-background hover:bg-muted text-foreground border border-border rounded-md text-sm font-medium transition-colors"
                 >
-                    <FlaskConical size={14} />
-                    Evaluate
+                    <FlaskConical size={14} className="text-muted-foreground" />
+                    Evaluate Node
                 </button>
             )}
         </div>
@@ -567,11 +612,14 @@ function DataSection({
   title,
   data,
   isOutput,
+  defaultExpanded = true,
 }: {
   title: string;
   data: any;
   isOutput?: boolean;
+  defaultExpanded?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [copied, setCopied] = useState(false);
 
   if (!data || (typeof data === "object" && Object.keys(data).length === 0))
@@ -588,7 +636,8 @@ function DataSection({
 
   const extracted = extractContent(parsed);
 
-  const handleCopy = async () => {
+  const handleCopy = async (e: React.MouseEvent) => {
+      e.stopPropagation();
       const textToCopy = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
       
       try {
@@ -636,10 +685,16 @@ function DataSection({
 
   return (
     <div className="rounded-lg border border-border overflow-hidden bg-muted/10">
-      <div className="px-4 py-2 bg-muted/30 border-b border-border flex items-center justify-between">
-        <span className="text-xs font-semibold text-muted-foreground uppercase">
-          {title}
-        </span>
+      <div 
+        className="px-4 py-2 bg-muted/30 border-b border-border flex items-center justify-between cursor-pointer hover:bg-muted/50 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center gap-2">
+            {expanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+            <span className="text-xs font-semibold text-muted-foreground uppercase select-none">
+            {title}
+            </span>
+        </div>
         <button
           className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
           onClick={handleCopy}
@@ -649,13 +704,16 @@ function DataSection({
           {copied && <span className="text-[10px] text-green-500 font-medium">Copied</span>}
         </button>
       </div>
-      <div
-        className={`p-4 overflow-x-auto text-sm ${
-          isOutput ? "text-foreground" : "text-muted-foreground"
-        }`}
-      >
-        {renderContent(extracted)}
-      </div>
+      
+      {expanded && (
+        <div
+            className={`p-4 overflow-x-auto text-sm animate-in slide-in-from-top-2 duration-200 ${
+            isOutput ? "text-foreground" : "text-muted-foreground"
+            }`}
+        >
+            {renderContent(extracted)}
+        </div>
+      )}
     </div>
   );
 }

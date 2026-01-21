@@ -132,12 +132,15 @@ async def run_evaluation(
                 
                 trace_id = None
                 
+                trace_input = inputs.get("trace")
+
                 async def _execute_eval():
                     res = evaluator.evaluate(
                         input_query=query,
                         output=output,
                         context=context if isinstance(context, list) else [str(context)] if context else [],
-                        expected=expected
+                        expected=expected,
+                        trace=trace_input
                     )
                     if inspect.iscoroutine(res):
                         res = await res

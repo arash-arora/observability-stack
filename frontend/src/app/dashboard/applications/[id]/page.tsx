@@ -7,7 +7,8 @@ import { useDashboard } from "@/context/DashboardContext";
 import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ArrowLeft, Activity, DollarSign, Clock, Users, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Activity, DollarSign, Clock, Users, AlertTriangle, CheckCircle2, Settings } from "lucide-react";
+import ApplicationSettingsModal from "@/components/applications/ApplicationSettingsModal";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area
@@ -23,6 +24,7 @@ export default function ApplicationDetailsPage() {
   const [app, setApp] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (id && selectedProject) {
@@ -71,7 +73,19 @@ export default function ApplicationDetailsPage() {
             title={app.name} 
             infoTooltip={`Analytics for ${app.name}`} 
         />
+        <div className="flex-1" />
+        <Button variant="outline" onClick={() => setIsSettingsOpen(true)}>
+            <Settings className="w-4 h-4 mr-2" />
+            Settings
+        </Button>
       </div>
+
+      <ApplicationSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        application={app}
+        onUpdated={(updatedApp) => setApp(updatedApp)}
+      />
 
       {/* 1. Overview Cards (6 Metrics) */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
