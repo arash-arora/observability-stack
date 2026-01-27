@@ -7,6 +7,9 @@ from app.models.all_models import User
 from app.models.evaluation_result import EvaluationResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -63,6 +66,8 @@ async def get_traces(
     if application:
         app_list = "', '".join(application)
         where_clause += f" AND t.application_name IN ('{app_list}')"
+
+
 
     # Sorting Logic
     sort_column_map = {
@@ -746,57 +751,74 @@ async def get_evaluation_stats(
 ):
     """
     Get aggregated statistics for evaluations (Postgres).
+    Excludes RUNNING/FAILED evaluations without scores.
     """
     try:
         # 1. Pass/Fail Ratio
-        # passed: bool, count
-        pf_stmt = select(EvaluationResult.passed, func.count()).group_by(EvaluationResult.passed)
+        # Filter where status='COMPLETED' or passed is not null
+        pf_stmt = select(EvaluationResult.passed, func.count())\
+            .where(EvaluationResult.score != None)\
+            .group_by(EvaluationResult.passed)
+            
         pf_res = await session.execute(pf_stmt)
         pass_fail_data = []
         for passed, count in pf_res.all():
-            label = "Passed" if passed else "Failed"
-            pass_fail_data.append({"name": label, "value": count})
+            if passed is not None:
+                label = "Passed" if passed else "Failed"
+                pass_fail_data.append({"name": label, "value": count})
             
         # 2. Avg Score by Metric
-        # metric_id, avg(score)
-        metric_stmt = select(EvaluationResult.metric_id, func.avg(EvaluationResult.score)).group_by(EvaluationResult.metric_id)
+        metric_stmt = select(EvaluationResult.metric_id, func.avg(EvaluationResult.score))\
+            .where(EvaluationResult.score != None)\
+            .group_by(EvaluationResult.metric_id)
+            
         metric_res = await session.execute(metric_stmt)
         avg_scores = []
         for mid, avg in metric_res.all():
-            avg_scores.append({"metric": mid, "score": round(avg, 2)})
+            if avg is not None:
+                avg_scores.append({"metric": mid, "score": round(avg, 2)})
             
         # 3. Score Trend (Daily)
-        # date_trunc('day', created_at), avg(score)
-        # SQLite doesn't have date_trunc easily in same syntax, but Postgres does.
-        # Assuming Postgres as per context. If SQLite, we might need func.date().
-        # Let's try general approach or just fetch all and aggregate in python if small volume?
-        # Safe bet for SQLModel/Postgres: func.date_trunc('day', ...)
         try:
              trend_stmt = select(
                  func.to_char(EvaluationResult.created_at, 'YYYY-MM-DD').label('day'), 
                  func.avg(EvaluationResult.score)
-             ).group_by('day').order_by('day')
+             ).where(EvaluationResult.score != None)\
+              .group_by('day').order_by('day')
+              
              trend_res = await session.execute(trend_stmt)
              score_trend = []
              for day, avg in trend_res.all():
-                 score_trend.append({"date": day, "avg_score": round(avg, 2)})
+                 if day and avg is not None:
+                    score_trend.append({"date": day, "avg_score": round(avg, 2)})
         except Exception:
-             # Fallback for SQLite or syntax error
-             trend_stmt = select(EvaluationResult.created_at, EvaluationResult.score).order_by(EvaluationResult.created_at)
+             # Fallback
+             trend_stmt = select(EvaluationResult.created_at, EvaluationResult.score)\
+                .where(EvaluationResult.score != None)\
+                .order_by(EvaluationResult.created_at)
              trend_res = await session.execute(trend_stmt)
              # Agg in python
              from collections import defaultdict
              day_map = defaultdict(list)
              for created_at, score in trend_res.all():
-                 day = created_at.strftime("%Y-%m-%d")
-                 day_map[day].append(score)
+                 if score is not None:
+                     day = created_at.strftime("%Y-%m-%d")
+                     day_map[day].append(score)
              score_trend = [{"date": d, "avg_score": round(sum(s)/len(s), 2)} for d, s in day_map.items()]
              score_trend.sort(key=lambda x: x['date'])
-
+        
         return {
             "pass_fail": pass_fail_data,
             "avg_scores": avg_scores,
-            "score_trend": score_trend
+            "score_trend": score_trend,
+            "total_runs": await session.scalar(select(func.count()).select_from(EvaluationResult))
+        }
+    except Exception as e:
+        print(f"Eval Stats Error: {e}")
+        return {
+            "pass_fail": [],
+            "avg_scores": [],
+            "score_trend": []
         }
     except Exception as e:
         print(f"Eval Stats Error: {e}")

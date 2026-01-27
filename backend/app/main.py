@@ -6,6 +6,8 @@ from app.core.config import settings
 from app.api.v1.api import api_router
 from app.core.clickhouse import init_clickhouse
 
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()

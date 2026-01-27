@@ -16,9 +16,20 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Static Registry to avoid Runtime Import/Dependency Issues in Backend Container
-from sqlmodel import select
+from sqlmodel import select, func, desc
 from app.models.metric import Metric
 from app.models.evaluation_result import EvaluationResult
+from pydantic import BaseModel
+from datetime import datetime
+
+class TraceEvaluationSummary(BaseModel):
+    trace_id: str
+    application_name: str = None
+    created_at: datetime
+    status: str
+    passed: bool
+    score_avg: float
+    evaluation_count: int
 
 # ... existing imports ...
 
@@ -134,13 +145,42 @@ async def run_evaluation(
                 
                 trace_input = inputs.get("trace")
 
+                # Fetch Application Rubrics (Application Context)
+                rubric_prompt = None
+                
+                # Resolving Application to get Rubric
+                # Priority 1: user_api_key (Observix API Key) - Most reliable
+                if user_api_key:
+                    from app.models.all_models import ApiKey
+                    from sqlalchemy.orm import selectinload as sql_selectinload
+                    
+                    # Query ApiKey -> Application
+                    stmt = select(ApiKey).options(sql_selectinload(ApiKey.application)).where(ApiKey.key == user_api_key)
+                    ak_result = await db.execute(stmt)
+                    api_key_obj = ak_result.scalars().first()
+                    
+                    if api_key_obj and api_key_obj.application and api_key_obj.application.rubric_prompt:
+                         rubric_prompt = api_key_obj.application.rubric_prompt
+                         
+                # Priority 2: application_id in inputs (if API key not provided or failed)
+                if not rubric_prompt and inputs.get("application_id"):
+                    from app.models.all_models import Application
+                    app_id_val = inputs.get("application_id")
+                    
+                    # Validate usage permissions/auth if strictly needed, 
+                    # but here we assume the runner has access if they can trigger eval
+                    app_res = await db.get(Application, app_id_val)
+                    if app_res and app_res.rubric_prompt:
+                         rubric_prompt = app_res.rubric_prompt
+
                 async def _execute_eval():
                     res = evaluator.evaluate(
                         input_query=query,
                         output=output,
                         context=context if isinstance(context, list) else [str(context)] if context else [],
                         expected=expected,
-                        trace=trace_input
+                        trace=trace_input,
+                        rubric=rubric_prompt  # Pass the rubric to SDK
                     )
                     if inspect.iscoroutine(res):
                         res = await res
@@ -173,6 +213,7 @@ async def run_evaluation(
                             score=result.score,
                             reason=result.reason,
                             passed=result.passed,
+                            status="COMPLETED",
                             metadata_json=result.metadata,
                             application_name=inputs.get("application_name")
                         )
@@ -198,11 +239,67 @@ async def run_evaluation(
             return EvaluationResponse(score=0.0, passed=False, reason=f"Execution Failed: {str(e)}")
 
 
+@router.get("/runs", response_model=List[TraceEvaluationSummary])
+async def list_evaluation_runs(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    List evaluation runs grouped by trace_id.
+    """
+    # Group by trace_id
+    stmt = (
+        select(
+            EvaluationResult.trace_id,
+            func.max(EvaluationResult.application_name).label("application_name"),
+            func.max(EvaluationResult.created_at).label("created_at"),
+            func.count(EvaluationResult.id).label("count"),
+            func.avg(EvaluationResult.score).label("avg_score"),
+            func.bool_and(EvaluationResult.passed).label("all_passed"),
+            func.array_agg(EvaluationResult.status).label("statuses")
+        )
+        .group_by(EvaluationResult.trace_id)
+        .order_by(desc("created_at"))
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    results = await db.execute(stmt)
+    runs = []
+    
+    for row in results.all():
+        trace_id = row[0]
+        # Skip if trace_id is None (shouldn't happen for valid runs but good safeguard)
+        if not trace_id:
+            continue
+            
+        statuses = row[6]
+        status = "COMPLETED"
+        if "FAILED" in statuses:
+            status = "FAILED"
+        elif "RUNNING" in statuses:
+            status = "RUNNING"
+            
+        runs.append(TraceEvaluationSummary(
+            trace_id=trace_id,
+            application_name=row[1] or "Unknown",
+            created_at=row[2],
+            status=status,
+            passed=row[5] if row[5] is not None else False,
+            score_avg=round(row[4], 2) if row[4] is not None else 0.0,
+            evaluation_count=row[3]
+        ))
+        
+    return runs
+
+
 @router.get("/results", response_model=List[EvaluationResult])
 async def list_evaluation_results(
     limit: int = 100,
     offset: int = 0,
     metric_id: str = None,
+    trace_id: str = None,
     db: AsyncSession = Depends(get_session)
 ):
     """
@@ -211,6 +308,8 @@ async def list_evaluation_results(
     query = select(EvaluationResult).order_by(EvaluationResult.created_at.desc()).offset(offset).limit(limit)
     if metric_id:
         query = query.where(EvaluationResult.metric_id == metric_id)
+    if trace_id:
+        query = query.where(EvaluationResult.trace_id == trace_id)
         
     result = await db.execute(query)
     return result.scalars().all()
@@ -243,12 +342,15 @@ async def get_evaluation_stats(
     db: AsyncSession = Depends(get_session)
 ):
     """
-    Get aggregate statistics for evaluations.
+    Get aggregate statistics for evaluations (Completed only).
     """
     # Total Count
     result = await db.execute(select(EvaluationResult))
     all_results = result.scalars().all()
-    total = len(all_results)
+    
+    # Filter for completed only for stats
+    completed_results = [r for r in all_results if r.status == "COMPLETED" and r.score is not None]
+    total = len(completed_results)
     
     if total == 0:
         return {
@@ -259,16 +361,16 @@ async def get_evaluation_stats(
         }
 
     # Pass Rate
-    passed = len([r for r in all_results if r.passed])
+    passed = len([r for r in completed_results if r.passed])
     pass_rate = (passed / total) * 100
     
     # Average Score
-    avg_score = sum([r.score for r in all_results]) / total
+    avg_score = sum([r.score for r in completed_results]) / total
     
     # Breakdown by Metric
     # Simple aggregation (in-memory if dataset is small, otherwise use SQL grouping)
     breakdown = {}
-    for r in all_results:
+    for r in completed_results:
         if r.metric_id not in breakdown:
             breakdown[r.metric_id] = {"total": 0, "passed": 0, "score_sum": 0}
         

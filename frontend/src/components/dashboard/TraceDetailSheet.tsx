@@ -299,7 +299,9 @@ export default function TraceDetailSheet({
                 output: "",
                 context: "",
                 application_name: "", // Extract?
-                trace: data
+                trace: data,
+                workflow_details: extractWorkflowDetails(data),
+                isTraceEvaluation: true
             }}
             defaultObserve={true}
         />
@@ -487,7 +489,8 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
             trace: {
                 trace_id: traceData?.trace_id,
                 observations: [node] // Wrap single node as the only observation for specific eval
-            }
+            },
+            workflow_details: extractWorkflowDetails(traceData)
         }}
         defaultObserve={true}
       />
@@ -604,6 +607,74 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
       </div>
     </div>
   );
+}
+
+// Extracted Helper
+function extractWorkflowDetails(traceData: any) {
+    if (!traceData) return { agents: [], tools: [] };
+
+    // Extract Agents and Tools from the FULL trace data to provide context
+    const agentsMap = new Map<string, string>(); // Name -> Description
+    const toolsMap = new Map<string, string>();   // Name -> Description
+    
+    const processEntity = (name: string, desc?: string, map?: Map<string, string>) => {
+        if (!name) return;
+        const existing = map?.get(name);
+        const newDesc = desc || existing || "";
+        map?.set(name, newDesc);
+    };
+
+    const scan = (items: any[]) => {
+        items?.forEach(item => {
+            const type = (item.type || item.kind || "").toLowerCase();
+            const attrs = item.attributes || {};
+            
+            // 1. Check for bulk lists (candidate_agents, tools)
+            if (attrs.candidate_agents) {
+                try {
+                    const list = typeof attrs.candidate_agents === 'string' 
+                        ? JSON.parse(attrs.candidate_agents) 
+                        : attrs.candidate_agents;
+                    if (Array.isArray(list)) {
+                        list.forEach((a: any) => processEntity(a.name, a.description, agentsMap));
+                    }
+                } catch (e) {}
+            }
+            if (attrs.tools) {
+                try {
+                    const list = typeof attrs.tools === 'string' 
+                        ? JSON.parse(attrs.tools) 
+                        : attrs.tools;
+                    if (Array.isArray(list)) {
+                        list.forEach((t: any) => processEntity(t.name, t.description, toolsMap));
+                    }
+                } catch (e) {}
+            }
+
+            // 2. Check individual node
+            const desc = attrs.description || attrs.docstring;
+            if (type === 'agent') processEntity(item.name, desc, agentsMap);
+            if (type === 'tool') processEntity(item.name, desc, toolsMap);
+            
+            if (attrs.agent_name) processEntity(attrs.agent_name, undefined, agentsMap);
+            if (attrs.tool_name) processEntity(attrs.tool_name, undefined, toolsMap);
+        });
+    };
+
+    scan(traceData.spans || []);
+    scan(traceData.observations || []);
+    
+    // Format: "Name: Description" or just "Name"
+    const formatList = (map: Map<string, string>) => {
+        return Array.from(map.entries()).map(([name, desc]) => {
+            return desc ? `${name}: ${desc}` : name;
+        });
+    };
+
+    return {
+        agents: formatList(agentsMap),
+        tools: formatList(toolsMap)
+    };
 }
 
 

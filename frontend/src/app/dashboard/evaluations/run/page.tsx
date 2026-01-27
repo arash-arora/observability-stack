@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { Loader2, ArrowLeft } from "lucide-react";
 import EvaluationDetailView from "@/components/evaluations/EvaluationDetailView";
+import EvaluationGroupView from "@/components/evaluations/EvaluationGroupView";
 import EvaluationModal from "@/components/dashboard/EvaluationModal";
 import { Button } from "@/components/ui/button";
 
@@ -12,21 +13,37 @@ export default function RunDetailPage() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const evaluationId = searchParams.get("evaluation_id");
+    const traceId = searchParams.get("trace_id");
     
-    const [result, setResult] = useState<any>(null);
+    const [result, setResult] = useState<any>(null); // Single result
+    const [results, setResults] = useState<any[]>([]); // Group results
+    const [traceDetails, setTraceDetails] = useState<any>(null); // Full trace data
     const [loading, setLoading] = useState(true);
     const [isRerunOpen, setIsRerunOpen] = useState(false);
+    const [rerunData, setRerunData] = useState<any>(null); // Data for rerun modal
     const [error, setError] = useState<string | null>(null);
 
-    const fetchResult = async () => {
-        if (!evaluationId) return;
+    const fetchData = async () => {
         setLoading(true);
+        setError(null);
         try {
-            const res = await api.get(`/evaluations/results/${evaluationId}`);
-            setResult(res.data);
-            setError(null);
+            if (traceId) {
+                const resultsRes = await api.get(`/evaluations/results?trace_id=${traceId}`);
+                setResults(resultsRes.data);
+                
+                // Fetch trace details for agent info
+                try {
+                    const traceRes = await api.get(`/analytics/traces/${traceId}`);
+                    setTraceDetails(traceRes.data);
+                } catch (err) {
+                    console.warn("Failed to fetch additional trace details", err);
+                }
+            } else if (evaluationId) {
+                const res = await api.get(`/evaluations/results/${evaluationId}`);
+                setResult(res.data);
+            }
         } catch (e) {
-            console.error("Failed to fetch evaluation result", e);
+            console.error("Failed to fetch evaluation data", e);
             setError("Failed to load evaluation details.");
         } finally {
             setLoading(false);
@@ -34,13 +51,18 @@ export default function RunDetailPage() {
     };
 
     useEffect(() => {
-        if (evaluationId) {
-            fetchResult();
+        if (evaluationId || traceId) {
+            fetchData();
         }
-    }, [evaluationId]);
+    }, [evaluationId, traceId]);
 
-    if (!evaluationId) {
-        return <div className="p-12 text-center text-muted-foreground">No evaluation ID provided.</div>;
+    const handleRerun = (data: any = result) => {
+        setRerunData(data);
+        setIsRerunOpen(true);
+    };
+
+    if (!evaluationId && !traceId) {
+        return <div className="p-12 text-center text-muted-foreground">No evaluation or trace ID provided.</div>;
     }
 
     if (loading) {
@@ -51,7 +73,7 @@ export default function RunDetailPage() {
         return <div className="p-12 text-center text-destructive">{error}</div>;
     }
 
-    if (!result) {
+    if (!result && results.length === 0) {
         return <div className="p-12 text-center text-muted-foreground">Evaluation not found.</div>;
     }
 
@@ -61,24 +83,34 @@ export default function RunDetailPage() {
                 <ArrowLeft className="mr-2 h-4 w-4" /> Back
             </Button>
             
-            <EvaluationDetailView 
-                result={result} 
-                onRerun={() => setIsRerunOpen(true)} 
-            />
+            {traceId ? (
+                 <EvaluationGroupView 
+                    results={results} 
+                    traceDetails={traceDetails}
+                    onRerun={handleRerun} 
+                 />
+            ) : (
+                <EvaluationDetailView 
+                    result={result} 
+                    onRerun={() => handleRerun(result)} 
+                />
+            )}
 
             {/* Rerun Modal */}
-            <EvaluationModal
-                isOpen={isRerunOpen}
-                onClose={() => {
-                    setIsRerunOpen(false);
-                    fetchResult(); // Refresh details after rerun
-                }}
-                initialData={{
-                    input: result.input,
-                    output: result.output,
-                    context: result.context
-                }}
-            />
+            {rerunData && (
+                <EvaluationModal
+                    isOpen={isRerunOpen}
+                    onClose={() => {
+                        setIsRerunOpen(false);
+                        fetchData(); // Refresh details after rerun
+                    }}
+                    initialData={{
+                        input: rerunData.input,
+                        output: rerunData.output,
+                        context: rerunData.context
+                    }}
+                />
+            )}
         </div>
     );
 }

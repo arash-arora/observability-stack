@@ -8,6 +8,7 @@ export const safeParseJSON = (val: any): any => {
                 // Only attempt parse if it looks like an object or array to avoid "123" -> 123
                 if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
                     (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+                    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
                     trimmed === 'true' || trimmed === 'false' || trimmed === 'null'
                 ) {
                     try {

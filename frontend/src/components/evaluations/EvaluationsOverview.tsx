@@ -31,7 +31,7 @@ export default function EvaluationsOverview() {
   if (!stats) return <div className="p-4 text-muted-foreground">No evaluation data available.</div>;
 
   // Calculate derived stats
-  const total = stats.pass_fail ? stats.pass_fail.reduce((acc: number, curr: any) => acc + curr.value, 0) : 0;
+  const total = stats.total_runs !== undefined ? stats.total_runs : (stats.pass_fail ? stats.pass_fail.reduce((acc: number, curr: any) => acc + curr.value, 0) : 0);
   const passed = stats.pass_fail ? (stats.pass_fail.find((p: any) => p.name === 'Passed')?.value || 0) : 0;
   const passRate = total > 0 ? (passed / total * 100) : 0;
   const avgScore = stats.avg_scores?.length > 0 

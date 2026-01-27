@@ -277,7 +277,9 @@ async def update_application(
     # But ApplicationRead structure expects api_key possibly
     # We can just retrieve it again to be safe and consistent with other endpoints
     from sqlalchemy.orm import selectinload
-    app_reloaded = await session.get(Application, application_id, options=[selectinload(Application.api_keys)])
+    stmt = select(Application).options(selectinload(Application.api_keys)).where(Application.id == application_id)
+    result = await session.execute(stmt)
+    app_reloaded = result.scalars().first()
     
     return ApplicationRead(
         id=app_reloaded.id, 

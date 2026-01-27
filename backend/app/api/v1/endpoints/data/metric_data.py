@@ -158,11 +158,18 @@ STATIC_METRICS_REGISTRY = [
         provider="Observix",
         type="Agentic AI",
         tags=["observix", "agents", "tools"],
-        inputs=["query", "trace_data", "workflow_details"],
+        inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("ToolSelectionEvaluator"),
         dummy_data={
             "query": "Calculate 2+2",
-            "context": ["Agent selected 'calculator' tool."]
+            "trace": {
+                "trace_id": "dummy_trace_123", 
+                "observations": [
+                    {"id": 1, "type": "agent", "name": "MathAgent", "start_time": 1000, "end_time": 2000, "input": "Calculate 2+2", "output": "4"},
+                    {"id": 2, "type": "tool", "name": "calculator", "start_time": 1200, "end_time": 1800, "input": "2+2", "output": "4"}
+                ]
+            },
+            "workflow_details": {"agents": [{"name": "MathAgent"}], "tools": [{"name": "calculator"}]}
         }
     ),
     MetricInfo(
@@ -172,11 +179,18 @@ STATIC_METRICS_REGISTRY = [
         provider="Observix",
         type="Agentic AI",
         tags=["observix", "agents", "tools"],
-        inputs=["query", "trace_data", "workflow_details"],
+        inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("ToolInputStructureEvaluator"),
         dummy_data={
              "query": "Calculate 2+2",
-             "context": ["Input {'expression': '2+2'} is valid."]
+             "trace": {
+                 "trace_id": "dummy_trace_123",
+                 "observations": [
+                     {"id": 1, "type": "agent", "name": "MathAgent", "start_time": 1000, "end_time": 2000, "input": "Calculate 2+2", "output": "4"},
+                     {"id": 2, "type": "tool", "name": "calculator", "start_time": 1200, "end_time": 1800, "input": "2+2", "output": "4"}
+                 ]
+             },
+             "workflow_details": {"agents": [], "tools": [{"name": "calculator", "input": "2+2"}]}
         }
     ),
     MetricInfo(
@@ -186,11 +200,19 @@ STATIC_METRICS_REGISTRY = [
         provider="Observix",
         type="Agentic AI",
         tags=["observix", "agents", "tools"],
-        inputs=["query", "trace_data", "workflow_details"],
+        inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("ToolSequenceEvaluator"),
         dummy_data={
              "query": "Search for weather then calculate average",
-             "context": ["Agent searched weather, then called calculator."]
+             "trace": {
+                 "trace_id": "dummy_trace_seq",
+                 "observations": [
+                     {"id": 1, "type": "agent", "name": "Orchestrator", "start_time": 1000, "end_time": 3000, "input": "Weather and avg", "output": "Done"},
+                     {"id": 2, "type": "tool", "name": "weather_api", "start_time": 1200, "end_time": 1500, "input": "New York", "output": "20, 22, 24"},
+                     {"id": 3, "type": "tool", "name": "calculator", "start_time": 1600, "end_time": 1800, "input": "(20+22+24)/3", "output": "22"}
+                 ]
+             },
+             "workflow_details": {"agents": [], "tools": [{"name": "weather_api"}, {"name": "calculator"}]}
         }
     ),
     MetricInfo(
@@ -200,11 +222,18 @@ STATIC_METRICS_REGISTRY = [
         provider="Observix",
         type="Agentic AI",
         tags=["observix", "agents", "routing"],
-        inputs=["query", "trace_data", "workflow_details"],
+        inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("AgentRoutingEvaluator"),
         dummy_data={
              "query": "Book a flight",
-             "context": ["Router sent request to TravelAgent."]
+             "trace": {
+                 "trace_id": "dummy_trace_routing",
+                 "observations": [
+                     {"id": 1, "type": "agent", "name": "Router", "start_time": 1000, "end_time": 2000, "input": "Book flight", "output": "Routing to TravelAgent"},
+                     {"id": 2, "type": "agent", "name": "TravelAgent", "start_time": 1200, "end_time": 1800, "input": "Book flight", "output": "Booked"}
+                 ]
+             },
+             "workflow_details": {"agents": [{"name": "TravelAgent"}], "tools": []}
         }
     ),
     MetricInfo(
@@ -214,11 +243,18 @@ STATIC_METRICS_REGISTRY = [
         provider="Observix",
         type="Agentic AI",
         tags=["observix", "agents", "safety"],
-        inputs=["query", "trace_data", "workflow_details"],
+        inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("HITLEvaluator"),
         dummy_data={
              "query": "Transfer $1M to unknown account",
-             "context": ["Agent paused and requested human approval."]
+             "trace": {
+                 "trace_id": "dummy_trace_hitl",
+                 "observations": [
+                     {"id": 1, "type": "agent", "name": "BankAgent", "start_time": 1000, "end_time": 2000, "input": "Transfer $1M", "output": "Paused for approval"},
+                     {"id": 2, "type": "tool", "name": "human_approval", "start_time": 1500, "end_time": 1800, "input": "Approve transfer?", "output": "Denied"}
+                 ]
+             },
+             "workflow_details": {"agents": [{"name": "BankAgent"}], "tools": []}
         }
     ),
     MetricInfo(
@@ -228,11 +264,19 @@ STATIC_METRICS_REGISTRY = [
         provider="Observix",
         type="Agentic AI",
         tags=["observix", "agents", "workflow"],
-        inputs=["query", "trace_data", "workflow_details"],
+        inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("WorkflowCompletionEvaluator"),
         dummy_data={
              "query": "Plan a trip to Paris",
-             "context": ["Agent researched, booked flight, and reserved hotel."]
+             "trace": {
+                 "trace_id": "dummy_trace_workflow",
+                 "observations": [
+                     {"id": 1, "type": "agent", "name": "PlannerAgent", "start_time": 1000, "end_time": 1200, "input": "Plan Paris trip", "output": "Flight and Hotel needed"},
+                     {"id": 2, "type": "agent", "name": "BookingAgent", "start_time": 1300, "end_time": 1500, "input": "Book Flight", "output": "Confirmed"},
+                     {"id": 3, "type": "agent", "name": "BookingAgent", "start_time": 1600, "end_time": 1800, "input": "Book Hotel", "output": "Confirmed"}
+                 ]
+             },
+             "workflow_details": {"agents": [{"name": "PlannerAgent"}, {"name": "BookingAgent"}], "tools": []}
         }
     ),
     MetricInfo(

@@ -60,6 +60,7 @@ export default function ApplicationSettingsModal({
     setError("");
 
     try {
+      console.log("Updating application", application.id, { name, rubric_prompt: rubricPrompt });
       const res = await api.patch(`/management/applications/${application.id}`, {
         name,
         rubric_prompt: rubricPrompt,

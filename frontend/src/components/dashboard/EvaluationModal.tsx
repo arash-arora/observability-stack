@@ -30,6 +30,7 @@ type EvaluationModalProps = {
     context?: string | string[];
     application_name?: string;
     trace?: any;
+    isTraceEvaluation?: boolean;
     workflow_details?: any;
   };
   defaultObserve?: boolean;
@@ -122,6 +123,20 @@ export default function EvaluationModal({
       
       // Reset observe to default
       setObserve(defaultObserve);
+      
+      // Default metric logic
+      if (initialData.isTraceEvaluation) {
+          // If in trace evaluation mode, ensure we default to an Observix metric
+          if (!OBSERVIX_METRICS.includes(metric)) {
+              setMetric("ToolSelectionEvaluator");
+          }
+      } else {
+          // Reset to default Faithfulness if needed, or keep last selection?
+          // Let's keep last selection unless it clashes? 
+          // Actually, if we switch from Trace Eval (Observix only) to Node Eval (All), the Observix metric is still valid.
+          // But if we switch from Node Eval (Faithfulness) to Trace Eval, we MUST switch.
+          // The check `if (initialData.isTraceEvaluation)` handles the mandatory switch.
+      }
 
       // Fetch providers
       if (selectedProject) {
@@ -146,10 +161,7 @@ export default function EvaluationModal({
   useEffect(() => {
       const fetchKeys = async () => {
           try {
-              const res = await api.get("/management/api-keys"); // This points to projects/api-keys if routed there, or management/api-keys. Assuming valid endpoint.
-              // Note: Based on previous file, the route might be /management/api-keys or /projects/api-keys. 
-              // Existing code used /management/api-keys so I will assume it maps correctly or stick to it.
-              // Logic: fetch keys, set available keys. 
+              const res = await api.get("/management/api-keys"); 
               if (res.data && Array.isArray(res.data)) {
                   setApiKeys(res.data);
                   // If observing and no key set, set first active one
@@ -165,13 +177,10 @@ export default function EvaluationModal({
           }
       };
       
-      // Fetch if observe is enabled or just once on mount? 
-      // Better to fetch when observe is toggled on, or on mount. 
-      // I'll fetch when observe becomes true.
       if (observe) {
           fetchKeys();
       }
-  }, [observe]); // Removed traceApiKey dependency to avoid loops, added handling inside
+  }, [observe]); 
 
   const handleRunEvaluation = async () => {
     setLoading(true);
@@ -209,7 +218,16 @@ export default function EvaluationModal({
                inputs.workflow_details = JSON.parse(workflowDetails);
            } catch (e) {
                console.error("Invalid Workflow Details JSON", e);
+               if (isObservixMetric) {
+                   setError("Invalid JSON in Workflow Details. Please ensure it is a valid JSON object.");
+                   setLoading(false);
+                   return;
+               }
            }
+      } else if (isObservixMetric) {
+          setError("Workflow Details are required for Observix metrics. Please provide Agents and Tools.");
+          setLoading(false);
+          return;
       }
 
       if (configMode === 'registered' && selectedProviderId) {
@@ -281,15 +299,19 @@ export default function EvaluationModal({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="FaithfulnessEvaluator">Faithfulness</SelectItem>
-                  <SelectItem value="AnswerRelevancyEvaluator">Answer Relevancy</SelectItem>
-                  <SelectItem value="ContextualPrecisionEvaluator">Contextual Precision</SelectItem>
-                  <SelectItem value="ContextualRecallEvaluator">Contextual Recall</SelectItem>
-                  <SelectItem value="HallucinationEvaluator">Hallucination</SelectItem>
-                  <SelectItem value="TaskCompletionEvaluator">Task Completion</SelectItem>
-                  <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem>
-                  <SelectItem value="ToxicityEvaluator">Toxicity</SelectItem>
-                  <SelectItem value="BiasEvaluator">Bias</SelectItem>
+                  {!initialData.isTraceEvaluation && (
+                      <>
+                        <SelectItem value="FaithfulnessEvaluator">Faithfulness</SelectItem>
+                        <SelectItem value="AnswerRelevancyEvaluator">Answer Relevancy</SelectItem>
+                        <SelectItem value="ContextualPrecisionEvaluator">Contextual Precision</SelectItem>
+                        <SelectItem value="ContextualRecallEvaluator">Contextual Recall</SelectItem>
+                        <SelectItem value="HallucinationEvaluator">Hallucination</SelectItem>
+                        <SelectItem value="TaskCompletionEvaluator">Task Completion</SelectItem>
+                        <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem>
+                        <SelectItem value="ToxicityEvaluator">Toxicity</SelectItem>
+                        <SelectItem value="BiasEvaluator">Bias</SelectItem>
+                      </>
+                  )}
                   
                   {/* Observix Exclusive */}
                   <SelectItem value="ToolSelectionEvaluator">Tool Selection</SelectItem>
@@ -358,12 +380,12 @@ export default function EvaluationModal({
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label>Workflow Details (Optional, JSON)</Label>
+                        <Label>Workflow Details (Required for Observix)</Label>
                         <Textarea
                             className="font-mono text-xs min-h-[100px]"
                             value={workflowDetails}
                             onChange={(e) => setWorkflowDetails(e.target.value)}
-                            placeholder='{ "valid_tools": [...] }'
+                            placeholder='{ "agents": ["Agent1"], "tools": ["Tool1"] }'
                         />
                     </div>
                 </>

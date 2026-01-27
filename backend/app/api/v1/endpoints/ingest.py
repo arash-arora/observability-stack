@@ -1,5 +1,7 @@
 from typing import Any, Dict, List
-from fastapi import APIRouter, Header, HTTPException, Depends, Body
+from fastapi import APIRouter, Header, HTTPException, Depends, Body, BackgroundTasks
+from app.core.evaluation_runner import run_triggered_evaluation
+from app.models.evaluation_rule import EvaluationRule
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
@@ -98,7 +100,8 @@ async def ingest_traces(
 async def ingest_observations(
     payload: Any = Body(...),
     x_api_key: str = Header(...),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
     Ingest observations.
@@ -117,6 +120,7 @@ async def ingest_observations(
             raise HTTPException(status_code=403, detail="API Key is inactive")
             
         project_id = api_key_obj.application.project_id
+        application_name = api_key_obj.application.name
         
         # 2. Process data
         observations = payload
@@ -146,7 +150,7 @@ async def ingest_observations(
                 obs.get("output_text"),
                 json.dumps(obs.get("token_usage")) if obs.get("token_usage") else None,
                 json.dumps(obs.get("model_parameters")) if obs.get("model_parameters") else None,
-                json.dumps(obs.get("metadata_json")) if obs.get("metadata_json") else None,
+                json.dumps(obs.get("metadata_json")) if not isinstance(obs.get("metadata_json"), str) and obs.get("metadata_json") else obs.get("metadata_json"),
                 obs.get("extra"),
                 obs.get("observation_type"),
                 obs.get("error"),
@@ -164,7 +168,37 @@ async def ingest_observations(
                 "model_parameters", "metadata_json", "extra", "observation_type", "error",
                 "total_cost", "created_at", "project_id", "user_id"
             ])
-        
+
+            # --- Auto-Evaluation Logic ---
+            # We trigger eval on "agent" or "chain" type observations that are root-ish (no parent, or explicitly marked)
+            # For simplicity, if we see an observation with valid input/output, we check for rules.
+            # In a real system, we might wait for the full trace or use specific span kinds.
+            
+            # Fetch Rules for this Application
+            app_id = api_key_obj.application_id
+            
+            rules_res = await session.execute(select(EvaluationRule).where(EvaluationRule.application_id == str(app_id)).where(EvaluationRule.active == True))
+            rules = rules_res.scalars().all()
+            
+            if rules:
+                for obs in observations:
+                    # Filter: Only evaluate "interesting" spans? 
+                    # For now: Any agent/chain execution or if it looks like a generation
+                    if obs.get("type") in ["agent", "chain", "llm"]: 
+                        trace_data = {
+                            "input": obs.get("input_text"),
+                            "output": obs.get("output_text"),
+                            "context": obs.get("metadata_json"), # simplified usage of metadata as context
+                            "trace_id": obs.get("trace_id"),
+                            "observation_id": obs.get("id"),
+                            "observation_name": obs.get("name"),
+                            "application_name": application_name
+                        }
+                        
+                        # Trigger all active rules
+                        for rule in rules:
+                            background_tasks.add_task(run_triggered_evaluation, rule.id, trace_data)
+
         return {"status": "success", "count": len(data)}
     except Exception as e:
         import traceback

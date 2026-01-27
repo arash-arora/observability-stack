@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
-import { Play } from "lucide-react";
+import { Play, Activity } from "lucide-react";
 
 interface EvaluationResult {
   id: string;
@@ -13,10 +13,12 @@ interface EvaluationResult {
   output: string;
   context: string[];
   expected_output: string;
-  score: number;
-  passed: boolean;
+  score: number | null;
+  passed: boolean | null;
   reason: string;
   trace_id?: string;
+  status?: string;
+  metadata_json?: any;
 }
 
 interface EvaluationDetailViewProps {
@@ -30,13 +32,42 @@ export default function EvaluationDetailView({
 }: EvaluationDetailViewProps) {
   if (!result) return null;
 
+  const getStatusColor = () => {
+       if (result.status === "RUNNING") return "bg-yellow-500/10 border-yellow-500/20";
+       if (result.passed === true) return "bg-green-500/10 border-green-500/20";
+       if (result.passed === false) return "bg-red-500/10 border-red-500/20";
+       return "bg-stone-500/10 border-stone-500/20";
+  };
+  
+  const getBadgeVariant = () => {
+      if (result.passed === true) return "default";
+      if (result.passed === false) return "destructive";
+      return "secondary";
+  };
+
+  const getBadgeLabel = () => {
+      if (result.status === "RUNNING") return "RUNNING";
+      if (result.passed === true) return "PASSED";
+      if (result.passed === false) return "FAILED";
+      return result.status || "UNKNOWN";
+  };
+
   return (
     <div className="space-y-6">
         <div className="flex items-center justify-between mb-6">
             <div>
                 <h2 className="text-2xl font-bold tracking-tight">Evaluation Details</h2>
-                <p className="text-muted-foreground">
+                <p className="text-muted-foreground flex items-center gap-2">
                     {format(new Date(result.created_at), "PPpp")}
+                    {result.metadata_json?.agent_name && (
+                        <>
+                            <span className="text-muted-foreground/30">•</span>
+                            <span className="inline-flex items-center gap-1 text-primary/80 font-medium">
+                                <Activity className="h-3.5 w-3.5" />
+                                {result.metadata_json.agent_name}
+                            </span>
+                        </>
+                    )}
                 </p>
             </div>
             <Button onClick={onRerun}>
@@ -45,15 +76,17 @@ export default function EvaluationDetailView({
         </div>
 
         {/* Status Card */}
-        <div className={`p-6 rounded-lg border ${result.passed ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+        <div className={`p-6 rounded-lg border ${getStatusColor()}`}>
             <div className="flex items-center justify-between mb-4">
-                <Badge variant={result.passed ? "default" : "destructive"} className={`text-md px-3 py-1 ${result.passed ? "bg-green-500 hover:bg-green-600" : ""}`}>
-                    {result.passed ? "PASSED" : "FAILED"}
+                <Badge variant={getBadgeVariant()} className={`text-md px-3 py-1`}>
+                    {getBadgeLabel()}
                 </Badge>
-                <span className="text-4xl font-bold font-mono">{result.score.toFixed(3)}</span>
+                <span className="text-4xl font-bold font-mono">
+                    {result.score !== null ? result.score.toFixed(3) : "-"}
+                </span>
             </div>
             <p className="text-lg text-foreground/90 italic">
-                {result.reason}
+                {result.reason || (result.status === "RUNNING" ? "Evaluation in progress..." : "No reason provided.")}
             </p>
         </div>
 

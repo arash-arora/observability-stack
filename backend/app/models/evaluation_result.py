@@ -11,9 +11,10 @@ class EvaluationResult(SQLModel, table=True):
     output: Optional[str] = None
     context: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     expected_output: Optional[str] = None
-    score: float
+    score: Optional[float] = None
     reason: Optional[str] = None
-    passed: bool
+    passed: Optional[bool] = None
+    status: str = Field(default="COMPLETED") # RUNNING, COMPLETED, FAILED
     metadata_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     application_name: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

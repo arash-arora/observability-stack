@@ -6,6 +6,8 @@ from app.models.metric import Metric
 from app.models.metric import Metric
 from app.models.evaluation_result import EvaluationResult
 from app.models.llm_provider import LLMProvider
+from app.models.evaluation_rule import EvaluationRule
+
 
 class OrganizationUserLink(SQLModel, table=True):
     organization_id: uuid.UUID = Field(foreign_key="organization.id", primary_key=True)

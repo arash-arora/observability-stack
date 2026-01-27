@@ -109,14 +109,25 @@ export function MetricRun({ metric }: MetricRunProps) {
   }, [selectedProject]);
 
 
+  const [evalTrace, setEvalTrace] = useState("");
+  const [evalWorkflow, setEvalWorkflow] = useState("");
+
   useEffect(() => {
     if (metric && metric.dummy_data) {
-        setEvalInput(metric.dummy_data.query || "");
-        setEvalOutput(metric.dummy_data.response || "");
+        setEvalInput(metric.dummy_data.query || metric.dummy_data.input || "");
+        setEvalOutput(metric.dummy_data.response || metric.dummy_data.output || "");
+        
         if (metric.dummy_data.context && Array.isArray(metric.dummy_data.context)) {
             setEvalContext(metric.dummy_data.context.join("\n"));
         } else if (metric.dummy_data.expected) {
             setEvalExpected(metric.dummy_data.expected);
+        }
+
+        if (metric.dummy_data.trace) {
+             setEvalTrace(JSON.stringify(metric.dummy_data.trace, null, 2));
+        }
+        if (metric.dummy_data.workflow_details) {
+             setEvalWorkflow(JSON.stringify(metric.dummy_data.workflow_details, null, 2));
         }
     } else {
         const dummy = DUMMY_DATA[metric.id];
@@ -162,13 +173,38 @@ export function MetricRun({ metric }: MetricRunProps) {
     try {
       // 1. Prepare Inputs
       const inputs: any = {
-        input: evalInput,
+        input: evalInput, 
+        // Some metrics use 'query', some 'input'. Backend usually maps 'input'->'query' if needed or v.v.
+        // We sends both or let backend handle? Evaluations.py: query = inputs.get("input") or inputs.get("query")
+        query: evalInput, 
         output: evalOutput,
         context: evalContext.split("\n").filter(line => line.trim() !== ""),
         expected: evalExpected,
         persist_result: false,
       };
 
+      if (evalTrace) {
+          try {
+              inputs.trace = JSON.parse(evalTrace);
+          } catch (e) {
+              alert("Invalid JSON for Trace");
+              setIsRunning(false);
+              return;
+          }
+      }
+
+      if (evalWorkflow) {
+          try {
+              inputs.workflow_details = JSON.parse(evalWorkflow);
+          } catch (e) {
+              alert("Invalid JSON for Workflow Details");
+              setIsRunning(false);
+              return;
+          }
+      }
+
+      // ... (rest of provider config logic same as before) ...
+      
       if (configMode === 'registered' && selectedProviderId) {
           const selectedProvider = providers.find(p => p.id === selectedProviderId);
           if (selectedProvider) {
@@ -232,38 +268,79 @@ export function MetricRun({ metric }: MetricRunProps) {
     }
   };
 
+  const inputsList = metric.inputs || [];
+  // Default to standard inputs if list empty
+  const showQuery = inputsList.length === 0 || inputsList.includes("query") || inputsList.includes("input");
+  const showOutput = inputsList.length === 0 || inputsList.includes("response") || inputsList.includes("output");
+  const showContext = inputsList.length === 0 || inputsList.includes("context");
+  const showTrace = inputsList.includes("trace") || inputsList.includes("trace_data");
+  const showWorkflow = inputsList.includes("workflow_details");
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-6">
         <Card className="p-6 space-y-6">
           <div className="space-y-4">
-              <div className="space-y-2">
-                  <Label>Input</Label>
-                  <Textarea
-                      className="min-h-25 font-mono"
-                      placeholder="User query or input..."
-                      value={evalInput}
-                      onChange={(e) => setEvalInput(e.target.value)}
-                  />
-              </div>
-              <div className="space-y-2">
-                  <Label>Context (Optional - Line separated)</Label>
-                  <Textarea
-                      className="min-h-25 font-mono"
-                      placeholder="Retrieved context..."
-                      value={evalContext}
-                      onChange={(e) => setEvalContext(e.target.value)}
-                  />
-              </div>
-              <div className="space-y-2">
-                  <Label>Output</Label>
-                  <Textarea
-                      className="min-h-25 font-mono"
-                      placeholder="LLM response..."
-                      value={evalOutput}
-                      onChange={(e) => setEvalOutput(e.target.value)}
-                  />
-              </div>
+              {showQuery && (
+                  <div className="space-y-2">
+                      <Label>Input / Query</Label>
+                      <Textarea
+                          className="min-h-25 font-mono"
+                          placeholder="User query or input..."
+                          value={evalInput}
+                          onChange={(e) => setEvalInput(e.target.value)}
+                      />
+                  </div>
+              )}
+              
+              {showTrace && (
+                   <div className="space-y-2">
+                      <Label>Trace Data (JSON)</Label>
+                      <Textarea
+                          className="min-h-[200px] font-mono text-xs"
+                          placeholder='{"trace_id": "...", "observations": [...]}'
+                          value={evalTrace}
+                          onChange={(e) => setEvalTrace(e.target.value)}
+                      />
+                  </div>
+              )}
+
+              {showWorkflow && (
+                   <div className="space-y-2">
+                      <Label>Workflow Details (JSON)</Label>
+                      <Textarea
+                          className="min-h-[150px] font-mono text-xs"
+                          placeholder='{"agents": [...], "tools": [...]}'
+                          value={evalWorkflow}
+                          onChange={(e) => setEvalWorkflow(e.target.value)}
+                      />
+                  </div>
+              )}
+
+              {showContext && (
+                  <div className="space-y-2">
+                      <Label>Context (Optional - Line separated)</Label>
+                      <Textarea
+                          className="min-h-25 font-mono"
+                          placeholder="Retrieved context..."
+                          value={evalContext}
+                          onChange={(e) => setEvalContext(e.target.value)}
+                      />
+                  </div>
+              )}
+              
+              {showOutput && (
+                  <div className="space-y-2">
+                      <Label>Output / Response</Label>
+                      <Textarea
+                          className="min-h-25 font-mono"
+                          placeholder="LLM response..."
+                          value={evalOutput}
+                          onChange={(e) => setEvalOutput(e.target.value)}
+                      />
+                  </div>
+              )}
+
               <div className="space-y-2">
                   <Label>Expected Output (Optional)</Label>
                   <Textarea
