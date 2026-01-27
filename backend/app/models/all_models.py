@@ -7,6 +7,7 @@ from app.models.metric import Metric
 from app.models.evaluation_result import EvaluationResult
 from app.models.llm_provider import LLMProvider
 from app.models.evaluation_rule import EvaluationRule
+from app.models.workflow import Tool, Agent, Workflow
 
 
 class OrganizationUserLink(SQLModel, table=True):

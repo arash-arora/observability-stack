@@ -27,6 +27,7 @@ export default function Sidebar() {
     { href: '/dashboard/evaluations', label: 'Evaluations', icon: FlaskConical },
     { href: '/dashboard/models', label: 'Model Hub', icon: Sparkles },
     { href: '/dashboard/metrics', label: 'Metrics Hub', icon: Beaker },
+    { href: '/dashboard/workflow', label: 'Workflows', icon: Boxes },
   ];
 
   return (
