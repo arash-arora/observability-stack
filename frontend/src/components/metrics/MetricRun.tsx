@@ -180,7 +180,7 @@ export function MetricRun({ metric }: MetricRunProps) {
         output: evalOutput,
         context: evalContext.split("\n").filter(line => line.trim() !== ""),
         expected: evalExpected,
-        persist_result: false,
+        persist_result: observeTrace,
       };
 
       if (evalTrace) {

@@ -50,3 +50,7 @@ __pycache__/
 
 test*.py
 *.ipynb
+
+postgres-data/
+clickhouse-data/
+clickhouse-config.xml/

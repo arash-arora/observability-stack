@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.clickhouse import get_clickhouse_client
 from app.core.database import get_session
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 @router.get("/traces")
 async def get_traces(
     project_id: str,
@@ -23,18 +24,18 @@ async def get_traces(
     name: Optional[List[str]] = Query(None),
     application: Optional[List[str]] = Query(None),
     sort_by: Optional[str] = None,
-    order: Optional[str] = 'desc',
+    order: Optional[str] = "desc",
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Get list of traces for a project with input/output preview.
     """
     client = get_clickhouse_client()
-    
+
     where_clause = f"t.project_id = '{project_id}' AND t.parent_span_id IS NULL"
-    
+
     if from_ts:
         where_clause += f" AND t.start_time >= toDateTime64({from_ts}, 9)"
     if to_ts:
@@ -42,23 +43,25 @@ async def get_traces(
 
     if search:
         # Simple search on name or trace_id for now
-        where_clause += f" AND (t.name ILIKE '%{search}%' OR t.trace_id ILIKE '%{search}%')"
+        where_clause += (
+            f" AND (t.name ILIKE '%{search}%' OR t.trace_id ILIKE '%{search}%')"
+        )
 
     if status:
         mapped_status = []
         for s in status:
-            if s == 'SUCCESS':
-                mapped_status.extend(['OK', 'UNSET'])
-            elif s == 'ERROR':
-                mapped_status.append('ERROR')
+            if s == "SUCCESS":
+                mapped_status.extend(["OK", "UNSET"])
+            elif s == "ERROR":
+                mapped_status.append("ERROR")
             else:
                 mapped_status.append(s)
-        
+
         # Remove duplicates
         mapped_status = list(set(mapped_status))
         status_list = "', '".join(mapped_status)
         where_clause += f" AND t.status_code IN ('{status_list}')"
-        
+
     if name:
         name_list = "', '".join(name)
         where_clause += f" AND t.name IN ('{name_list}')"
@@ -67,24 +70,22 @@ async def get_traces(
         app_list = "', '".join(application)
         where_clause += f" AND t.application_name IN ('{app_list}')"
 
-
-
     # Sorting Logic
     sort_column_map = {
-        'timestamp': 't.start_time',
-        'start_time': 't.start_time',
-        'name': 't.name',
-        'latency': 't.duration_ms',
-        'duration': 't.duration_ms',
-        'tokens': 'o_metrics.total_tokens'
+        "timestamp": "t.start_time",
+        "start_time": "t.start_time",
+        "name": "t.name",
+        "latency": "t.duration_ms",
+        "duration": "t.duration_ms",
+        "tokens": "o_metrics.total_tokens",
     }
-    
+
     order_clause = "t.start_time DESC"
     if sort_by and sort_by in sort_column_map:
         col = sort_column_map[sort_by]
-        direction = "ASC" if order and order.lower() == 'asc' else "DESC"
+        direction = "ASC" if order and order.lower() == "asc" else "DESC"
         order_clause = f"{col} {direction}"
-    
+
     query = f"""
     SELECT 
         t.trace_id, 
@@ -133,7 +134,7 @@ async def get_traces(
     ORDER BY {order_clause}
     LIMIT {limit} OFFSET {offset}
     """
-    
+
     try:
         result = client.query(query)
         traces = []
@@ -141,30 +142,32 @@ async def get_traces(
             # Estimate cost based on tokens (very rough mock: $0.000002 per token)
             tokens = row[9] or 0
             est_cost = tokens * 0.000002
-            
-            traces.append({
-                "trace_id": row[0],
-                "name": row[1],
-                "start_time": row[2],
-                "end_time": row[3],
-                "duration_ms": row[4],
-                "status_code": row[5],
-                "user_id": row[6],
-                "input": row[7],
-                "output": row[8],
-                "total_tokens": tokens,
-                "total_cost": est_cost,
-                "metadata": row[11], # Map
-                "application_name": row[12]
-            })
+
+            traces.append(
+                {
+                    "trace_id": row[0],
+                    "name": row[1],
+                    "start_time": row[2],
+                    "end_time": row[3],
+                    "duration_ms": row[4],
+                    "status_code": row[5],
+                    "user_id": row[6],
+                    "input": row[7],
+                    "output": row[8],
+                    "total_tokens": tokens,
+                    "total_cost": est_cost,
+                    "metadata": row[11],  # Map
+                    "application_name": row[12],
+                }
+            )
         return traces
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/traces/applications")
 async def get_application_names(
-    project_id: str,
-    current_user: User = Depends(get_current_user)
+    project_id: str, current_user: User = Depends(get_current_user)
 ):
     """
     Get unique application names for a project to populate filters.
@@ -183,10 +186,10 @@ async def get_application_names(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/traces/names")
 async def get_trace_names(
-    project_id: str,
-    current_user: User = Depends(get_current_user)
+    project_id: str, current_user: User = Depends(get_current_user)
 ):
     """
     Get unique trace names for a project to populate filters.
@@ -205,16 +208,16 @@ async def get_trace_names(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/traces/{trace_id}")
 async def get_trace_details(
-    trace_id: str,
-    current_user: User = Depends(get_current_user)
+    trace_id: str, current_user: User = Depends(get_current_user)
 ):
     """
     Get full trace details including all spans and observations.
     """
     client = get_clickhouse_client()
-    
+
     # Fetch all spans for this trace
     spans_query = f"""
     SELECT 
@@ -224,7 +227,7 @@ async def get_trace_details(
     WHERE trace_id = '{trace_id}'
     ORDER BY start_time ASC
     """
-    
+
     # Fetch all observations for this trace
     # IMPORTANT: Ensure we select all columns needed for the UI
     obs_query = f"""
@@ -236,78 +239,80 @@ async def get_trace_details(
     WHERE trace_id = '{trace_id}'
     ORDER BY start_time ASC
     """
-    
+
     try:
         spans_res = client.query(spans_query)
         obs_res = client.query(obs_query)
 
         contexts = {}
-        
+
         spans = []
         for row in spans_res.result_rows:
-            spans.append({
-                "trace_id": row[0],
-                "span_id": row[1],
-                "parent_span_id": row[2],
-                "name": row[3],
-                "kind": row[4],
-                "start_time": row[5],
-                "end_time": row[6],
-                "status_code": row[7],
-                "status_message": row[8],
-                "attributes": row[9],
-                # "events": row[10], # JSON string, maybe parse if needed
-                "duration_ms": row[12],
-                "application_name": row[13],
-                "type": "span" # UI helper
-            })
-            
+            spans.append(
+                {
+                    "trace_id": row[0],
+                    "span_id": row[1],
+                    "parent_span_id": row[2],
+                    "name": row[3],
+                    "kind": row[4],
+                    "start_time": row[5],
+                    "end_time": row[6],
+                    "status_code": row[7],
+                    "status_message": row[8],
+                    "attributes": row[9],
+                    # "events": row[10], # JSON string, maybe parse if needed
+                    "duration_ms": row[12],
+                    "application_name": row[13],
+                    "type": "span",  # UI helper
+                }
+            )
+
         observations = []
         for row in obs_res.result_rows:
             # Handle potential None for parent_observation_id string conversion
-            parent_id = str(row[1]) if row[1] and str(row[1]) != '0' else None
-            
-            observations.append({
-                "id": str(row[0]), 
-                "parent_observation_id": parent_id,
-                "name": row[2],
-                "type": row[3], 
-                "model": row[4],
-                "start_time": row[5],
-                "end_time": row[6],
-                "input": row[7],
-                "output": row[8],
-                "usage": row[9],
-                "metadata_json": row[11],
-                "error": row[14],
-                "total_cost": row[15],
-                "is_observation": True
-            })
-            
-        return {
-            "spans": spans,
-            "observations": observations
-        }
+            parent_id = str(row[1]) if row[1] and str(row[1]) != "0" else None
+
+            observations.append(
+                {
+                    "id": str(row[0]),
+                    "parent_observation_id": parent_id,
+                    "name": row[2],
+                    "type": row[3],
+                    "model": row[4],
+                    "start_time": row[5],
+                    "end_time": row[6],
+                    "input": row[7],
+                    "output": row[8],
+                    "usage": row[9],
+                    "metadata_json": row[11],
+                    "error": row[14],
+                    "total_cost": row[15],
+                    "is_observation": True,
+                }
+            )
+
+        return {"spans": spans, "observations": observations}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/dashboard")
 async def get_dashboard_stats(
     project_id: str,
-    from_ts: Optional[float] = None, # Optional timestamp filter
+    from_ts: Optional[float] = None,  # Optional timestamp filter
     to_ts: Optional[float] = None,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Get aggregated dashboard statistics for a project.
     """
     client = get_clickhouse_client()
-    
+
     # Defaults to last 7 days if not provided
     # For now we query everything for simplicity in demo
     where_clause = f"project_id = '{project_id}'"
-    
+
     # 1. Total Traces
     # 1. Total Traces & Tokens over Time
     # We want two series: Traces count and Token usage
@@ -337,7 +342,7 @@ async def get_dashboard_stats(
     GROUP BY time
     ORDER BY time ASC
     """
-    
+
     # 2. Total Observations (Scores, Generations)
     scores_query = f"""
     SELECT name, count(), avg(toFloat64OrZero(output_text))
@@ -345,7 +350,7 @@ async def get_dashboard_stats(
     WHERE {where_clause} AND type = 'score'
     GROUP BY name
     """
-    
+
     # 3. Model Usage & Cost
     models_query = f"""
     SELECT 
@@ -363,11 +368,9 @@ async def get_dashboard_stats(
     WHERE {where_clause}
     GROUP BY model_name
     """
-    
+
     # ... (lat queries) ...
 
-
-    
     # 4. Latency Percentiles
     # Traces
     trace_lat_query = f"""
@@ -409,13 +412,13 @@ async def get_dashboard_stats(
     WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY app
     """
-    
+
     # 6. App Cost & Tokens (Need to join with observations)
     # Note: ClickHouse JOINs can be tricky. We can try to aggregate obs by trace_id first, then join traces.
-    # Or simplified: if trace has app_name, all its obs belong to that app. 
+    # Or simplified: if trace has app_name, all its obs belong to that app.
     # But obs table doesn't have app_name usually (unless denormalized).
-    # Traces table has app_name. 
-    # Let's try a strict join or IN clause if performance allows. 
+    # Traces table has app_name.
+    # Let's try a strict join or IN clause if performance allows.
     # Actually, we can just join ON trace_id.
     app_cost_query = f"""
     SELECT 
@@ -444,7 +447,7 @@ async def get_dashboard_stats(
     WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY status_code
     """
-    
+
     # 8. Token Split (Prompt vs Completion)
     token_split_query = f"""
     SELECT 
@@ -465,7 +468,7 @@ async def get_dashboard_stats(
     FROM observations
     WHERE {where_clause}
     """
-    
+
     # 9. Top Users
     user_vol_query = f"""
     SELECT 
@@ -477,7 +480,7 @@ async def get_dashboard_stats(
     ORDER BY count DESC
     LIMIT 10
     """
-    
+
     # 10. Generation Speed
     # tokens / duration(s)
     gen_speed_query = f"""
@@ -497,7 +500,7 @@ async def get_dashboard_stats(
       AND model != '' AND model IS NOT NULL
     GROUP BY model_name
     """
-    
+
     # Generations (observations type='generation')
     gen_lat_query = f"""
     SELECT model, 
@@ -509,7 +512,7 @@ async def get_dashboard_stats(
     WHERE {where_clause} AND model IS NOT NULL AND model != ''
     GROUP BY model
     """
-    
+
     try:
         # Execute queries
         traces_res = client.query(traces_query)
@@ -518,7 +521,7 @@ async def get_dashboard_stats(
         models_res = client.query(models_query)
         trace_lat_res = client.query(trace_lat_query)
         gen_lat_res = client.query(gen_lat_query)
-        
+
         # New Queries Execution
         app_series_res = client.query(app_series_query)
         apps_res = client.query(apps_query)
@@ -527,19 +530,21 @@ async def get_dashboard_stats(
         token_split_res = client.query(token_split_query)
         user_vol_res = client.query(user_vol_query)
         gen_speed_res = client.query(gen_speed_query)
-        
+
         # Process Traces (Time Series)
         trace_series = []
         total_traces = 0
         for row in traces_res.result_rows:
             count = row[0]
-            time_bucket = row[1] # datetime object
+            time_bucket = row[1]  # datetime object
             total_traces += count
-            trace_series.append({
-                "time": time_bucket.strftime("%I:%M %p"), # Format 06:30 PM
-                "traces": count
-            })
-            
+            trace_series.append(
+                {
+                    "time": time_bucket.strftime("%I:%M %p"),  # Format 06:30 PM
+                    "traces": count,
+                }
+            )
+
         # Process App Series
         # Map: time -> { app: count }
         app_series_map = {}
@@ -552,64 +557,63 @@ async def get_dashboard_stats(
             if time_str not in app_series_map:
                 app_series_map[time_str] = {}
             app_series_map[time_str][app] = count
-            
+
         app_series = []
         for t, counts in app_series_map.items():
             entry = {"time": t}
             for app in apps_set:
                 entry[app] = counts.get(app, 0)
             app_series.append(entry)
-        # Sort by time string roughly works for 24h, but ideally sort by original objects. 
-        # Since traces_res is sorted, maybe combine logic? 
+        # Sort by time string roughly works for 24h, but ideally sort by original objects.
+        # Since traces_res is sorted, maybe combine logic?
         # For simple demo, this dictionary iteration order might be roughly insert order (py3.7+).
-            
+
         # Process Tokens Series
         token_series = []
         for row in tokens_series_res.result_rows:
-             time_bucket = row[0]
-             tokens = row[1]
-             token_series.append({
-                 "time": time_bucket.strftime("%I:%M %p"),
-                 "tokens": tokens
-             })
+            time_bucket = row[0]
+            tokens = row[1]
+            token_series.append(
+                {"time": time_bucket.strftime("%I:%M %p"), "tokens": tokens}
+            )
 
         # Process Scores
         scores_stats = []
         total_scores = 0
         for row in scores_res.result_rows:
-             count = row[1]
-             total_scores += count
-             scores_stats.append({
-                 "name": row[0],
-                 "count": count,
-                 "avg": round(row[2], 2)
-             })
-             
+            count = row[1]
+            total_scores += count
+            scores_stats.append(
+                {"name": row[0], "count": count, "avg": round(row[2], 2)}
+            )
+
         # Process Models & Cost
         model_stats = []
         total_cost = 0.0
         total_tokens_sum = 0
-        
+
         for row in models_res.result_rows:
             model_name = row[0] or "unknown"
             call_count = row[1]
             total_tokens = row[2]
-            model_cost = row[3] or 0.0 # Use stored cost
-            
+            model_cost = row[3] or 0.0  # Use stored cost
+
             # Fallback if stored cost is 0 but we have tokens
             if model_cost == 0 and total_tokens > 0:
                 model_cost = total_tokens * 0.000002
-            
+
             total_cost += model_cost
             total_tokens_sum += total_tokens
-            
-            model_stats.append({
-                "model": model_name,
-                "count": call_count,
-                "tokens": total_tokens,
-                "cost": round(model_cost, 4)
-            })
-            
+
+            model_stats.append(
+                {
+                    "model": model_name,
+                    "count": call_count,
+                    "tokens": total_tokens,
+                    "cost": round(model_cost, 4),
+                }
+            )
+
         # Process Apps Metrics
         apps_metrics_map = {}
         for row in apps_res.result_rows:
@@ -623,63 +627,65 @@ async def get_dashboard_stats(
                 # Derived
                 "error_rate": round((row[3] / row[4]) * 100, 2) if row[4] > 0 else 0,
                 "total_cost": 0.0,
-                "total_tokens": 0
+                "total_tokens": 0,
             }
-            
+
         # Merge Cost info into Apps Metrics
         for row in app_cost_res.result_rows:
             app = row[0]
             cost = row[1] or 0.0
             tokens = row[2] or 0
-            
+
             # Fallback estimation
             if cost == 0 and tokens > 0:
                 cost = tokens * 0.000002
-                
+
             if app in apps_metrics_map:
                 apps_metrics_map[app]["total_cost"] = round(cost, 4)
                 apps_metrics_map[app]["total_tokens"] = tokens
-            elif app == 'Unknown': 
-                 # Handle cases where app wasn't in traces query but is in join? Unlikely.
-                 pass
+            elif app == "Unknown":
+                # Handle cases where app wasn't in traces query but is in join? Unlikely.
+                pass
 
         apps_metrics = list(apps_metrics_map.values())
 
         # Process Status Distribution
         status_distribution = []
         for row in status_dist_res.result_rows:
-            code = row[0] or 'UNSET'
+            code = row[0] or "UNSET"
             count = row[1]
             status_distribution.append({"name": code, "value": count})
-            
+
         # Process Token Split
         row = token_split_res.result_rows[0]
         token_split = [
             {"name": "Prompt", "value": row[0]},
-            {"name": "Completion", "value": row[1]}
+            {"name": "Completion", "value": row[1]},
         ]
-        
+
         # Process Top Users
         top_users = []
         for row in user_vol_res.result_rows:
             top_users.append({"user": row[0], "count": row[1]})
-            
+
         # Process Gen Speed
         gen_speed = []
         for row in gen_speed_res.result_rows:
             gen_speed.append({"model": row[0], "tokens_per_sec": round(row[1], 2)})
-        
+
         # Process Latencies
         def process_latencies(rows):
             stats = []
             for row in rows:
-                stats.append({
-                    "name": row[0],
-                    "p50": round(row[1], 2),
-                    "p90": round(row[2], 2),
-                    "p95": round(row[3], 2),
-                    "p99": round(row[4], 2)
-                })
+                stats.append(
+                    {
+                        "name": row[0],
+                        "p50": round(row[1], 2),
+                        "p90": round(row[2], 2),
+                        "p95": round(row[3], 2),
+                        "p99": round(row[4], 2),
+                    }
+                )
             return stats
 
         trace_latency = process_latencies(trace_lat_res.result_rows)
@@ -692,24 +698,31 @@ async def get_dashboard_stats(
             # This is a known limitation for now.
             # If we wanted to be strict, we'd need to join with Trace via trace_id in Postgres if traces were synced,
             # or add project_id to EvaluationResult.
-            trend_stmt = select(
-                 func.to_char(EvaluationResult.created_at, 'YYYY-MM-DD').label('day'), 
-                 func.avg(EvaluationResult.score)
-            ).group_by('day').order_by('day').limit(30)
-            
+            trend_stmt = (
+                select(
+                    func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
+                        "day"
+                    ),
+                    func.avg(EvaluationResult.score),
+                )
+                .group_by("day")
+                .order_by("day")
+                .limit(30)
+            )
+
             trend_res = await session.execute(trend_stmt)
             for day, avg in trend_res.all():
-                 eval_trend.append({"date": day, "avg_score": round(avg, 2)})
+                eval_trend.append({"date": day, "avg_score": round(avg, 2)})
         except Exception as e:
             logger.error(f"Failed to fetch eval trend: {e}")
 
         return {
             "total_traces": total_traces,
-            "total_cost": round(total_cost, 4), 
+            "total_cost": round(total_cost, 4),
             "total_tokens": total_tokens_sum,
             "total_scores": total_scores,
             "trace_series": trace_series,
-            "token_series": token_series, 
+            "token_series": token_series,
             "model_stats": model_stats,
             "scores_stats": scores_stats,
             "trace_latency": trace_latency,
@@ -720,9 +733,8 @@ async def get_dashboard_stats(
             "status_distribution": status_distribution,
             "token_split": token_split,
             "top_users": top_users,
-            "gen_speed": gen_speed
+            "gen_speed": gen_speed,
         }
-
 
     except Exception as e:
         print(f"Analytics Error: {e}")
@@ -741,13 +753,14 @@ async def get_dashboard_stats(
             "status_distribution": [],
             "token_split": [],
             "top_users": [],
-            "gen_speed": []
+            "gen_speed": [],
         }
+
 
 @router.get("/evaluation-stats")
 async def get_evaluation_stats(
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Get aggregated statistics for evaluations (Postgres).
@@ -756,73 +769,88 @@ async def get_evaluation_stats(
     try:
         # 1. Pass/Fail Ratio
         # Filter where status='COMPLETED' or passed is not null
-        pf_stmt = select(EvaluationResult.passed, func.count())\
-            .where(EvaluationResult.score != None)\
+        pf_stmt = (
+            select(EvaluationResult.passed, func.count())
+            .where(EvaluationResult.score != None)
             .group_by(EvaluationResult.passed)
-            
+        )
+
         pf_res = await session.execute(pf_stmt)
         pass_fail_data = []
         for passed, count in pf_res.all():
             if passed is not None:
                 label = "Passed" if passed else "Failed"
                 pass_fail_data.append({"name": label, "value": count})
-            
+
         # 2. Avg Score by Metric
-        metric_stmt = select(EvaluationResult.metric_id, func.avg(EvaluationResult.score))\
-            .where(EvaluationResult.score != None)\
+        metric_stmt = (
+            select(EvaluationResult.metric_id, func.avg(EvaluationResult.score))
+            .where(EvaluationResult.score != None)
             .group_by(EvaluationResult.metric_id)
-            
+        )
+
         metric_res = await session.execute(metric_stmt)
         avg_scores = []
         for mid, avg in metric_res.all():
             if avg is not None:
                 avg_scores.append({"metric": mid, "score": round(avg, 2)})
-            
+
         # 3. Score Trend (Daily)
         try:
-             trend_stmt = select(
-                 func.to_char(EvaluationResult.created_at, 'YYYY-MM-DD').label('day'), 
-                 func.avg(EvaluationResult.score)
-             ).where(EvaluationResult.score != None)\
-              .group_by('day').order_by('day')
-              
-             trend_res = await session.execute(trend_stmt)
-             score_trend = []
-             for day, avg in trend_res.all():
-                 if day and avg is not None:
+            trend_stmt = (
+                select(
+                    func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
+                        "day"
+                    ),
+                    func.avg(EvaluationResult.score),
+                )
+                .where(EvaluationResult.score != None)
+                .group_by("day")
+                .order_by("day")
+            )
+
+            trend_res = await session.execute(trend_stmt)
+            score_trend = []
+            for day, avg in trend_res.all():
+                if day and avg is not None:
                     score_trend.append({"date": day, "avg_score": round(avg, 2)})
         except Exception:
-             # Fallback
-             trend_stmt = select(EvaluationResult.created_at, EvaluationResult.score)\
-                .where(EvaluationResult.score != None)\
+            # Fallback
+            trend_stmt = (
+                select(EvaluationResult.created_at, EvaluationResult.score)
+                .where(EvaluationResult.score != None)
                 .order_by(EvaluationResult.created_at)
-             trend_res = await session.execute(trend_stmt)
-             # Agg in python
-             from collections import defaultdict
-             day_map = defaultdict(list)
-             for created_at, score in trend_res.all():
-                 if score is not None:
-                     day = created_at.strftime("%Y-%m-%d")
-                     day_map[day].append(score)
-             score_trend = [{"date": d, "avg_score": round(sum(s)/len(s), 2)} for d, s in day_map.items()]
-             score_trend.sort(key=lambda x: x['date'])
-        
+            )
+            trend_res = await session.execute(trend_stmt)
+            # Agg in python
+            from collections import defaultdict
+
+            day_map = defaultdict(list)
+            for created_at, score in trend_res.all():
+                if score is not None:
+                    day = created_at.strftime("%Y-%m-%d")
+                    day_map[day].append(score)
+            score_trend = [
+                {"date": d, "avg_score": round(sum(s) / len(s), 2)}
+                for d, s in day_map.items()
+            ]
+            score_trend.sort(key=lambda x: x["date"])
+
         return {
             "pass_fail": pass_fail_data,
             "avg_scores": avg_scores,
             "score_trend": score_trend,
-            "total_runs": await session.scalar(select(func.count()).select_from(EvaluationResult))
+            "total_runs": await session.scalar(
+                select(func.count()).select_from(EvaluationResult)
+            ),
         }
     except Exception as e:
         print(f"Eval Stats Error: {e}")
-        return {
-            "pass_fail": [],
-            "avg_scores": [],
-            "score_trend": []
-        }
+        return {"pass_fail": [], "avg_scores": [], "score_trend": []}
     except Exception as e:
         print(f"Eval Stats Error: {e}")
         return {}
+
 
 @router.get("/applications/{app_name}/stats")
 async def get_application_stats(
@@ -831,15 +859,15 @@ async def get_application_stats(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Get detailed statistics for a specific application.
     """
     client = get_clickhouse_client()
-    
+
     where_clause = f"project_id = '{project_id}' AND application_name = '{app_name}'"
-    
+
     if from_ts:
         where_clause += f" AND start_time >= toDateTime64({from_ts}, 9)"
     if to_ts:
@@ -856,7 +884,7 @@ async def get_application_stats(
     FROM traces
     WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     """
-    
+
     # 2. Token & Cost (Joined)
     cost_tokens_query = f"""
     SELECT 
@@ -873,7 +901,7 @@ async def get_application_stats(
     WHERE {where_clause.replace("project_id", "t.project_id").replace("application_name", "t.application_name")}
       AND (t.parent_span_id IS NULL OR t.parent_span_id = '')
     """
-    
+
     # 3. Requests & Latency Over Time (Chart 1 & 2)
     series_query = f"""
     SELECT 
@@ -885,7 +913,7 @@ async def get_application_stats(
     GROUP BY time
     ORDER BY time ASC
     """
-    
+
     # 4. Status Distribution
     status_query = f"""
     SELECT 
@@ -895,7 +923,7 @@ async def get_application_stats(
     WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY status
     """
-    
+
     # 5. Top Models
     models_query = f"""
     SELECT 
@@ -908,7 +936,7 @@ async def get_application_stats(
     ORDER BY count DESC
     LIMIT 10
     """
-    
+
     # 6. Top Users
     users_query = f"""
     SELECT 
@@ -920,9 +948,9 @@ async def get_application_stats(
     ORDER BY count() DESC
     LIMIT 10
     """
-    
+
     # New Graph Queries
-    
+
     # 7. Token Usage Over Time
     token_series_query = f"""
     SELECT 
@@ -941,7 +969,7 @@ async def get_application_stats(
     GROUP BY time
     ORDER BY time ASC
     """
-    
+
     # 8. Cost Over Time
     cost_series_query = f"""
     SELECT 
@@ -971,7 +999,7 @@ async def get_application_stats(
         users_res = client.query(users_query)
         token_series_res = client.query(token_series_query)
         cost_series_res = client.query(cost_series_query)
-        
+
         # Parse Overview
         row = overview_res.result_rows[0]
         total_requests = row[0]
@@ -980,15 +1008,15 @@ async def get_application_stats(
         p95_latency = row[3]
         error_count = row[4]
         error_rate = (error_count / total_requests * 100) if total_requests > 0 else 0
-        
+
         # Parse Cost
         c_row = cost_res.result_rows[0]
         total_cost = c_row[0] or 0.0
         total_tokens = c_row[1] or 0
-        
+
         if total_cost == 0 and total_tokens > 0:
             total_cost = total_tokens * 0.000002
-            
+
         # Helper for date formatting
         def fmt_time(dt):
             return dt.strftime("%b %d, %I:%M %p")
@@ -1000,12 +1028,12 @@ async def get_application_stats(
             t_str = fmt_time(r[0])
             request_series.append({"time": t_str, "requests": r[1]})
             latency_series.append({"time": t_str, "latency": round(r[2], 2)})
-            
+
         # Parse Token & Cost Series
         token_series = []
         for r in token_series_res.result_rows:
             token_series.append({"time": fmt_time(r[0]), "tokens": r[1]})
-            
+
         cost_series = []
         for r in cost_series_res.result_rows:
             # If cost is 0, estimate
@@ -1013,71 +1041,88 @@ async def get_application_stats(
             if val == 0 and r[2] > 0:
                 val = r[2] * 0.000002
             cost_series.append({"time": fmt_time(r[0]), "cost": round(val, 5)})
-            
+
         # Parse Status
-        status_dist = [{"name": r[0] or 'OK', "value": r[1]} for r in status_res.result_rows]
-        
+        status_dist = [
+            {"name": r[0] or "OK", "value": r[1]} for r in status_res.result_rows
+        ]
+
         # Parse Models
         model_usage = [{"name": r[0], "value": r[1]} for r in models_res.result_rows]
-        
+
         # Parse Users
         top_users = [{"user": r[0], "count": r[1]} for r in users_res.result_rows]
-        
+
         # --- Postgres Evaluations for this App ---
         eval_metrics = {
             "total_evals": 0,
             "pass_rate": 0,
             "avg_score": 0,
             "score_trend": [],
-            "pass_fail_trend": [] # New Chart
+            "pass_fail_trend": [],  # New Chart
         }
-        
+
         try:
-             # Total & Pass Rate
-             stmt = select(
-                 func.count().label('total'),
-                 func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label('passed'),
-                 func.avg(EvaluationResult.score).label('avg_score')
-             ).where(EvaluationResult.application_name == app_name)
-             
-             pg_res = await session.execute(stmt)
-             pg_row = pg_res.one()
-             
-             total_evals = pg_row.total or 0
-             passed_evals = pg_row.passed or 0
-             
-             eval_metrics["total_evals"] = total_evals
-             eval_metrics["avg_score"] = round(pg_row.avg_score, 2) if pg_row.avg_score else 0
-             eval_metrics["pass_rate"] = round((passed_evals / total_evals * 100), 1) if total_evals > 0 else 0
-             
-             # Eval Trend
-             trend_stmt = select(
-                 func.to_char(EvaluationResult.created_at, 'YYYY-MM-DD').label('day'), 
-                 func.avg(EvaluationResult.score),
-                 func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label('passed_count'),
-                 func.count().label('total_count')
-             ).where(EvaluationResult.application_name == app_name).group_by('day').order_by('day').limit(30)
-             
-             trend_pg_res = await session.execute(trend_stmt)
-             for day, avg, passed, total in trend_pg_res.all():
-                 avg = avg or 0
-                 # Reformat Day? YYYY-MM-DD is fine for X axis, maybe format in frontend
-                 # But let's try to match style if possible. 
-                 # Actually simpler to keep YYYY-MM-DD for eval trend usually.
-                 eval_metrics["score_trend"].append({"date": day, "score": round(avg, 2)})
-                 
-                 # Pass/Fail Trend
-                 failed = total - passed
-                 eval_metrics["pass_fail_trend"].append({
-                     "date": day,
-                     "passed": passed,
-                     "failed": failed
-                 })
-                 
+            # Total & Pass Rate
+            stmt = select(
+                func.count().label("total"),
+                func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label(
+                    "passed"
+                ),
+                func.avg(EvaluationResult.score).label("avg_score"),
+            ).where(EvaluationResult.application_name == app_name)
+
+            pg_res = await session.execute(stmt)
+            pg_row = pg_res.one()
+
+            total_evals = pg_row.total or 0
+            passed_evals = pg_row.passed or 0
+
+            eval_metrics["total_evals"] = total_evals
+            eval_metrics["avg_score"] = (
+                round(pg_row.avg_score, 2) if pg_row.avg_score else 0
+            )
+            eval_metrics["pass_rate"] = (
+                round((passed_evals / total_evals * 100), 1) if total_evals > 0 else 0
+            )
+
+            # Eval Trend
+            trend_stmt = (
+                select(
+                    func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
+                        "day"
+                    ),
+                    func.avg(EvaluationResult.score),
+                    func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label(
+                        "passed_count"
+                    ),
+                    func.count().label("total_count"),
+                )
+                .where(EvaluationResult.application_name == app_name)
+                .group_by("day")
+                .order_by("day")
+                .limit(30)
+            )
+
+            trend_pg_res = await session.execute(trend_stmt)
+            for day, avg, passed, total in trend_pg_res.all():
+                avg = avg or 0
+                # Reformat Day? YYYY-MM-DD is fine for X axis, maybe format in frontend
+                # But let's try to match style if possible.
+                # Actually simpler to keep YYYY-MM-DD for eval trend usually.
+                eval_metrics["score_trend"].append(
+                    {"date": day, "score": round(avg, 2)}
+                )
+
+                # Pass/Fail Trend
+                failed = total - passed
+                eval_metrics["pass_fail_trend"].append(
+                    {"date": day, "passed": passed, "failed": failed}
+                )
+
         except Exception as e:
             print(f"App Eval Stats Error: {e}")
-        
-        
+
         return {
             "overview": {
                 "total_requests": total_requests,
@@ -1085,7 +1130,7 @@ async def get_application_stats(
                 "p95_latency": round(p95_latency, 2),
                 "error_rate": round(error_rate, 2),
                 "total_tokens": total_tokens,
-                "total_cost": round(total_cost, 4)
+                "total_cost": round(total_cost, 4),
             },
             "charts": {
                 "requests_over_time": request_series,
@@ -1093,20 +1138,16 @@ async def get_application_stats(
                 "status_distribution": status_dist,
                 "model_usage": model_usage,
                 "top_users": top_users,
-                "tokens_over_time": token_series, # New
-                "cost_over_time": cost_series,    # New
-                "pass_fail_trend": eval_metrics["pass_fail_trend"] # New
+                "tokens_over_time": token_series,  # New
+                "cost_over_time": cost_series,  # New
+                "pass_fail_trend": eval_metrics["pass_fail_trend"],  # New
             },
-            "evaluations": eval_metrics
+            "evaluations": eval_metrics,
         }
-        
+
     except Exception as e:
         print(f"App Stats Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         print(f"Eval Stats Error: {e}")
-        return {
-            "pass_fail": [],
-            "avg_scores": [],
-            "score_trend": []
-        }
+        return {"pass_fail": [], "avg_scores": [], "score_trend": []}
