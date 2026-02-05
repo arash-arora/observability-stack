@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { useDashboard } from "@/context/DashboardContext";
 import { format } from "date-fns";
 import {
   Table,
@@ -64,12 +65,16 @@ interface LLMProvider {
 }
 
 export default function AutoEvalView() {
+  const { selectedOrg } = useDashboard();
   const [rules, setRules] = useState<Rule[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [idxLoading, setIdxLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+
+  // Check permissions
+  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
 
   // Form State
   const [newName, setNewName] = useState("");
@@ -215,127 +220,129 @@ export default function AutoEvalView() {
            <h2 className="text-xl font-semibold tracking-tight">Auto-Evaluation Rules</h2>
            <p className="text-sm text-muted-foreground">Automatically trigger evaluations on new traces.</p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={resetForm}>
-              <Plus className="mr-2 h-4 w-4" /> New Rule
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-[500px]">
-            <DialogHeader>
-              <DialogTitle>Create Auto-Eval Rule</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label>Rule Name</Label>
-                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Hallucination Check" />
-              </div>
-              
-              <div className="grid gap-2">
-                <Label>Application</Label>
-                <Select value={newApp} onValueChange={setNewApp}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Application" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {applications.map((app) => (
-                      <SelectItem key={app.id} value={app.id}>{app.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid gap-2">
-                <Label>Evaluation Metrics (Select multiple)</Label>
-                <div className="flex flex-wrap gap-2 p-3 border rounded-md max-h-40 overflow-y-auto bg-muted/20">
-                    {metrics.map((m) => {
-                        const isSelected = selectedMetrics.includes(m.id);
-                        return (
-                            <div 
-                                key={m.id}
-                                className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors border ${
-                                    isSelected 
-                                    ? "bg-primary/10 border-primary text-primary" 
-                                    : "bg-background border-transparent hover:bg-muted"
-                                }`}
-                                onClick={() => {
-                                    if (isSelected) {
-                                        setSelectedMetrics(selectedMetrics.filter(id => id !== m.id));
-                                    } else {
-                                        setSelectedMetrics([...selectedMetrics, m.id]);
-                                    }
-                                }}
-                            >
-                                <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                                    isSelected ? "bg-primary border-primary" : "border-muted-foreground"
-                                }`}>
-                                    {isSelected && <Plus className="h-3 w-3 text-primary-foreground rotate-45" />}
-                                </div>
-                                <span className="text-sm font-medium">{m.name}</span>
-                            </div>
-                        );
-                    })}
+        {canCreate && (
+            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+                <Button onClick={resetForm}>
+                <Plus className="mr-2 h-4 w-4" /> New Rule
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                <DialogTitle>Create Auto-Eval Rule</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                    <Label>Rule Name</Label>
+                    <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Hallucination Check" />
                 </div>
-                {selectedMetrics.length > 0 && (
-                    <div className="flex flex-wrap gap-1 pt-1">
-                        {selectedMetrics.map(id => {
-                            const name = metrics.find(m => m.id === id)?.name;
+                
+                <div className="grid gap-2">
+                    <Label>Application</Label>
+                    <Select value={newApp} onValueChange={setNewApp}>
+                    <SelectTrigger>
+                        <SelectValue placeholder="Select Application" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {applications.map((app) => (
+                        <SelectItem key={app.id} value={app.id}>{app.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                    </Select>
+                </div>
+
+                <div className="grid gap-2">
+                    <Label>Evaluation Metrics (Select multiple)</Label>
+                    <div className="flex flex-wrap gap-2 p-3 border rounded-md max-h-40 overflow-y-auto bg-muted/20">
+                        {metrics.map((m) => {
+                            const isSelected = selectedMetrics.includes(m.id);
                             return (
-                                <Badge key={id} variant="secondary" className="text-[10px]">
-                                    {name}
-                                </Badge>
+                                <div 
+                                    key={m.id}
+                                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors border ${
+                                        isSelected 
+                                        ? "bg-primary/10 border-primary text-primary" 
+                                        : "bg-background border-transparent hover:bg-muted"
+                                    }`}
+                                    onClick={() => {
+                                        if (isSelected) {
+                                            setSelectedMetrics(selectedMetrics.filter(id => id !== m.id));
+                                        } else {
+                                            setSelectedMetrics([...selectedMetrics, m.id]);
+                                        }
+                                    }}
+                                >
+                                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                                        isSelected ? "bg-primary border-primary" : "border-muted-foreground"
+                                    }`}>
+                                        {isSelected && <Plus className="h-3 w-3 text-primary-foreground rotate-45" />}
+                                    </div>
+                                    <span className="text-sm font-medium">{m.name}</span>
+                                </div>
                             );
                         })}
                     </div>
-                )}
-              </div>
-
-              <div className="grid gap-2">
-                <Label>Model Configuration</Label>
-                <Select value={selectedProviderId} onValueChange={handleProviderChange} disabled={!newApp}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={!newApp ? "Select Application first" : "Select Model Source"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="custom">Custom / Manual (Specify in JSON)</SelectItem>
-                    {providers.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                          {p.name} ({p.provider} - {p.model_name})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="grid gap-2">
-                <div className="flex justify-between items-center">
-                    <Label>Inputs Override & Model Config (JSON)</Label>
-                    <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="h-6 text-xs"
-                        onClick={() => setNewInputs('{\n  "model": "gpt-4o",\n  "provider": "openai"\n}')}
-                    >
-                        Load Template
-                    </Button>
+                    {selectedMetrics.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                            {selectedMetrics.map(id => {
+                                const name = metrics.find(m => m.id === id)?.name;
+                                return (
+                                    <Badge key={id} variant="secondary" className="text-[10px]">
+                                        {name}
+                                    </Badge>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
-                <Textarea 
-                   value={newInputs} 
-                   onChange={(e) => setNewInputs(e.target.value)} 
-                   placeholder='{"model": "gpt-4o", "provider": "openai"}'
-                   className="font-mono text-xs h-24"
-                />
-                <p className="text-xs text-muted-foreground">
-                    By default, input/output/context are extracted from the trace. Use this to override inputs or set model config.
-                </p>
-              </div>
-              {formError && <p className="text-sm text-red-500">{formError}</p>}
-            </div>
-            <DialogFooter>
-              <Button onClick={handleCreate}>Create Rule</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+
+                <div className="grid gap-2">
+                    <Label>Model Configuration</Label>
+                    <Select value={selectedProviderId} onValueChange={handleProviderChange} disabled={!newApp}>
+                    <SelectTrigger>
+                        <SelectValue placeholder={!newApp ? "Select Application first" : "Select Model Source"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="custom">Custom / Manual (Specify in JSON)</SelectItem>
+                        {providers.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                            {p.name} ({p.provider} - {p.model_name})
+                        </SelectItem>
+                        ))}
+                    </SelectContent>
+                    </Select>
+                </div>
+                
+                <div className="grid gap-2">
+                    <div className="flex justify-between items-center">
+                        <Label>Inputs Override & Model Config (JSON)</Label>
+                        <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-6 text-xs"
+                            onClick={() => setNewInputs('{\n  "model": "gpt-4o",\n  "provider": "openai"\n}')}
+                        >
+                            Load Template
+                        </Button>
+                    </div>
+                    <Textarea 
+                       value={newInputs} 
+                       onChange={(e) => setNewInputs(e.target.value)} 
+                       placeholder='{"model": "gpt-4o", "provider": "openai"}'
+                       className="font-mono text-xs h-24"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                        By default, input/output/context are extracted from the trace. Use this to override inputs or set model config.
+                    </p>
+                </div>
+                {formError && <p className="text-sm text-red-500">{formError}</p>}
+                </div>
+                <DialogFooter>
+                <Button onClick={handleCreate}>Create Rule</Button>
+                </DialogFooter>
+            </DialogContent>
+            </Dialog>
+        )}
       </div>
 
       <div className="rounded-md border">

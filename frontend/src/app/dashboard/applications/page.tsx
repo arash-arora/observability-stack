@@ -27,11 +27,14 @@ interface Application {
 }
 
 export default function ApplicationsPage() {
-  const { projects, selectedProject } = useDashboard();
+  const { projects, selectedProject, selectedOrg } = useDashboard();
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
+
+  // Check permissions - Admin or Maintainer can create
+  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
 
   const fetchData = async () => {
     setLoading(true);
@@ -90,9 +93,11 @@ export default function ApplicationsPage() {
             title="Applications" 
             infoTooltip="Manage your applications and their API keys." 
          />
-         <Button onClick={() => setIsModalOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> New Application
-        </Button>
+         {canCreate && (
+             <Button onClick={() => setIsModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New Application
+            </Button>
+         )}
       </div>
 
       {selectedProject && (

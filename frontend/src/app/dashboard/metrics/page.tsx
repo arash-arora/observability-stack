@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import PageHeader from "@/components/PageHeader";
+import { useDashboard } from "@/context/DashboardContext";
 
 // --- Inline Components ---
 const Button = ({
@@ -83,12 +84,16 @@ interface Metric {
 
 export default function MetricsPage() {
   const router = useRouter();
+  const { selectedOrg } = useDashboard();
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSource, setSelectedSource] = useState<
     "all" | "preset" | "custom"
   >("all");
   const [loading, setLoading] = useState(true);
+
+  // Check permissions
+  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -134,14 +139,16 @@ export default function MetricsPage() {
         title="Metrics Hub" 
         infoTooltip="Manage and explore your evaluation metrics. Define custom metrics or use preset ones." 
       >
-        <Button
-            variant="primary"
-            className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
-            onClick={() => router.push("/dashboard/metrics/new")}
-        >
-            <Plus size={16} />
-            Create Metric
-        </Button>
+        {canCreate && (
+            <Button
+                variant="primary"
+                className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
+                onClick={() => router.push("/dashboard/metrics/new")}
+            >
+                <Plus size={16} />
+                Create Metric
+            </Button>
+        )}
       </PageHeader>
 
       <div className="flex gap-8">

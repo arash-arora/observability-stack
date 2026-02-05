@@ -9,6 +9,8 @@ import { LayoutDashboard, Activity, Key, LogOut, LayoutList,
   Settings,
   Beaker,
   Boxes,
+  Shield,
+  Building2,
 } from "lucide-react";
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
@@ -27,6 +29,13 @@ export default function Sidebar() {
     { href: '/dashboard/evaluations', label: 'Evaluations', icon: FlaskConical },
     { href: '/dashboard/models', label: 'Model Hub', icon: Sparkles },
     { href: '/dashboard/metrics', label: 'Metrics Hub', icon: Beaker },
+    // Show Organizations only if superuser
+    ...(user?.is_superuser ? [{ href: '/dashboard/organizations', label: 'Organizations', icon: Building2 }] : []),
+    // Show Admin Pages only if superuser
+    ...(user?.is_superuser ? [
+      { href: '/dashboard/admin/user-management', label: 'User Management', icon: Shield },
+      { href: '/dashboard/admin/role-management', label: 'Role Management', icon: Key }
+    ] : []),
   ];
 
   return (

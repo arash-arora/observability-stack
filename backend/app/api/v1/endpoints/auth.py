@@ -23,6 +23,7 @@ class UserRead(BaseModel):
     id: Any
     email: str
     full_name: str | None = None
+    is_superuser: bool = False
 
 
 class Token(BaseModel):
@@ -44,10 +45,18 @@ async def create_user(
             status_code=400,
             detail="The user with this username already exists in the system.",
         )
+    # Check if this is the first user
+    result_all = await session.execute(select(User))
+    first_user = result_all.scalars().first()
+    is_superuser = False
+    if not first_user:
+        is_superuser = True
+
     user = User(
         email=user_in.email.lower().strip(),
         hashed_password=security.get_password_hash(user_in.password),
         full_name=user_in.full_name,
+        is_superuser=is_superuser,
     )
     session.add(user)
     await session.commit()

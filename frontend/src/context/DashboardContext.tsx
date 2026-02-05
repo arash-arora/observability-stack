@@ -7,6 +7,7 @@ import { useAuth } from './AuthContext';
 interface Organization {
   id: string;
   name: string;
+  current_user_role?: string;
 }
 
 interface Project {

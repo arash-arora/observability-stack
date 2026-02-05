@@ -2,6 +2,7 @@
 
 import { useDashboard } from "@/context/DashboardContext";
 import { useLayout } from '@/context/LayoutContext';
+import { useAuth } from '@/context/AuthContext';
 import {
   Select,
   SelectContent,
@@ -27,6 +28,7 @@ export default function ContextHeader() {
     refreshContext // Assuming this exists or we need to reload
   } = useDashboard();
   
+  const { user } = useAuth();
   const { toggleSidebar, isSidebarCollapsed } = useLayout();
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -83,12 +85,16 @@ export default function ContextHeader() {
                 {org.name}
                 </SelectItem>
             ))}
-            <div className="h-px bg-border my-1" />
-            <SelectItem value="create_new" className="text-primary focus:text-primary font-medium">
-                <div className="flex items-center gap-2">
-                    <Plus size={14} /> Create Organization
-                </div>
-            </SelectItem>
+            {user?.is_superuser && (
+              <>
+                <div className="h-px bg-border my-1" />
+                <SelectItem value="create_new" className="text-primary focus:text-primary font-medium">
+                    <div className="flex items-center gap-2">
+                        <Plus size={14} /> Create Organization
+                    </div>
+                </SelectItem>
+              </>
+            )}
             </SelectContent>
         </Select>
       </div>
