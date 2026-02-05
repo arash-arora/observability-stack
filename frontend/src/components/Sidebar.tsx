@@ -45,13 +45,17 @@ export default function Sidebar() {
             isSidebarCollapsed ? "w-16" : "w-64"
         )}
     >
-      <div className={cn("h-14 flex items-center border-b", isSidebarCollapsed ? "justify-center px-0" : "px-6")}>
-        <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
-           <div className="w-5 h-5 rounded-md bg-primary flex items-center justify-center text-primary-foreground shrink-0">
-             <div className="w-2.5 h-2.5 bg-background rounded-full" />
-           </div>
-           {!isSidebarCollapsed && <span className="text-foreground font-semibold animate-in fade-in duration-200">AI Observability</span>}
-        </h1>
+      <div className={cn("flex flex-col items-center justify-center border-b py-2 gap-2", isSidebarCollapsed ? "px-0" : "px-4")}>
+        <img 
+            src="/logo.png" 
+            alt="Logo" 
+            className="w-full h-[70px] object-contain"
+        />
+        {!isSidebarCollapsed && (
+            <h1 className="text-lg font-bold tracking-tight text-center leading-tight animate-in fade-in duration-200">
+                AI Reliability Platform
+            </h1>
+        )}
       </div>
       
       <div className="flex-1 overflow-y-auto py-4 px-3">
