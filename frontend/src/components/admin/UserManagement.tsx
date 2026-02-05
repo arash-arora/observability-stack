@@ -172,7 +172,7 @@ export default function UserManagement() {
                                     <SelectValue placeholder="Select Role" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {roles.map(role => (
+                                    {roles.filter(role => role.name !== 'admin').map(role => (
                                         <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
                                     ))}
                                 </SelectContent>
