@@ -126,9 +126,6 @@ async def run_evaluation(
                     if deployment_name:
                         llm_kwargs["deployment_name"] = deployment_name
 
-                    # Pass instrument flag to Evaluator
-                    llm_kwargs["instrument"] = observe
-
                     evaluator = EvaluatorClass(
                         provider=provider, model=model, **llm_kwargs
                     )
@@ -136,10 +133,13 @@ async def run_evaluation(
                     logger.warning(
                         f"Evaluator {request.metric_id} does not accept llm/kwargs in init. Trying default init."
                     )
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Evaluator {request.metric_id} init failed: {str(e)}",
-                    )
+                    try:
+                        evaluator = EvaluatorClass()
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Evaluator {request.metric_id} init failed even with default init: {str(e)}",
+                        )
 
             except Exception as e:
                 logger.error(f"Failed to init Evaluator: {e}")

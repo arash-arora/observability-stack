@@ -363,7 +363,7 @@ export default function TracesPage() {
                                             <PlayCircle size={14} className="text-indigo-400"/>
                                         )}
                                         {trace.name}
-                                        {(trace.name.startsWith('evaluation_') || trace.metadata?.is_evaluation) && (
+                                        {(trace.metadata?.is_evaluation) && (
                                             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[10px] border border-blue-500/20 font-normal ml-2">
                                                 <FlaskConical size={10} />
                                                 Eval
