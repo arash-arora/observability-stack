@@ -1,5 +1,6 @@
 from app.core.schema import MetricInfo
 
+
 def get_code_snippet_template(metric_id: str):
     return f"""from observix.evaluation import {metric_id}
 
@@ -14,6 +15,7 @@ evaluator = {metric_id}(provider='openai', model='gpt-4o', **llm_kwargs)
 result = evaluator.evaluate(input_query='', output='', context=[''], expected='')
     """
 
+
 STATIC_METRICS_REGISTRY = [
     MetricInfo(
         id="AnswerRelevancyEvaluator",
@@ -27,8 +29,8 @@ STATIC_METRICS_REGISTRY = [
         dummy_data={
             "query": "What is the capital of France?",
             "response": "The capital of France is Paris.",
-            "context": ["Paris is the capital and most populous city of France."]
-        }
+            "context": ["Paris is the capital and most populous city of France."],
+        },
     ),
     MetricInfo(
         id="FaithfulnessEvaluator",
@@ -42,8 +44,8 @@ STATIC_METRICS_REGISTRY = [
         dummy_data={
             "query": "What is the capital of France?",
             "response": "The capital of France is Paris.",
-            "context": ["Paris is the capital and most populous city of France."]
-        }
+            "context": ["Paris is the capital and most populous city of France."],
+        },
     ),
     MetricInfo(
         id="ContextualPrecisionEvaluator",
@@ -56,9 +58,12 @@ STATIC_METRICS_REGISTRY = [
         code_snippet=get_code_snippet_template("ContextualPrecisionEvaluator"),
         dummy_data={
             "query": "What is the capital of France?",
-            "context": ["Paris is the capital and most populous city of France.", "Lyon is a major city in France."],
-            "expected": "Paris"
-        }
+            "context": [
+                "Paris is the capital and most populous city of France.",
+                "Lyon is a major city in France.",
+            ],
+            "expected": "Paris",
+        },
     ),
     MetricInfo(
         id="ContextualRecallEvaluator",
@@ -72,8 +77,8 @@ STATIC_METRICS_REGISTRY = [
         dummy_data={
             "query": "What is the capital of France?",
             "context": ["Paris is the capital and most populous city of France."],
-            "expected": "Paris"
-        }
+            "expected": "Paris",
+        },
     ),
     MetricInfo(
         id="HallucinationEvaluator",
@@ -87,38 +92,40 @@ STATIC_METRICS_REGISTRY = [
         dummy_data={
             "query": "What is the capital of France?",
             "response": "The capital of France is London.",
-            "context": ["Paris is the capital and most populous city of France."]
-        }
+            "context": ["Paris is the capital and most populous city of France."],
+        },
     ),
     MetricInfo(
         id="TaskCompletionEvaluator",
         name="Task Completion",
         description="Measures if the LLM successfully completes the task.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["preset", "agents"],
         inputs=["query", "response", "context"],
         code_snippet=get_code_snippet_template("TaskCompletionEvaluator"),
         dummy_data={
             "query": "Book a flight to Paris",
             "response": "I have booked your flight to Paris for tomorrow.",
-            "context": ["User requested a flight booking to Paris."]
-        }
+            "context": ["User requested a flight booking to Paris."],
+        },
     ),
     MetricInfo(
         id="ToolCorrectnessEvaluator",
         name="Tool Correctness",
         description="Measures if the LLM correctly uses tools.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["preset", "agents", "tools"],
         inputs=["query", "response", "context"],
         code_snippet=get_code_snippet_template("ToolCorrectnessEvaluator"),
         dummy_data={
             "query": "Calculate 2 + 2",
             "response": "The answer is 4.",
-            "context": ["Tool 'calculator' was called with arguments '2 + 2' and returned '4'."]
-        }
+            "context": [
+                "Tool 'calculator' was called with arguments '2 + 2' and returned '4'."
+            ],
+        },
     ),
     MetricInfo(
         id="ToxicityEvaluator",
@@ -132,8 +139,8 @@ STATIC_METRICS_REGISTRY = [
         dummy_data={
             "query": "Tell me a joke.",
             "response": "You are stupid.",
-            "context": []
-        }
+            "context": [],
+        },
     ),
     MetricInfo(
         id="BiasEvaluator",
@@ -147,137 +154,260 @@ STATIC_METRICS_REGISTRY = [
         dummy_data={
             "query": "Who is better, men or women?",
             "response": "Men are generally better at logic.",
-            "context": []
-        }
+            "context": [],
+        },
     ),
-    
     MetricInfo(
         id="ToolSelectionEvaluator",
         name="Tool Selection",
         description="Measures if the agent selected the correct tool for the task.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["observix", "agents", "tools"],
         inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("ToolSelectionEvaluator"),
         dummy_data={
             "query": "Calculate 2+2",
             "trace": {
-                "trace_id": "dummy_trace_123", 
+                "trace_id": "dummy_trace_123",
                 "observations": [
-                    {"id": 1, "type": "agent", "name": "MathAgent", "start_time": 1000, "end_time": 2000, "input": "Calculate 2+2", "output": "4"},
-                    {"id": 2, "type": "tool", "name": "calculator", "start_time": 1200, "end_time": 1800, "input": "2+2", "output": "4"}
-                ]
+                    {
+                        "id": 1,
+                        "type": "agent",
+                        "name": "MathAgent",
+                        "start_time": 1000,
+                        "end_time": 2000,
+                        "input": "Calculate 2+2",
+                        "output": "4",
+                    },
+                    {
+                        "id": 2,
+                        "type": "tool",
+                        "name": "calculator",
+                        "start_time": 1200,
+                        "end_time": 1800,
+                        "input": "2+2",
+                        "output": "4",
+                    },
+                ],
             },
-            "workflow_details": {"agents": [{"name": "MathAgent"}], "tools": [{"name": "calculator"}]}
-        }
+            "workflow_details": {
+                "agents": [{"name": "MathAgent"}],
+                "tools": [{"name": "calculator"}],
+            },
+        },
     ),
     MetricInfo(
         id="ToolInputStructureEvaluator",
         name="Tool Input Structure",
         description="Measures if the tool input arguments follow the correct schema.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["observix", "agents", "tools"],
         inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("ToolInputStructureEvaluator"),
         dummy_data={
-             "query": "Calculate 2+2",
-             "trace": {
-                 "trace_id": "dummy_trace_123",
-                 "observations": [
-                     {"id": 1, "type": "agent", "name": "MathAgent", "start_time": 1000, "end_time": 2000, "input": "Calculate 2+2", "output": "4"},
-                     {"id": 2, "type": "tool", "name": "calculator", "start_time": 1200, "end_time": 1800, "input": "2+2", "output": "4"}
-                 ]
-             },
-             "workflow_details": {"agents": [], "tools": [{"name": "calculator", "input": "2+2"}]}
-        }
+            "query": "Calculate 2+2",
+            "trace": {
+                "trace_id": "dummy_trace_123",
+                "observations": [
+                    {
+                        "id": 1,
+                        "type": "agent",
+                        "name": "MathAgent",
+                        "start_time": 1000,
+                        "end_time": 2000,
+                        "input": "Calculate 2+2",
+                        "output": "4",
+                    },
+                    {
+                        "id": 2,
+                        "type": "tool",
+                        "name": "calculator",
+                        "start_time": 1200,
+                        "end_time": 1800,
+                        "input": "2+2",
+                        "output": "4",
+                    },
+                ],
+            },
+            "workflow_details": {
+                "agents": [],
+                "tools": [{"name": "calculator", "input": "2+2"}],
+            },
+        },
     ),
     MetricInfo(
         id="ToolSequenceEvaluator",
         name="Tool Sequence",
         description="Measures if the sequence of tool calls is logical and efficient.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["observix", "agents", "tools"],
         inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("ToolSequenceEvaluator"),
         dummy_data={
-             "query": "Search for weather then calculate average",
-             "trace": {
-                 "trace_id": "dummy_trace_seq",
-                 "observations": [
-                     {"id": 1, "type": "agent", "name": "Orchestrator", "start_time": 1000, "end_time": 3000, "input": "Weather and avg", "output": "Done"},
-                     {"id": 2, "type": "tool", "name": "weather_api", "start_time": 1200, "end_time": 1500, "input": "New York", "output": "20, 22, 24"},
-                     {"id": 3, "type": "tool", "name": "calculator", "start_time": 1600, "end_time": 1800, "input": "(20+22+24)/3", "output": "22"}
-                 ]
-             },
-             "workflow_details": {"agents": [], "tools": [{"name": "weather_api"}, {"name": "calculator"}]}
-        }
+            "query": "Search for weather then calculate average",
+            "trace": {
+                "trace_id": "dummy_trace_seq",
+                "observations": [
+                    {
+                        "id": 1,
+                        "type": "agent",
+                        "name": "Orchestrator",
+                        "start_time": 1000,
+                        "end_time": 3000,
+                        "input": "Weather and avg",
+                        "output": "Done",
+                    },
+                    {
+                        "id": 2,
+                        "type": "tool",
+                        "name": "weather_api",
+                        "start_time": 1200,
+                        "end_time": 1500,
+                        "input": "New York",
+                        "output": "20, 22, 24",
+                    },
+                    {
+                        "id": 3,
+                        "type": "tool",
+                        "name": "calculator",
+                        "start_time": 1600,
+                        "end_time": 1800,
+                        "input": "(20+22+24)/3",
+                        "output": "22",
+                    },
+                ],
+            },
+            "workflow_details": {
+                "agents": [],
+                "tools": [{"name": "weather_api"}, {"name": "calculator"}],
+            },
+        },
     ),
     MetricInfo(
         id="AgentRoutingEvaluator",
         name="Agent Routing",
         description="Measures if the request was routed to the correct specialized agent.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["observix", "agents", "routing"],
         inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("AgentRoutingEvaluator"),
         dummy_data={
-             "query": "Book a flight",
-             "trace": {
-                 "trace_id": "dummy_trace_routing",
-                 "observations": [
-                     {"id": 1, "type": "agent", "name": "Router", "start_time": 1000, "end_time": 2000, "input": "Book flight", "output": "Routing to TravelAgent"},
-                     {"id": 2, "type": "agent", "name": "TravelAgent", "start_time": 1200, "end_time": 1800, "input": "Book flight", "output": "Booked"}
-                 ]
-             },
-             "workflow_details": {"agents": [{"name": "TravelAgent"}], "tools": []}
-        }
+            "query": "Book a flight",
+            "trace": {
+                "trace_id": "dummy_trace_routing",
+                "observations": [
+                    {
+                        "id": 1,
+                        "type": "agent",
+                        "name": "Router",
+                        "start_time": 1000,
+                        "end_time": 2000,
+                        "input": "Book flight",
+                        "output": "Routing to TravelAgent",
+                    },
+                    {
+                        "id": 2,
+                        "type": "agent",
+                        "name": "TravelAgent",
+                        "start_time": 1200,
+                        "end_time": 1800,
+                        "input": "Book flight",
+                        "output": "Booked",
+                    },
+                ],
+            },
+            "workflow_details": {"agents": [{"name": "TravelAgent"}], "tools": []},
+        },
     ),
     MetricInfo(
         id="HITLEvaluator",
         name="Human-in-the-Loop",
         description="Measures if the agent correctly identified when to ask for human intervention.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["observix", "agents", "safety"],
         inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("HITLEvaluator"),
         dummy_data={
-             "query": "Transfer $1M to unknown account",
-             "trace": {
-                 "trace_id": "dummy_trace_hitl",
-                 "observations": [
-                     {"id": 1, "type": "agent", "name": "BankAgent", "start_time": 1000, "end_time": 2000, "input": "Transfer $1M", "output": "Paused for approval"},
-                     {"id": 2, "type": "tool", "name": "human_approval", "start_time": 1500, "end_time": 1800, "input": "Approve transfer?", "output": "Denied"}
-                 ]
-             },
-             "workflow_details": {"agents": [{"name": "BankAgent"}], "tools": []}
-        }
+            "query": "Transfer $1M to unknown account",
+            "trace": {
+                "trace_id": "dummy_trace_hitl",
+                "observations": [
+                    {
+                        "id": 1,
+                        "type": "agent",
+                        "name": "BankAgent",
+                        "start_time": 1000,
+                        "end_time": 2000,
+                        "input": "Transfer $1M",
+                        "output": "Paused for approval",
+                    },
+                    {
+                        "id": 2,
+                        "type": "tool",
+                        "name": "human_approval",
+                        "start_time": 1500,
+                        "end_time": 1800,
+                        "input": "Approve transfer?",
+                        "output": "Denied",
+                    },
+                ],
+            },
+            "workflow_details": {"agents": [{"name": "BankAgent"}], "tools": []},
+        },
     ),
     MetricInfo(
         id="WorkflowCompletionEvaluator",
         name="Workflow Completion",
         description="Measures if the overall multi-step workflow was completed successfully.",
         provider="Observix",
-        type="Agentic AI",
+        type="Agents",
         tags=["observix", "agents", "workflow"],
         inputs=["query", "trace", "workflow_details"],
         code_snippet=get_code_snippet_template("WorkflowCompletionEvaluator"),
         dummy_data={
-             "query": "Plan a trip to Paris",
-             "trace": {
-                 "trace_id": "dummy_trace_workflow",
-                 "observations": [
-                     {"id": 1, "type": "agent", "name": "PlannerAgent", "start_time": 1000, "end_time": 1200, "input": "Plan Paris trip", "output": "Flight and Hotel needed"},
-                     {"id": 2, "type": "agent", "name": "BookingAgent", "start_time": 1300, "end_time": 1500, "input": "Book Flight", "output": "Confirmed"},
-                     {"id": 3, "type": "agent", "name": "BookingAgent", "start_time": 1600, "end_time": 1800, "input": "Book Hotel", "output": "Confirmed"}
-                 ]
-             },
-             "workflow_details": {"agents": [{"name": "PlannerAgent"}, {"name": "BookingAgent"}], "tools": []}
-        }
+            "query": "Plan a trip to Paris",
+            "trace": {
+                "trace_id": "dummy_trace_workflow",
+                "observations": [
+                    {
+                        "id": 1,
+                        "type": "agent",
+                        "name": "PlannerAgent",
+                        "start_time": 1000,
+                        "end_time": 1200,
+                        "input": "Plan Paris trip",
+                        "output": "Flight and Hotel needed",
+                    },
+                    {
+                        "id": 2,
+                        "type": "agent",
+                        "name": "BookingAgent",
+                        "start_time": 1300,
+                        "end_time": 1500,
+                        "input": "Book Flight",
+                        "output": "Confirmed",
+                    },
+                    {
+                        "id": 3,
+                        "type": "agent",
+                        "name": "BookingAgent",
+                        "start_time": 1600,
+                        "end_time": 1800,
+                        "input": "Book Hotel",
+                        "output": "Confirmed",
+                    },
+                ],
+            },
+            "workflow_details": {
+                "agents": [{"name": "PlannerAgent"}, {"name": "BookingAgent"}],
+                "tools": [],
+            },
+        },
     ),
     MetricInfo(
         id="CustomEvaluator",
@@ -288,10 +418,7 @@ STATIC_METRICS_REGISTRY = [
         tags=["observix", "custom"],
         inputs=["query", "response", "custom_prompt"],
         code_snippet=get_code_snippet_template("CustomEvaluator"),
-        dummy_data={
-             "query": "Summarize text",
-             "context": ["Summary is concise."]
-        }
+        dummy_data={"query": "Summarize text", "context": ["Summary is concise."]},
     ),
     MetricInfo(
         id="AccuracyEvaluator",
@@ -302,10 +429,6 @@ STATIC_METRICS_REGISTRY = [
         tags=["observix", "accuracy"],
         inputs=["query", "response", "expected"],
         code_snippet=get_code_snippet_template("AccuracyEvaluator"),
-        dummy_data={
-             "query": "2+2",
-             "response": "4",
-             "expected": "4"
-        }
-    )
+        dummy_data={"query": "2+2", "response": "4", "expected": "4"},
+    ),
 ]
