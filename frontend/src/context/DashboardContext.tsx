@@ -50,16 +50,37 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setProjects(projectsRes.data);
 
       // Default selection logic
-      if (orgsRes.data.length > 0 && !selectedOrg) {
-        setSelectedOrg(orgsRes.data[0]);
+      let resolvedOrg = selectedOrg;
+      if (orgsRes.data.length > 0) {
+        const savedOrgId = localStorage.getItem('selectedOrgId');
+        const savedOrg = orgsRes.data.find((o: Organization) => o.id === savedOrgId);
+        
+        if (savedOrg) {
+           resolvedOrg = savedOrg;
+           setSelectedOrg(savedOrg);
+        } else if (!resolvedOrg) {
+           resolvedOrg = orgsRes.data[0];
+           setSelectedOrg(resolvedOrg);
+        }
       }
       
       // Filter projects for selected org
-      // Note: Backend endpoint currently returns all projects user has access to. 
-      // We should ideally filter in frontend or backend.
-      // For now, if we have projects and no selection, select the first one.
-      if (projectsRes.data.length > 0 && !selectedProject) {
-         setSelectedProject(projectsRes.data[0]);
+      if (projectsRes.data.length > 0) {
+         let resolvedProject = selectedProject;
+         const savedProjectId = localStorage.getItem('selectedProjectId');
+         const savedProject = projectsRes.data.find((p: Project) => p.id === savedProjectId);
+
+         // Check if saved project belongs to the resolved org
+         if (savedProject && resolvedOrg && savedProject.organization_id === resolvedOrg.id) {
+             resolvedProject = savedProject;
+             setSelectedProject(savedProject);
+         } else if (!resolvedProject && resolvedOrg) {
+             // Fallback: find first project in the resolved org
+             const firstProjectInOrg = projectsRes.data.find((p: Project) => p.organization_id === resolvedOrg?.id);
+             if (firstProjectInOrg) {
+                 setSelectedProject(firstProjectInOrg);
+             }
+         }
       }
 
     } catch (error) {
@@ -72,6 +93,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchData();
   }, [user]);
+
+  useEffect(() => {
+    if (selectedOrg) {
+        localStorage.setItem('selectedOrgId', selectedOrg.id);
+    }
+  }, [selectedOrg]);
+
+  useEffect(() => {
+    if (selectedProject) {
+        localStorage.setItem('selectedProjectId', selectedProject.id);
+    }
+  }, [selectedProject]);
 
   // Update selected project when org changes if current project doesn't belong to new org
   useEffect(() => {
