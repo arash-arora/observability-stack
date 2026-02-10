@@ -11,6 +11,7 @@ import { LayoutDashboard, Activity, Key, LogOut, LayoutList,
   Boxes,
   Shield,
   Building2,
+  Book,
 } from "lucide-react";
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
@@ -86,6 +87,18 @@ export default function Sidebar() {
       </div>
       
       <div className="p-4 border-t relative">
+        <Link 
+            href="/documentation.pdf"
+            target="_blank"
+            className={cn(
+                "flex items-center gap-3 px-2 py-2 mb-2 text-sm font-medium text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground rounded-md transition-all duration-200",
+                isSidebarCollapsed && "justify-center"
+            )}
+            title={isSidebarCollapsed ? "Documentation" : undefined}
+        >
+            <Book size={16} className="opacity-70 shrink-0" />
+            {!isSidebarCollapsed && <span className="truncate animate-in fade-in duration-200">Documentation</span>}
+        </Link>
         {showUserMenu && (
              <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
