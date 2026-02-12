@@ -44,7 +44,7 @@ const OBSERVIX_METRICS = [
     "HITLEvaluator",
     "WorkflowCompletionEvaluator",
     "CustomEvaluator",
-    "AccuracyEvaluator"
+    // "AccuracyEvaluator"
 ];
 
 export default function EvaluationModal({
@@ -73,7 +73,7 @@ export default function EvaluationModal({
 
   // Observability State
   const [observe, setObserve] = useState(defaultObserve);
-  const [traceHost, setTraceHost] = useState("http://localhost:8000");
+  const [traceHost, setTraceHost] = useState(process.env.NEXT_PUBLIC_OBSERVIX_TRACE_HOST || "http://localhost:8000");
   const [traceApiKey, setTraceApiKey] = useState("");
 
   // Provider Selection State 
@@ -306,8 +306,8 @@ export default function EvaluationModal({
                         <SelectItem value="ContextualPrecisionEvaluator">Contextual Precision</SelectItem>
                         <SelectItem value="ContextualRecallEvaluator">Contextual Recall</SelectItem>
                         <SelectItem value="HallucinationEvaluator">Hallucination</SelectItem>
-                        <SelectItem value="TaskCompletionEvaluator">Task Completion</SelectItem>
-                        <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem>
+                        {/* <SelectItem value="TaskCompletionEvaluator">Task Completion</SelectItem>
+                        <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem> */}
                         <SelectItem value="ToxicityEvaluator">Toxicity</SelectItem>
                         <SelectItem value="BiasEvaluator">Bias</SelectItem>
                       </>
@@ -321,7 +321,7 @@ export default function EvaluationModal({
                   <SelectItem value="HITLEvaluator">Human-in-the-Loop</SelectItem>
                   <SelectItem value="WorkflowCompletionEvaluator">Workflow Completion</SelectItem>
                   <SelectItem value="CustomEvaluator">Custom Metric</SelectItem>
-                  <SelectItem value="AccuracyEvaluator">Accuracy</SelectItem>
+                  {/* <SelectItem value="AccuracyEvaluator">Accuracy</SelectItem> */}
                 </SelectContent>
               </Select>
             </div>

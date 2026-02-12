@@ -26,7 +26,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, Key, Loader2, Edit2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Plus, Trash2, Key, Loader2, Edit2, Globe, Lock } from "lucide-react";
 import api from "@/lib/api";
 import { useDashboard } from "@/context/DashboardContext";
 
@@ -44,6 +45,8 @@ export default function ModelRegistry() {
   const [providerType, setProviderType] = useState("openai");
   const [modelName, setModelName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [isPublic, setIsPublic] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   
   // Azure specific
   const [azureEndpoint, setAzureEndpoint] = useState("");
@@ -77,26 +80,47 @@ export default function ModelRegistry() {
           provider: providerType,
           model_name: modelName,
           api_key: apiKey,
-          project_id: selectedProject.id
+          project_id: selectedProject.id,
+          is_public: isPublic
       };
       
       if (providerType === "azure") {
           payload.base_url = azureEndpoint;
           payload.api_version = apiVersion;
           payload.deployment_name = deploymentName;
-          // For Azure, model_name might be optional if stored in deployment, but good to keep
       }
       
-      await api.post("/management/providers", payload);
+      if (editingId) {
+          await api.patch(`/management/providers/${editingId}`, payload);
+      } else {
+          await api.post("/management/providers", payload);
+      }
+      
       await fetchProviders();
       setIsDialogOpen(false);
       resetForm();
     } catch (e) {
-      console.error("Failed to create provider", e);
-      // Could add toast here
+      console.error("Failed to save provider", e);
     } finally {
       setDialogLoading(false);
     }
+  };
+
+  const handleEdit = (provider: any) => {
+      setEditingId(provider.id);
+      setName(provider.name);
+      setProviderType(provider.provider);
+      setModelName(provider.model_name || "");
+      setApiKey(provider.api_key); // Note: API key might be masked in future, but for now it's plaintext
+      setIsPublic(provider.is_public);
+      
+      if (provider.provider === "azure") {
+          setAzureEndpoint(provider.base_url || "");
+          setApiVersion(provider.api_version || "");
+          setDeploymentName(provider.deployment_name || "");
+      }
+      
+      setIsDialogOpen(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -109,10 +133,12 @@ export default function ModelRegistry() {
   };
 
   const resetForm = () => {
+      setEditingId(null);
       setName("");
       setProviderType("openai");
       setModelName("");
       setApiKey("");
+      setIsPublic(false);
       setAzureEndpoint("");
       setApiVersion("");
       setDeploymentName("");
@@ -134,6 +160,7 @@ export default function ModelRegistry() {
               <TableHead>Name</TableHead>
               <TableHead>Provider</TableHead>
               <TableHead>Model / Deployment</TableHead>
+              <TableHead>Visibility</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -154,10 +181,26 @@ export default function ModelRegistry() {
                 <TableCell className="font-mono text-xs">
                     {p.provider === 'azure' ? p.deployment_name : p.model_name}
                 </TableCell>
+                <TableCell>
+                    {p.is_public ? (
+                        <div className="flex items-center text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded w-fit">
+                            <Globe className="w-3 h-3 mr-1" />
+                            Public
+                        </div>
+                    ) : (
+                        <div className="flex items-center text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded w-fit">
+                            <Lock className="w-3 h-3 mr-1" />
+                            Private
+                        </div>
+                    )}
+                </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                     {new Date(p.created_at).toLocaleDateString()}
                 </TableCell>
                 <TableCell className="text-right">
+                  <Button variant="ghost" size="icon" onClick={() => handleEdit(p)} className="hover:bg-slate-100 mr-1">
+                    <Edit2 className="w-4 h-4 text-slate-500" />
+                  </Button>
                   <Button variant="ghost" size="icon" onClick={() => handleDelete(p.id)} className="text-destructive hover:bg-destructive/10">
                     <Trash2 className="w-4 h-4" />
                   </Button>
@@ -171,7 +214,7 @@ export default function ModelRegistry() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Register New Model</DialogTitle>
+            <DialogTitle>{editingId ? "Edit Model" : "Register New Model"}</DialogTitle>
           </DialogHeader>
           
           <div className="space-y-4 py-4">
@@ -268,13 +311,26 @@ export default function ModelRegistry() {
                 </div>
             </div>
 
+            <div className="flex items-center justify-between space-x-2 border p-3 rounded-md">
+                <div className="space-y-0.5">
+                    <Label className="text-base">Make Public</Label>
+                    <div className="text-xs text-muted-foreground">
+                        Allow everyone in this project to use this model
+                    </div>
+                </div>
+                <Switch
+                    checked={isPublic}
+                    onCheckedChange={setIsPublic}
+                />
+            </div>
+
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleCreate} disabled={dialogLoading}>
                 {dialogLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Register
+                {editingId ? "Save Changes" : "Register"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -141,6 +141,31 @@ export default function EvaluationDetailView({
                 </div>
              )}
         </div>
+
+        {/* Evaluator Execution Details */}
+        {(result.metadata_json?.evaluator_input || result.metadata_json?.evaluator_output) && (
+            <div className="mt-8 pt-8 border-t">
+                <h2 className="text-xl font-bold tracking-tight mb-4">Evaluator Execution</h2>
+                <div className="grid gap-6 md:grid-cols-2">
+                    {result.metadata_json?.evaluator_input && (
+                         <div className="col-span-2">
+                            <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Evaluator Input (Prompt)</h3>
+                            <pre className="p-4 rounded-md bg-muted/50 border font-mono text-xs whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto">
+                                {result.metadata_json.evaluator_input}
+                            </pre>
+                        </div>
+                    )}
+                    {result.metadata_json?.evaluator_output && (
+                         <div className="col-span-2">
+                            <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Evaluator Output (Raw)</h3>
+                            <pre className="p-4 rounded-md bg-muted/50 border font-mono text-xs whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto">
+                                {result.metadata_json.evaluator_output}
+                            </pre>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
     </div>
   );
 }
