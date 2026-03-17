@@ -212,7 +212,7 @@ export default function ModelRegistry() {
       </div>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md h-full max-h-screen overflow-y-scroll">
           <DialogHeader>
             <DialogTitle>{editingId ? "Edit Model" : "Register New Model"}</DialogTitle>
           </DialogHeader>

@@ -4,9 +4,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "8022:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://10.17.34.14:8021
     depends_on:
       - backend
     restart: always
@@ -16,7 +16,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8021:8000"
     environment:
       POSTGRES_SERVER: postgres
       POSTGRES_USER: postgres
@@ -75,3 +75,4 @@ services:
 volumes:
   postgres-data:
   clickhouse-data:
+

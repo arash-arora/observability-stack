@@ -54,7 +54,7 @@ export default function Sidebar() {
         />
         {!isSidebarCollapsed && (
             <h1 className="text-lg font-bold tracking-tight text-center leading-tight animate-in fade-in duration-200">
-                AI Reliability Platform
+                AI Reliability Suite
             </h1>
         )}
       </div>
