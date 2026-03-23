@@ -71,7 +71,11 @@ export const extractContent = (data: any): string => {
             return parsed.map(msg => {
                 const role = msg.role ? `${msg.role}: ` : '';
                 const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-                return `${role}${content}`;
+                let msgStr = `${role}${content}`;
+                if ('tool_calls' in msg && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+                    msgStr += `\n[Tool Calls]: ${JSON.stringify(msg.tool_calls)}`;
+                }
+                return msgStr;
             }).join('\n');
         }
         return JSON.stringify(parsed);
@@ -82,7 +86,11 @@ export const extractContent = (data: any): string => {
         const choice = parsed.choices[0];
         // Chat Completion
         if (choice.message && typeof choice.message === 'object' && 'content' in choice.message) {
-            return extractContent(choice.message.content);
+            let choiceStr = extractContent(choice.message.content);
+            if ('tool_calls' in choice.message && Array.isArray(choice.message.tool_calls) && choice.message.tool_calls.length > 0) {
+                choiceStr += `\n[Tool Calls]: ${JSON.stringify(choice.message.tool_calls, null, 2)}`;
+            }
+            return choiceStr;
         }
         // Legacy Completion
         if ('text' in choice) {
@@ -92,11 +100,21 @@ export const extractContent = (data: any): string => {
     
     // 3. Single Object with 'content' or 'text' key
     if (typeof parsed === 'object' && parsed !== null) {
+        let extractedStr = '';
         if ('content' in parsed) {
-            return typeof parsed.content === 'string' ? parsed.content : JSON.stringify(parsed.content);
+            extractedStr = typeof parsed.content === 'string' ? parsed.content : JSON.stringify(parsed.content);
+        } else if ('text' in parsed) {
+            extractedStr = typeof parsed.text === 'string' ? parsed.text : JSON.stringify(parsed.text);
         }
-        if ('text' in parsed) {
-            return typeof parsed.text === 'string' ? parsed.text : JSON.stringify(parsed.text);
+
+        if ('tool_calls' in parsed && Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+            const tcStr = JSON.stringify(parsed.tool_calls, null, 2);
+            extractedStr = extractedStr ? `${extractedStr}\n\n[Tool Calls]:\n${tcStr}` : `[Tool Calls]:\n${tcStr}`;
+            return extractedStr;
+        }
+
+        if ('content' in parsed || 'text' in parsed) {
+            return extractedStr;
         }
         // If it's a generic object without specific content fields, return stringified
         return JSON.stringify(parsed);
