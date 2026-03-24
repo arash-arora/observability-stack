@@ -49,6 +49,7 @@ interface Metric {
   id: string;
   name: string;
   description: string;
+  inputs?: string[];
 }
 
 interface Application {
@@ -283,15 +284,43 @@ export default function AutoEvalView() {
                         })}
                     </div>
                     {selectedMetrics.length > 0 && (
-                        <div className="flex flex-wrap gap-1 pt-1">
-                            {selectedMetrics.map(id => {
-                                const name = metrics.find(m => m.id === id)?.name;
-                                return (
-                                    <Badge key={id} variant="secondary" className="text-[10px]">
-                                        {name}
-                                    </Badge>
+                        <div className="flex flex-col gap-2 pt-2 border-t mt-3">
+                            <div className="flex flex-wrap gap-1">
+                                {selectedMetrics.map(id => {
+                                    const name = metrics.find(m => m.id === id)?.name;
+                                    return (
+                                        <Badge key={id} variant="secondary" className="text-[10px]">
+                                            {name}
+                                        </Badge>
+                                    );
+                                })}
+                            </div>
+                            
+                            {/* Required Inputs Hint */}
+                            {(() => {
+                                const activeInputs = new Set<string>();
+                                selectedMetrics.forEach(id => {
+                                    const m = metrics.find(m => m.id === id);
+                                    if (m && m.inputs) {
+                                        m.inputs.forEach((inp: string) => activeInputs.add(inp));
+                                    }
+                                });
+                                const reqInputs = Array.from(activeInputs).filter(i => 
+                                    !['input', 'output', 'query', 'response', 'context'].includes(i.toLowerCase())
                                 );
-                            })}
+                                
+                                if (reqInputs.length > 0) {
+                                    return (
+                                        <div className="text-xs p-2 bg-amber-500/10 text-amber-600 border border-amber-500/20 rounded-md">
+                                            <strong>Note:</strong> Selected metrics require custom inputs. Please provide them in the JSON override below:
+                                            <div className="font-mono mt-1 text-[10px] bg-amber-500/20 px-1.5 py-0.5 rounded w-fit">
+                                                {reqInputs.join(', ')}
+                                            </div>
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
                         </div>
                     )}
                 </div>

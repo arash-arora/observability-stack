@@ -42,7 +42,7 @@ export default function TraceDetailPage() {
 
       <div className="card">
         <h2 className="text-lg font-semibold mb-4 border-b pb-2">Execution Trace</h2>
-        <TraceTree spans={data.spans} observations={data.observations} />
+        <TraceTree spans={data.spans} observations={data.observations} traceId={id as string} />
       </div>
     </div>
   );

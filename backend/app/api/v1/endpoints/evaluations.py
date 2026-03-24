@@ -1,7 +1,7 @@
 import inspect
 import logging
 import importlib
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,9 @@ from app.models.metric import Metric
 from app.models.evaluation_result import EvaluationResult
 from pydantic import BaseModel
 from datetime import datetime
-
+import uuid
+from app.api.deps import get_current_user
+from app.models.all_models import User
 
 class TraceEvaluationSummary(BaseModel):
     trace_id: str
@@ -37,7 +39,10 @@ class TraceEvaluationSummary(BaseModel):
 
 
 @router.get("/metrics", response_model=List[Metric])
-async def list_metrics(db: AsyncSession = Depends(get_session)):
+async def list_metrics(
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
     """
     List all available metrics from the database.
     Seeds the database with static registry if empty.
@@ -64,9 +69,114 @@ async def list_metrics(db: AsyncSession = Depends(get_session)):
 
         # Re-fetch
         result = await db.execute(select(Metric))
+        result = await db.execute(select(Metric))
         metrics = result.scalars().all()
 
-    return metrics
+    # Filter metrics: user can see all static metrics + their own custom metrics
+    filtered_metrics = []
+    for m in metrics:
+        if m.type == "custom":
+            if m.user_id == current_user.id:
+                filtered_metrics.append(m)
+        else:
+            filtered_metrics.append(m)
+
+    return filtered_metrics
+
+
+class MetricCreate(BaseModel):
+    name: str
+    description: str
+    provider: str = "openai"
+    type: str = "custom"
+    tags: List[str] = ["custom"]
+    inputs: List[str] = []
+    code_snippet: Optional[str] = None
+    prompt: Optional[str] = None
+    dummy_data: Optional[dict] = None
+
+@router.post("/metrics", response_model=Metric)
+async def create_metric(
+    metric_data: MetricCreate, 
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a new custom metric in the database.
+    """
+    metric_id = f"custom-{uuid.uuid4()}"
+    metric = Metric(
+        id=metric_id,
+        name=metric_data.name,
+        description=metric_data.description,
+        provider=metric_data.provider,
+        type=metric_data.type,
+        tags=metric_data.tags,
+        inputs=metric_data.inputs,
+        code_snippet=metric_data.code_snippet or "",
+        prompt=metric_data.prompt,
+        dummy_data=metric_data.dummy_data,
+        user_id=current_user.id
+    )
+    db.add(metric)
+    await db.commit()
+    await db.refresh(metric)
+    return metric
+
+@router.put("/metrics/{metric_id}", response_model=Metric)
+async def update_metric(
+    metric_id: str,
+    metric_data: MetricCreate,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update a custom metric by ID.
+    """
+    result = await db.execute(select(Metric).where(Metric.id == metric_id))
+    metric = result.scalars().first()
+    
+    if not metric:
+        raise HTTPException(status_code=404, detail="Metric not found")
+        
+    if metric.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this metric")
+
+    metric.name = metric_data.name
+    metric.description = metric_data.description
+    metric.provider = metric_data.provider
+    metric.type = metric_data.type
+    metric.tags = metric_data.tags
+    metric.inputs = metric_data.inputs
+    metric.code_snippet = metric_data.code_snippet or ""
+    metric.prompt = metric_data.prompt
+    metric.dummy_data = metric_data.dummy_data
+
+    await db.commit()
+    await db.refresh(metric)
+    return metric
+
+@router.delete("/metrics/{metric_id}")
+async def delete_metric(
+    metric_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete a custom metric by ID.
+    """
+    result = await db.execute(select(Metric).where(Metric.id == metric_id))
+    metric = result.scalars().first()
+    
+    if not metric:
+        raise HTTPException(status_code=404, detail="Metric not found")
+        
+    if metric.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this metric")
+
+    await db.delete(metric)
+    await db.commit()
+    return {"status": "success"}
 
 
 @router.post("/run", response_model=EvaluationResponse)
@@ -103,43 +213,59 @@ async def run_evaluation(
     with observability_context(api_key=context_api_key, host=context_host):
         try:
             # 2. Instantiate Evaluator
-            # We dynamically import from observix.evaluation
+            custom_prompt = inputs.get("custom_prompt")
+            metric_prompt = custom_prompt
+            
+            if not metric_prompt and request.metric_id:
+                # Let's try to get it from DB
+                from app.models.metric import Metric
+                metric_row = await db.get(Metric, request.metric_id)
+                if metric_row and metric_row.prompt:
+                    metric_prompt = metric_row.prompt
+            
             try:
-                eval_module = importlib.import_module("observix.evaluation")
-                EvaluatorClass = getattr(eval_module, request.metric_id, None)
+                llm_kwargs = {}
+                if api_key:
+                    llm_kwargs["api_key"] = api_key
+                if azure_endpoint:
+                    llm_kwargs["azure_endpoint"] = azure_endpoint
+                if api_version:
+                    llm_kwargs["api_version"] = api_version
+                if deployment_name:
+                    llm_kwargs["deployment_name"] = deployment_name
 
-                if not EvaluatorClass:
-                    raise ValueError(
-                        f"Evaluator class {request.metric_id} not found in SDK"
-                    )
-
-                # Initialize Evaluator with LLM
-                try:
-                    # Pass credentials via kwargs
-                    llm_kwargs = {}
-                    if api_key:
-                        llm_kwargs["api_key"] = api_key
-                    if azure_endpoint:
-                        llm_kwargs["azure_endpoint"] = azure_endpoint
-                    if api_version:
-                        llm_kwargs["api_version"] = api_version
-                    if deployment_name:
-                        llm_kwargs["deployment_name"] = deployment_name
-
+                if metric_prompt:
+                    from observix.evaluation.integrations.observix_eval import CustomEvaluator
+                    EvaluatorClass = CustomEvaluator
                     evaluator = EvaluatorClass(
                         provider=provider, model=model, **llm_kwargs
                     )
-                except TypeError:
-                    logger.warning(
-                        f"Evaluator {request.metric_id} does not accept llm/kwargs in init. Trying default init."
-                    )
-                    try:
-                        evaluator = EvaluatorClass()
-                    except Exception as e:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Evaluator {request.metric_id} init failed even with default init: {str(e)}",
+                else:
+                    # We dynamically import from observix.evaluation
+                    eval_module = importlib.import_module("observix.evaluation")
+                    EvaluatorClass = getattr(eval_module, request.metric_id, None)
+
+                    if not EvaluatorClass:
+                        raise ValueError(
+                            f"Evaluator class {request.metric_id} not found in SDK"
                         )
+
+                    # Initialize Evaluator with LLM
+                    try:
+                        evaluator = EvaluatorClass(
+                            provider=provider, model=model, **llm_kwargs
+                        )
+                    except TypeError:
+                        logger.warning(
+                            f"Evaluator {request.metric_id} does not accept llm/kwargs in init. Trying default init."
+                        )
+                        try:
+                            evaluator = EvaluatorClass()
+                        except Exception as e:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Evaluator {request.metric_id} init failed even with default init: {str(e)}",
+                            )
 
             except Exception as e:
                 logger.error(f"Failed to init Evaluator: {e}")
@@ -197,6 +323,32 @@ async def run_evaluation(
                         rubric_prompt = app_res.rubric_prompt
 
                 async def _execute_eval():
+                    # Forward any non-standard inputs directly to Evaluator as kwargs
+                    mapped_keys = {"input", "query", "output", "response", "context", "expected", "trace", "provider", "model", "api_key", "azure_endpoint", "api_version", "deployment_name", "observe", "user_api_key", "host", "custom_prompt"}
+                    extra_kwargs = {k: v for k, v in inputs.items() if k not in mapped_keys}
+                    
+                    if metric_prompt:
+                        import re
+                        formatted_prompt = metric_prompt
+                        # Frontend creates variables with {{var_name}}
+                        variables = set(re.findall(r'\{\{([^}]+)\}\}', metric_prompt))
+                        for var in variables:
+                            # Map standard expected variables differently if they are mapped to input keys
+                            val = inputs.get(var)
+                            if val is None:
+                                # fallback to lower
+                                val = inputs.get(var.lower(), "")
+                                
+                            formatted_prompt = formatted_prompt.replace(f"{{{{{var}}}}}", str(val))
+                            
+                        # Format any single braced variables if the user mixed them up (only if exist in inputs)
+                        single_vars = set(re.findall(r'(?<!\{)\{([^}]+)\}(?!\})', formatted_prompt))
+                        for var in single_vars:
+                            if var in inputs:
+                                formatted_prompt = formatted_prompt.replace(f"{{{var}}}", str(inputs[var]))
+                                
+                        extra_kwargs["custom_instructions"] = formatted_prompt
+
                     res = evaluator.evaluate(
                         input_query=query,
                         output=output,
@@ -209,6 +361,7 @@ async def run_evaluation(
                         trace=trace_input,
                         rubric=rubric_prompt,  # Pass the rubric to SDK
                         trace_enabled=observe,  # Pass tracing flag
+                        **extra_kwargs
                     )
                     if inspect.iscoroutine(res):
                         res = await res

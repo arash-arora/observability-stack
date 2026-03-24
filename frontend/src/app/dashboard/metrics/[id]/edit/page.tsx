@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { useDashboard } from '@/context/DashboardContext';
 import Link from 'next/link';
 import { ArrowLeft, Save, Code, MessageSquare, List, Play } from 'lucide-react';
@@ -45,12 +45,15 @@ const Badge = ({ children, variant = 'default', className }: any) => {
     return <div className={`${base} ${variants[variant as keyof typeof variants]} ${className}`}>{children}</div>;
 };
 
-export default function CreateMetricPage() {
+export default function EditMetricPage() {
   const router = useRouter();
+  const params = useParams();
+  const metricId = params?.id as string;
   const { selectedProject } = useDashboard();
   const [mode, setMode] = useState<'prompt' | 'code'>('prompt');
   const [providers, setProviders] = useState<any[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
       name: '',
       description: '',
@@ -78,17 +81,29 @@ export default function CreateMetricPage() {
   const variables = mode === 'prompt' ? extractVariables(formData.prompt) : [];
 
   useEffect(() => {
-    if (selectedProject) {
-        api.get(`/management/providers?project_id=${selectedProject.id}`)
+    if (metricId) {
+        api.get('/evaluations/metrics')
            .then(res => {
-              setProviders(res.data);
-              if (res.data.length > 0) {
-                  setSelectedProviderId(res.data[0].id);
-              }
+               const metric = res.data.find((m: any) => m.id === metricId);
+               if (metric) {
+                   setFormData({
+                       name: metric.name,
+                       description: metric.description,
+                       prompt: metric.prompt || "",
+                       code: metric.code_snippet || "",
+                       model: metric.provider || "openai"
+                   });
+                   // Find matching provider if possible
+                   if (providers.length > 0) {
+                        const pv = providers.find(p => p.provider === metric.provider);
+                        if (pv) setSelectedProviderId(pv.id);
+                   }
+               }
+               setLoading(false);
            })
-           .catch(console.error);
+           .catch(() => setLoading(false));
     }
-  }, [selectedProject]);
+  }, [metricId, providers]);
 
   const handleTestRun = async () => {
       setTestRunning(true);
@@ -135,26 +150,32 @@ export default function CreateMetricPage() {
       }
       setSaving(true);
       const selectedProvider = providers.find(p => p.id === selectedProviderId);
-      const providerName = selectedProvider ? selectedProvider.provider : (formData.model.includes('claude') ? 'anthropic' : 'openai');
+      const providerName = selectedProvider ? selectedProvider.provider : formData.model;
 
       try {
-          await api.post('/evaluations/metrics', {
+          await api.put(`/evaluations/metrics/${metricId}`, {
               name: formData.name,
               description: formData.description,
               provider: providerName,
               type: "custom",
               prompt: formData.prompt,
               code_snippet: formData.code,
-              inputs: variables,
-              tags: ["custom"]
+              tags: ["custom"],
+              inputs: mode === 'prompt' ? variables : [],
+              dummy_data: testInputs && Object.keys(testInputs).length > 0 ? testInputs : null
           });
           router.push('/dashboard/metrics');
       } catch (e: any) {
-          alert('Save failed: ' + (e.response?.data?.detail || e.message));
+          console.error(e);
+          alert("Failed to update metric");
       } finally {
           setSaving(false);
       }
   };
+
+  if (loading) {
+      return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading metric...</div>;
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500 py-6">
@@ -165,8 +186,8 @@ export default function CreateMetricPage() {
             <ArrowLeft className="h-4 w-4" />
          </Button>
          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Create New Metric</h1>
-            <p className="text-sm text-muted-foreground">Define a custom metric using a prompt or python code.</p>
+            <h1 className="text-2xl font-bold tracking-tight">Edit Custom Metric</h1>
+            <p className="text-sm text-muted-foreground">Update your evaluation metric below. Modifying the prompt will automatically change the required inputs.</p>
          </div>
        </div>
 
@@ -344,7 +365,7 @@ export default function CreateMetricPage() {
               <div className="flex flex-col gap-3">
                   <Button variant="primary" className="w-full" onClick={handleSave} disabled={saving}>
                       <Save className="w-4 h-4 mr-2" />
-                      {saving ? 'Saving...' : 'Save Metric'}
+                      {saving ? 'Updating...' : 'Update Metric'}
                   </Button>
                   <Button variant="outline" className="w-full" onClick={() => router.back()}>
                       Cancel

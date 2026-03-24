@@ -80,6 +80,7 @@ export function MetricRun({ metric }: MetricRunProps) {
   const [deploymentName, setDeploymentName] = useState("");
   const [testResult, setTestResult] = useState<any>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
   
   // Observability configuration
   const [observeTrace, setObserveTrace] = useState(false);
@@ -138,6 +139,17 @@ export function MetricRun({ metric }: MetricRunProps) {
             setEvalExpected(dummy.expected || "");
         }
     }
+
+    if (metric && metric.inputs && metric.inputs.length > 0) {
+        const initialCustomInputs: Record<string, string> = {};
+        const standardNames = ['query', 'input', 'output', 'response', 'context', 'trace', 'trace_data', 'workflow_details', 'expected'];
+        metric.inputs.forEach((inp: string) => {
+            if (!standardNames.includes(inp.toLowerCase())) {
+                initialCustomInputs[inp] = "";
+            }
+        });
+        setCustomInputs(initialCustomInputs);
+    }
   }, [metric]);
 
   const [apiKeys, setApiKeys] = useState<{key: string; name: string}[]>([]);
@@ -181,6 +193,7 @@ export function MetricRun({ metric }: MetricRunProps) {
         context: evalContext.split("\n").filter(line => line.trim() !== ""),
         expected: evalExpected,
         persist_result: observeTrace,
+        ...customInputs,
       };
 
       if (evalTrace) {
@@ -270,11 +283,42 @@ export function MetricRun({ metric }: MetricRunProps) {
 
   const inputsList = metric.inputs || [];
   // Default to standard inputs if list empty
-  const showQuery = inputsList.length === 0 || inputsList.includes("query") || inputsList.includes("input");
-  const showOutput = inputsList.length === 0 || inputsList.includes("response") || inputsList.includes("output");
-  const showContext = inputsList.length === 0 || inputsList.includes("context");
+  const isCustom = metric.type === "custom";
+  const overrideStandard = inputsList.length > 0;
+  
+  const showQuery = !overrideStandard || inputsList.includes("query") || inputsList.includes("input");
+  const showOutput = !overrideStandard || inputsList.includes("response") || inputsList.includes("output");
+  const showContext = !overrideStandard || inputsList.includes("context");
+  const showExpected = !overrideStandard || inputsList.includes("expected");
   const showTrace = inputsList.includes("trace") || inputsList.includes("trace_data");
   const showWorkflow = inputsList.includes("workflow_details");
+  
+  const isRunDisabled = () => {
+      if (isRunning) return true;
+      if (!overrideStandard) {
+          return !evalInput; // Default behavior
+      }
+      
+      for (const inp of inputsList) {
+          const lower = inp.toLowerCase();
+          if (lower === 'query' || lower === 'input') {
+              if (!evalInput) return true;
+          } else if (lower === 'response' || lower === 'output') {
+              if (!evalOutput) return true;
+          } else if (lower === 'context') {
+              if (!evalContext) return true;
+          } else if (lower === 'trace' || lower === 'trace_data') {
+              if (!evalTrace) return true;
+          } else if (lower === 'workflow_details') {
+              if (!evalWorkflow) return true;
+          } else if (lower === 'expected') {
+              if (!evalExpected) return true;
+          } else {
+              if (!customInputs[inp]) return true;
+          }
+      }
+      return false;
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -341,19 +385,39 @@ export function MetricRun({ metric }: MetricRunProps) {
                   </div>
               )}
 
-              <div className="space-y-2">
-                  <Label>Expected Output (Optional)</Label>
-                  <Textarea
-                      className="min-h-25 font-mono"
-                      placeholder="Ground truth answer..."
-                      value={evalExpected}
-                      onChange={(e) => setEvalExpected(e.target.value)}
-                  />
-              </div>
+              {showExpected && (
+                  <div className="space-y-2">
+                      <Label>Expected Output (Optional)</Label>
+                      <Textarea
+                          className="min-h-25 font-mono"
+                          placeholder="Ground truth answer..."
+                          value={evalExpected}
+                          onChange={(e) => setEvalExpected(e.target.value)}
+                      />
+                  </div>
+              )}
+
+              {/* Dynamic Custom Inputs */}
+              {Object.keys(customInputs).length > 0 && (
+                  <div className="space-y-4 pt-4 border-t">
+                      <Label className="text-muted-foreground uppercase tracking-wider text-xs">Custom Variables</Label>
+                      {Object.keys(customInputs).map((inpKey) => (
+                          <div key={inpKey} className="space-y-2">
+                              <Label className="font-mono text-xs">{inpKey}</Label>
+                              <Textarea
+                                  className="min-h-20 font-mono text-sm"
+                                  placeholder={`Value for ${inpKey}...`}
+                                  value={customInputs[inpKey]}
+                                  onChange={(e) => setCustomInputs({ ...customInputs, [inpKey]: e.target.value })}
+                              />
+                          </div>
+                      ))}
+                  </div>
+              )}
           </div>
 
           <div className="flex justify-end pt-4 border-t">
-            <Button onClick={handleRun} disabled={isRunning || !evalInput}>
+            <Button onClick={handleRun} disabled={isRunDisabled()}>
               {isRunning ? (
                 <>Running...</>
               ) : (

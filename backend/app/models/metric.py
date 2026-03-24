@@ -1,5 +1,6 @@
 from typing import List, Optional
 from sqlmodel import SQLModel, Field, Column, JSON
+import uuid
 
 class Metric(SQLModel, table=True):
     id: str = Field(primary_key=True)
@@ -12,3 +13,4 @@ class Metric(SQLModel, table=True):
     code_snippet: str
     prompt: Optional[str] = None
     dummy_data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="user.id")
