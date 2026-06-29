@@ -320,7 +320,7 @@ export default function AutoEvalView() {
                             variant="outline" 
                             size="sm" 
                             className="h-6 text-xs"
-                            onClick={() => setNewInputs('{\n  "model": "gpt-4o",\n  "provider": "openai"\n}')}
+                          onClick={() => setNewInputs('{\n  "model": "gpt-4o",\n  "provider": "openai",\n  "minimize_io": true,\n  "max_input_chars": 500,\n  "max_output_chars": 2000\n}')}
                         >
                             Load Template
                         </Button>
@@ -332,7 +332,7 @@ export default function AutoEvalView() {
                        className="font-mono text-xs h-24"
                     />
                     <p className="text-xs text-muted-foreground">
-                        By default, input/output/context are extracted from the trace. Use this to override inputs or set model config.
+                      By default, input/output/context are extracted from the trace. Use this to override inputs or set model config. Optional: minimize_io, max_input_chars, max_output_chars.
                     </p>
                 </div>
                 {formError && <p className="text-sm text-red-500">{formError}</p>}

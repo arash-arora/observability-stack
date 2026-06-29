@@ -1,6 +1,8 @@
 import importlib
 import logging
 import inspect
+import json
+import re
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +17,190 @@ from observix.context import observability_context
 from observix import init_observability
 from opentelemetry import trace, context as otel_context
 
+# Workflow-aware evaluators that require the full trace with agents/tools
+_WORKFLOW_METRIC_IDS = {
+    "AgentRoutingEvaluator",
+    "ToolSequenceEvaluator",
+    "WorkflowCompletionEvaluator",
+    "HITLEvaluator",
+}
+
+
+def _fetch_trace_for_evaluation(trace_id: str, project_id) -> dict:
+    """
+    Fetches all observations for a trace from ClickHouse and extracts
+    agents and tools for workflow-type evaluations.
+    Returns a dict with keys: 'trace' (list of obs dicts), 'context' (agents/tools).
+    """
+    try:
+        from app.core.clickhouse import get_clickhouse_client
+        client = get_clickhouse_client()
+
+        obs_query = f"""
+        SELECT
+            id, name, type, observation_type, input_text, output_text,
+            metadata_json, extra, start_time, end_time, error
+        FROM observations
+        WHERE trace_id = '{trace_id}' AND project_id = '{project_id}'
+        ORDER BY start_time ASC
+        """
+        result = client.query(obs_query)
+
+        observations = []
+        agents = []
+        tools = []
+
+        for row in result.result_rows:
+            obs = {
+                "id": str(row[0]),
+                "name": row[1],
+                "type": row[2],
+                "observation_type": row[3],
+                "input_text": row[4],
+                "output_text": row[5],
+                "metadata_json": row[6],
+                "extra": row[7],
+                "start_time": str(row[8]),
+                "end_time": str(row[9]),
+                "error": row[10],
+            }
+            observations.append(obs)
+
+            # Extract candidate_agents and tools from metadata_json / extra
+            for field in (row[6], row[7]):  # metadata_json, extra
+                if not field:
+                    continue
+                try:
+                    parsed = json.loads(field) if isinstance(field, str) else field
+                    if isinstance(parsed, dict):
+                        if parsed.get("candidate_agents") and not agents:
+                            raw = parsed["candidate_agents"]
+                            agents = json.loads(raw) if isinstance(raw, str) else raw
+                        if parsed.get("tools") and not tools:
+                            raw = parsed["tools"]
+                            tools = json.loads(raw) if isinstance(raw, str) else raw
+                except Exception:
+                    pass
+
+        # Fallback: derive agents/tools from observation type/name heuristics
+        if not agents:
+            for obs in observations:
+                name_lower = (obs.get("name") or "").lower()
+                type_lower = (obs.get("type") or "").lower()
+                obs_type_lower = (obs.get("observation_type") or "").lower()
+                if type_lower == "agent" or obs_type_lower == "agent" or "agent" in name_lower:
+                    agents.append({"name": obs["name"]})
+
+        if not tools:
+            for obs in observations:
+                name_lower = (obs.get("name") or "").lower()
+                type_lower = (obs.get("type") or "").lower()
+                obs_type_lower = (obs.get("observation_type") or "").lower()
+                if (
+                    type_lower == "tool"
+                    or obs_type_lower == "tool"
+                    or "tool" in name_lower
+                    or "source" in name_lower
+                ):
+                    tools.append({"name": obs["name"]})
+
+        return {
+            "trace": observations,
+            "context": {"agents": agents, "tools": tools},
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch trace {trace_id} for evaluation: {e}")
+        return {"trace": [], "context": {"agents": [], "tools": []}}
+
 logger = logging.getLogger(__name__)
+
+
+def _strip_wrappers(text: str) -> str:
+    text = text.strip()
+    # Remove optional Python triple-quote wrappers first.
+    if text.startswith('"""') and text.endswith('"""') and len(text) >= 6:
+        text = text[3:-3].strip()
+
+    # Remove fenced markdown blocks if present.
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    return text
+
+
+def _extract_text(value):
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        for key in ("output", "response", "answer", "report", "content", "text"):
+            if key in value and value[key] is not None:
+                extracted = _extract_text(value[key])
+                if extracted:
+                    return extracted
+
+        messages = value.get("messages")
+        if isinstance(messages, list):
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get("content"):
+                    extracted = _extract_text(msg.get("content"))
+                    if extracted:
+                        return extracted
+        return json.dumps(value, ensure_ascii=False)
+
+    if isinstance(value, list):
+        return "\n".join(str(v) for v in value if v is not None)
+
+    text = _strip_wrappers(str(value))
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            extracted = _extract_text(parsed)
+            if extracted:
+                return extracted
+        except Exception:
+            pass
+    return text
+
+
+def _normalize_context(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    if isinstance(value, dict):
+        return [json.dumps(value, ensure_ascii=False)]
+
+    text = _strip_wrappers(str(value))
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed if v is not None]
+            if isinstance(parsed, dict):
+                embedded = parsed.get("context")
+                if isinstance(embedded, list):
+                    return [str(v) for v in embedded if v is not None]
+                return [json.dumps(parsed, ensure_ascii=False)]
+        except Exception:
+            pass
+    return [text] if text else []
+
+
+def _truncate(value, max_chars: int):
+    if not value:
+        return value
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n...[truncated {len(text) - max_chars} chars]"
+
+
+def _as_int(value, default_value: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default_value
 
 async def run_triggered_evaluation(rule_id: int, trace_data: dict):
     """
@@ -47,21 +232,35 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
             
             # Prepare Inputs
             # Prioritize trace_data, then rule inputs
-            query = trace_data.get("input") or inputs.get("input") or inputs.get("query")
-            context = trace_data.get("context") or inputs.get("context")
-            output = trace_data.get("output") or inputs.get("output") or inputs.get("response")    
-            expected = trace_data.get("expected") or inputs.get("expected")
+            query = _extract_text(trace_data.get("input") or inputs.get("input") or inputs.get("query"))
+            context = _normalize_context(trace_data.get("context") or inputs.get("context"))
+            output = _extract_text(trace_data.get("output") or inputs.get("output") or inputs.get("response"))
+            expected = _extract_text(trace_data.get("expected") or inputs.get("expected") or inputs.get("expected_output"))
+
+            minimize_io = bool(inputs.get("minimize_io", False))
+            max_input_chars = _as_int(inputs.get("max_input_chars", 500), 500)
+            max_output_chars = _as_int(inputs.get("max_output_chars", 2000), 2000)
+
+            query_eval = _truncate(query, max_input_chars) if minimize_io else query
+            output_eval = _truncate(output, max_output_chars) if minimize_io else output
+            query_store = _truncate(query, max_input_chars) if minimize_io else query
+            output_store = _truncate(output, max_output_chars) if minimize_io else output
             target_trace_id = trace_data.get("trace_id")
 
             for metric_id in metric_ids:
+                expected_eval = expected
+                # DeepEval Contextual Recall requires expected_output; synthesize a fallback if absent.
+                if metric_id in {"ContextualRecallEvaluator", "ContextualPrecisionEvaluator"} and not expected_eval:
+                    expected_eval = output_eval or query_eval or "N/A"
+
                 # Create Initial Evaluation Result (PENDING/RUNNING)
                 eval_result = EvaluationResult(
                     trace_id=target_trace_id,
                     metric_id=metric_id,
-                    input=str(query) if query else None,
-                    output=str(output) if output else None,
-                    context=context if isinstance(context, list) else [str(context)] if context else [],
-                    expected_output=str(expected) if expected else None,
+                    input=str(query_store) if query_store else None,
+                    output=str(output_store) if output_store else None,
+                    context=context,
+                    expected_output=str(expected_eval) if expected_eval else None,
                     status="RUNNING",
                     application_name=trace_data.get("application_name") or inputs.get("application_name")
                 )
@@ -144,14 +343,32 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                              if app_res and app_res.rubric_prompt:
                                   rubric_prompt = app_res.rubric_prompt
 
+                        # For workflow-aware evaluators, fetch full trace observations
+                        # so agents/tools are available in the prompt
+                        workflow_trace_payload = None
+                        if metric_id in _WORKFLOW_METRIC_IDS and target_trace_id:
+                            project_id = None
+                            app_id = rule.application_id
+                            if app_id:
+                                app_res = await session.get(Application, app_id)
+                                if app_res:
+                                    project_id = app_res.project_id
+                            if project_id:
+                                workflow_trace_payload = _fetch_trace_for_evaluation(
+                                    target_trace_id, project_id
+                                )
+
                         async def _execute_eval():
-                            res = evaluator.evaluate(
-                                input_query=query,
-                                output=output,
-                                context=context if isinstance(context, list) else [str(context)] if context else [],
-                                expected=expected,
-                                rubric=rubric_prompt
+                            eval_kwargs = dict(
+                                input_query=query_eval,
+                                output=output_eval,
+                                context=context,
+                                expected=expected_eval,
+                                rubric=rubric_prompt,
                             )
+                            if workflow_trace_payload is not None:
+                                eval_kwargs["trace"] = workflow_trace_payload
+                            res = evaluator.evaluate(**eval_kwargs)
                             if inspect.iscoroutine(res):
                                 res = await res
                             return res

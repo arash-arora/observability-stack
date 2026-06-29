@@ -63,10 +63,10 @@ export default function LoginPage() {
                 </svg>
             </div>
             <h1 className="text-3xl font-medium tracking-tight text-foreground uppercase" style={{ fontFamily: 'var(--font-mono)' }}>
-                AI Observability
+                AI Reliability Suite
             </h1>
             <p className="mt-2 text-sm text-muted-foreground">
-                New to AI Observability? <Link href="/signup" className="font-medium text-primary hover:text-primary/80">Register</Link>
+                New to AI Reliability Suite? <Link href="/signup" className="font-medium text-primary hover:text-primary/80">Register</Link>
             </p>
         </div>
 

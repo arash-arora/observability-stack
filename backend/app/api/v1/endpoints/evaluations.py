@@ -1,6 +1,8 @@
 import inspect
 import logging
 import importlib
+import json
+import re
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +33,91 @@ class TraceEvaluationSummary(BaseModel):
     passed: bool
     score_avg: float
     evaluation_count: int
+
+
+def _strip_wrappers(text: str) -> str:
+    text = text.strip()
+    if text.startswith('"""') and text.endswith('"""') and len(text) >= 6:
+        text = text[3:-3].strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    return text
+
+
+def _extract_text(value):
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        for key in ("output", "response", "answer", "report", "content", "text"):
+            if key in value and value[key] is not None:
+                extracted = _extract_text(value[key])
+                if extracted:
+                    return extracted
+
+        messages = value.get("messages")
+        if isinstance(messages, list):
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get("content"):
+                    extracted = _extract_text(msg.get("content"))
+                    if extracted:
+                        return extracted
+        return json.dumps(value, ensure_ascii=False)
+
+    if isinstance(value, list):
+        return "\n".join(str(v) for v in value if v is not None)
+
+    text = _strip_wrappers(str(value))
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            extracted = _extract_text(parsed)
+            if extracted:
+                return extracted
+        except Exception:
+            pass
+    return text
+
+
+def _normalize_context(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    if isinstance(value, dict):
+        return [json.dumps(value, ensure_ascii=False)]
+
+    text = _strip_wrappers(str(value))
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed if v is not None]
+            if isinstance(parsed, dict):
+                embedded = parsed.get("context")
+                if isinstance(embedded, list):
+                    return [str(v) for v in embedded if v is not None]
+                return [json.dumps(parsed, ensure_ascii=False)]
+        except Exception:
+            pass
+    return [text] if text else []
+
+
+def _truncate(value, max_chars: int):
+    if not value:
+        return value
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n...[truncated {len(text) - max_chars} chars]"
+
+
+def _as_int(value, default_value: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default_value
 
 
 # ... existing imports ...
@@ -149,10 +236,23 @@ async def run_evaluation(
 
             # 3. Run Evaluation
             try:
-                query = inputs.get("input") or inputs.get("query")
-                context = inputs.get("context")
-                output = inputs.get("output") or inputs.get("response")
-                expected = inputs.get("expected")
+                query = _extract_text(inputs.get("input") or inputs.get("query"))
+                context = _normalize_context(inputs.get("context"))
+                output = _extract_text(inputs.get("output") or inputs.get("response"))
+                expected = _extract_text(inputs.get("expected") or inputs.get("expected_output"))
+
+                minimize_io = bool(inputs.get("minimize_io", False))
+                max_input_chars = _as_int(inputs.get("max_input_chars", 500), 500)
+                max_output_chars = _as_int(inputs.get("max_output_chars", 2000), 2000)
+
+                query_eval = _truncate(query, max_input_chars) if minimize_io else query
+                output_eval = _truncate(output, max_output_chars) if minimize_io else output
+                query_store = _truncate(query, max_input_chars) if minimize_io else query
+                output_store = _truncate(output, max_output_chars) if minimize_io else output
+
+                expected_eval = expected
+                if request.metric_id in {"ContextualRecallEvaluator", "ContextualPrecisionEvaluator"} and not expected_eval:
+                    expected_eval = output_eval or query_eval or "N/A"
 
                 trace_id = None
 
@@ -198,14 +298,10 @@ async def run_evaluation(
 
                 async def _execute_eval():
                     res = evaluator.evaluate(
-                        input_query=query,
-                        output=output,
-                        context=(
-                            context
-                            if isinstance(context, list)
-                            else [str(context)] if context else []
-                        ),
-                        expected=expected,
+                        input_query=query_eval,
+                        output=output_eval,
+                        context=context,
+                        expected=expected_eval,
                         trace=trace_input,
                         rubric=rubric_prompt,  # Pass the rubric to SDK
                         trace_enabled=observe,  # Pass tracing flag
@@ -234,14 +330,10 @@ async def run_evaluation(
                         eval_result = EvaluationResult(
                             trace_id=trace_id,
                             metric_id=request.metric_id,
-                            input=str(query) if query else None,
-                            output=str(output) if output else None,
-                            context=(
-                                context
-                                if isinstance(context, list)
-                                else [str(context)] if context else []
-                            ),
-                            expected_output=str(expected) if expected else None,
+                            input=str(query_store) if query_store else None,
+                            output=str(output_store) if output_store else None,
+                            context=context,
+                            expected_output=str(expected_eval) if expected_eval else None,
                             score=result.score,
                             reason=result.reason,
                             passed=result.passed,
