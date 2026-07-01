@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import Link from "next/link";
+import { format } from "date-fns";
 import {
   Table,
   TableBody,
@@ -13,24 +14,16 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, Plus, Trash2, ShieldAlert, Boxes, Sparkles, Activity, Cpu, Calendar, Clock, Terminal, Layers } from "lucide-react";
+import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import ApplicationModal from "@/components/applications/ApplicationModal";
 import { useDashboard } from "@/context/DashboardContext";
 import PageHeader from '@/components/PageHeader';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 interface Application {
   id: string;
   name: string;
   project_id: string;
   api_key?: string;
-  last_trace_at?: string;
 }
 
 export default function ApplicationsPage() {
@@ -38,8 +31,7 @@ export default function ApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isGetStartedOpen, setIsGetStartedOpen] = useState(false);
-  const [createdApp, setCreatedApp] = useState<Application | null>(null);
+  const [newApiKey, setNewApiKey] = useState<string | null>(null);
 
   // Check permissions - Admin or Maintainer can create
   const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
@@ -75,167 +67,113 @@ export default function ApplicationsPage() {
     }
   };
 
+// ... imports
+
+
+// ... existing code ...
+
   const handleCreated = (app: Application) => {
-    setCreatedApp(app);
-    setIsGetStartedOpen(true);
+    if (app.api_key) {
+      setNewApiKey(app.api_key);
+    }
     fetchData();
   };
 
   // Filter applications by selected project if one is selected
-  const filteredApplications = useMemo(() => {
-    return selectedProject 
-      ? applications.filter(app => app.project_id === selectedProject.id)
-      : applications;
-  }, [applications, selectedProject]);
+  const filteredApplications = selectedProject 
+    ? applications.filter(app => app.project_id === selectedProject.id)
+    : applications;
 
-  const formatRelativeTime = (isoString?: string) => {
-    if (!isoString) return "Never";
-    const time = new Date(isoString).getTime();
-    const diffMs = Date.now() - time;
-    const diffMins = Math.floor(diffMs / 60000);
-    if (diffMins < 1) return "Just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return new Date(time).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
-
-  const lastActivity = useMemo(() => {
-    const dates = filteredApplications
-      .map(app => app.last_trace_at ? new Date(app.last_trace_at).getTime() : 0)
-      .filter(time => time > 0);
-    if (dates.length === 0) return "No activity";
-    const maxTime = Math.max(...dates);
-    const diffMs = Date.now() - maxTime;
-    const diffMins = Math.floor(diffMs / 60000);
-    if (diffMins < 1) return "Just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return new Date(maxTime).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }, [filteredApplications]);
+  const modalProjects = selectedProject ? [selectedProject] : projects;
 
   return (
-    <div className="flex flex-col gap-8 font-sans">
+    <div className="container mx-auto space-y-6">
       <div className="flex items-center justify-between">
          <PageHeader 
             title="Applications" 
-            infoTooltip="Register and configure integrations for your framework-agnostic LLM applications." 
+            infoTooltip="Manage your applications and their API keys." 
          />
          {canCreate && (
-             <Button 
-               onClick={() => setIsModalOpen(true)}
-               className="bg-[#0071e3] hover:bg-[#0071e3]/90 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer px-4 py-2"
-             >
-              <Plus size={14} /> New Application
+             <Button onClick={() => setIsModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New Application
             </Button>
          )}
       </div>
 
       {selectedProject && (
-          <p className="text-xs text-[#6e6e73] font-semibold -mt-6">
-              Showing integrations for: <span className="text-[#1d1d1f] font-bold">{selectedProject.name}</span>
+          <p className="text-sm text-muted-foreground -mt-4 mb-4">
+              Showing applications for project: <span className="font-semibold text-foreground">{selectedProject.name}</span>
           </p>
       )}
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 -mt-2">
-        <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.02)] flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-wider">Integrations</span>
-            <div className="text-2xl font-bold text-[#1d1d1f] tracking-tight mt-1">{filteredApplications.length}</div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-blue-50 text-[#0071e3]">
-            <Boxes size={18} />
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.02)] flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-wider">Last Telemetry</span>
-            <div className="text-2xl font-bold text-[#1d1d1f] tracking-tight mt-1 truncate max-w-[160px]">{lastActivity}</div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-emerald-50 text-[#34c759]">
-            <Activity size={18} />
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.02)] flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-wider">Telemetry Gateway</span>
-            <div className="text-2xl font-bold text-[#1d1d1f] tracking-tight mt-1 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Online
+      {/* New API Key Alert */}
+      {newApiKey && (
+        <div className="p-4 rounded-lg border border-green-500/50 bg-green-500/10 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-semibold text-green-400">API Key Created!</p>
+              <p className="text-sm text-muted-foreground">
+                Copy this key now. You won't be able to see it again.
+              </p>
             </div>
+            <CopyButton text={newApiKey} label="Copy Key" variant="outline" />
           </div>
-          <div className="p-2.5 rounded-xl bg-purple-50 text-[#5856d6]">
-            <Cpu size={18} />
-          </div>
+          <code className="mt-2 block p-2 rounded bg-muted font-mono text-sm break-all">
+            {newApiKey}
+          </code>
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setNewApiKey(null)}>
+            Dismiss
+          </Button>
         </div>
-      </div>
+      )}
 
-      {/* Applications List Table */}
-      <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] overflow-hidden">
+      <div className="rounded-md border">
         <Table>
           <TableHeader>
-            <TableRow className="hover:bg-transparent border-black/[0.04]">
-              <TableHead className="text-xs font-bold text-[#6e6e73] py-3.5">Name</TableHead>
-              <TableHead className="text-xs font-bold text-[#6e6e73] py-3.5">Project</TableHead>
-              <TableHead className="text-xs font-bold text-[#6e6e73] py-3.5">API Key</TableHead>
-              <TableHead className="text-xs font-bold text-[#6e6e73] py-3.5">Last Active Trace</TableHead>
-              <TableHead className="text-xs font-bold text-[#6e6e73] py-3.5 text-right">Actions</TableHead>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Project</TableHead>
+              <TableHead>API Key</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredApplications.map((app) => (
-              <TableRow key={app.id} className="hover:bg-black/[0.01] border-black/[0.04] transition-colors">
-                <TableCell className="font-semibold text-xs py-4 text-[#1d1d1f]">
-                    <Link href={`/dashboard/applications/${app.id}`} className="hover:underline text-[#0071e3]">
+              <TableRow key={app.id}>
+                <TableCell className="font-medium">
+                    <Link href={`/dashboard/applications/${app.id}`} className="hover:underline text-primary">
                         {app.name}
                     </Link>
                 </TableCell>
-                <TableCell className="py-4">
-                  <Badge variant="outline" className="text-[10px] font-bold text-[#6e6e73] bg-black/[0.02] border-black/[0.03] px-2 py-0.5 rounded-full">
-                    {getProjectName(app.project_id)}
-                  </Badge>
+                <TableCell>
+                  <Badge variant="outline">{getProjectName(app.project_id)}</Badge>
                 </TableCell>
-                <TableCell className="font-mono text-[11px] text-[#6e6e73] py-4">
+                <TableCell className="font-mono text-xs text-muted-foreground">
                     {app.api_key ? (
                         <div className="flex items-center gap-2">
                             <span>{app.api_key}</span>
                             <CopyButton text={app.api_key} size="icon" />
                         </div>
                     ) : (
-                        "sk-••••••••••••••••"
+                        "sk-****...****"
                     )}
                 </TableCell>
-                <TableCell className="text-xs py-4 font-mono text-[#6e6e73]">
-                  {formatRelativeTime(app.last_trace_at)}
-                </TableCell>
-                <TableCell className="text-right py-4">
+                <TableCell className="text-right">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => handleDelete(app.id)}
-                    className="text-red-500 hover:text-red-600 hover:bg-red-50/50 rounded-xl transition-all cursor-pointer"
+                    className="text-destructive hover:text-destructive"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 className="h-4 w-4" />
                   </Button>
                 </TableCell>
               </TableRow>
             ))}
             {!loading && filteredApplications.length === 0 && (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="text-center py-20">
-                  <div className="flex flex-col items-center gap-3 text-[#6e6e73] max-w-sm mx-auto">
-                    <div className="p-3.5 rounded-2xl bg-neutral-100/80 border border-black/[0.03] text-[#86868b]">
-                      <Boxes size={24} />
-                    </div>
-                    <h3 className="text-xs font-bold text-[#1d1d1f] mt-2">No Applications Configured</h3>
-                    <p className="text-[11px] leading-relaxed text-[#86868b]">
-                      Applications allow your framework-agnostic AI codebases to connect, retrieve api credentials, and stream telemetry traces to this dashboard.
-                    </p>
-                  </div>
+              <TableRow>
+                <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                  No applications found. Create one to get started.
                 </TableCell>
               </TableRow>
             )}
@@ -243,218 +181,13 @@ export default function ApplicationsPage() {
         </Table>
       </div>
 
-      {/* Embedded SDK Reference Guide Card */}
-      <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] space-y-6">
-        <div>
-          <h3 className="text-xs font-bold text-[#1d1d1f] uppercase tracking-wider flex items-center gap-2">
-            <Sparkles size={14} className="text-[#0071e3]" />
-            SDK Integration Guide
-          </h3>
-          <p className="text-[11px] text-[#6e6e73] mt-1">
-            Standard Python decorator setup to collect metrics and log execution traces automatically.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Step 1 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">1</span>
-              Add SDK Git Submodule
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal min-h-[46px] flex items-center">
-              git submodule add https://github.com/observix/observix-python.git
-            </pre>
-          </div>
-
-          {/* Step 2 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">2</span>
-              Import Observe Decorator
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal min-h-[46px] flex items-center">
-              from observix import observe
-            </pre>
-          </div>
-
-          {/* Step 3 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">3</span>
-              Decorate Python Functions
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3.5 rounded-xl overflow-x-auto select-all leading-normal min-h-[92px]">
-{`@observe(name="agent_workflow")
-def execute_agent(prompt: str):
-    # Logs nested tool calls automatically
-    return "workflow_response"`}
-            </pre>
-          </div>
-
-          {/* Step 4 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">4</span>
-              Export Env Variables
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3.5 rounded-xl overflow-x-auto select-all leading-normal min-h-[92px] flex flex-col justify-center">
-{`export OBSERVIX_API_KEY="sk-••••••••••••••••"
-export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`}
-            </pre>
-          </div>
-        </div>
-      </div>
-
       <ApplicationModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        projects={selectedProject ? [selectedProject] : projects} 
+        projects={projects} 
         onCreated={handleCreated}
       />
-
-      <GetStartedModal 
-        isOpen={isGetStartedOpen}
-        onClose={() => setIsGetStartedOpen(false)}
-        app={createdApp}
-      />
     </div>
-  );
-}
-
-function GetStartedModal({
-  isOpen,
-  onClose,
-  app,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  app: Application | null;
-}) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    });
-  };
-
-  if (!app) return null;
-
-  const codeSnippets = {
-    submodule: `git submodule add https://github.com/observix/observix-python.git`,
-    importCode: `from observix import observe`,
-    decorator: `@observe(name="agent_workflow_span")
-def execute_agent_loop(query: str):
-    # Logs nested tool calls and inputs/outputs automatically
-    return "workflow_response"`,
-    env: `# Set these configuration variables in your project env
-export OBSERVIX_API_KEY="${app.api_key || "sk-your-new-app-key"}"
-export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[550px] rounded-3xl p-6 bg-white/95 backdrop-blur-xl border border-black/[0.04]">
-        <DialogHeader>
-          <DialogTitle className="text-sm font-bold text-[#1d1d1f] flex items-center gap-2">
-            <Sparkles size={16} className="text-[#0071e3]" />
-            Integrate Application
-          </DialogTitle>
-          <DialogDescription className="text-xs text-[#6e6e73] leading-relaxed mt-1">
-            Follow these 4 simple framework-agnostic steps to initialize telemetry tracing for <strong>{app.name}</strong>.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-5 my-4 max-h-[400px] overflow-y-auto pr-1">
-          {/* Step 1 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">1</span>
-              Add SDK Submodule
-            </h4>
-            <div className="relative">
-              <pre className="text-[10px] font-mono bg-black/90 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal">
-                {codeSnippets.submodule}
-              </pre>
-              <button
-                onClick={() => handleCopy(codeSnippets.submodule, "submodule")}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-neutral-300 cursor-pointer"
-              >
-                {copiedId === "submodule" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Step 2 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">2</span>
-              Import Observix
-            </h4>
-            <div className="relative">
-              <pre className="text-[10px] font-mono bg-black/90 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal">
-                {codeSnippets.importCode}
-              </pre>
-              <button
-                onClick={() => handleCopy(codeSnippets.importCode, "import")}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-neutral-300 cursor-pointer"
-              >
-                {copiedId === "import" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Step 3 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">3</span>
-              Decorate Functions
-            </h4>
-            <div className="relative">
-              <pre className="text-[10px] font-mono bg-black/90 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal">
-                {codeSnippets.decorator}
-              </pre>
-              <button
-                onClick={() => handleCopy(codeSnippets.decorator, "decorator")}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-neutral-300 cursor-pointer"
-              >
-                {copiedId === "decorator" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Step 4 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">4</span>
-              Set Environment Variables
-            </h4>
-            <div className="relative">
-              <pre className="text-[10px] font-mono bg-black/90 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal">
-                {codeSnippets.env}
-              </pre>
-              <button
-                onClick={() => handleCopy(codeSnippets.env, "env")}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-neutral-300 cursor-pointer"
-              >
-                {copiedId === "env" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 border-t border-black/[0.04] pt-4 mt-2">
-          <Button 
-            onClick={onClose}
-            className="bg-[#0071e3] hover:bg-[#0071e3]/90 text-white rounded-xl text-xs font-bold cursor-pointer"
-          >
-            Got it, let's trace!
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -485,10 +218,10 @@ function CopyButton({ text, label, variant = "ghost", size = "sm" }: { text: str
         return (
             <button 
                 onClick={handleCopy} 
-                className="p-1 hover:bg-black/[0.04] rounded text-[#6e6e73] hover:text-[#1d1d1f] transition-colors cursor-pointer"
+                className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
                 title="Copy API Key"
             >
-                {copied ? <Check size={13} className="text-green-500"/> : <Copy size={13}/>}
+                {copied ? <Check size={14} className="text-green-500"/> : <Copy size={14}/>}
             </button>
         );
     }

@@ -91,7 +91,6 @@ class ApplicationRead(BaseModel):
     project_id: uuid.UUID
     rubric_prompt: str | None = None
     api_key: str | None = None  # Only populated on creation
-    last_trace_at: str | None = None
 
 
 # --- Endpoints ---
@@ -327,7 +326,6 @@ async def create_application(
         project_id=application.project_id,
         rubric_prompt=application.rubric_prompt,
         api_key=api_key_obj.key,
-        last_trace_at=None,
     )
 
 
@@ -355,20 +353,6 @@ async def read_applications(
     applications = result.scalars().all()
 
     # Map to ApplicationRead
-    app_names = [app.name for app in applications]
-    last_trace_map = {}
-    if app_names:
-        try:
-            from app.core.clickhouse import get_clickhouse_client
-            client = get_clickhouse_client()
-            names_str = ", ".join([f"'{name.replace(chr(39), str(chr(92)) + str(chr(39)))}'" for name in app_names])
-            query = f"SELECT application_name, max(start_time) FROM traces WHERE application_name IN ({names_str}) GROUP BY application_name"
-            ch_res = client.query(query)
-            for r in ch_res.result_rows:
-                last_trace_map[r[0]] = r[1].isoformat() if r[1] else None
-        except Exception as e:
-            print(f"Failed to query last trace from Clickhouse: {e}")
-
     return [
         ApplicationRead(
             id=app.id,
@@ -376,7 +360,6 @@ async def read_applications(
             project_id=app.project_id,
             rubric_prompt=app.rubric_prompt,
             api_key=app.api_keys[0].key if app.api_keys else None,
-            last_trace_at=last_trace_map.get(app.name),
         )
         for app in applications
     ]
@@ -415,25 +398,12 @@ async def read_application(
             status_code=403, detail="Not authorized to access this application"
         )
 
-    last_trace_at = None
-    try:
-        from app.core.clickhouse import get_clickhouse_client
-        client = get_clickhouse_client()
-        escaped_name = application.name.replace(chr(39), str(chr(92)) + str(chr(39)))
-        query = f"SELECT max(start_time) FROM traces WHERE application_name = '{escaped_name}'"
-        ch_res = client.query(query)
-        if ch_res.result_rows and ch_res.result_rows[0][0]:
-            last_trace_at = ch_res.result_rows[0][0].isoformat()
-    except Exception as e:
-        print(f"Failed to query last trace: {e}")
-
     return ApplicationRead(
         id=application.id,
         name=application.name,
         project_id=application.project_id,
         rubric_prompt=application.rubric_prompt,
         api_key=application.api_keys[0].key if application.api_keys else None,
-        last_trace_at=last_trace_at,
     )
 
 
@@ -486,25 +456,12 @@ async def update_application(
     result = await session.execute(stmt)
     app_reloaded = result.scalars().first()
 
-    last_trace_at = None
-    try:
-        from app.core.clickhouse import get_clickhouse_client
-        client = get_clickhouse_client()
-        escaped_name = app_reloaded.name.replace(chr(39), str(chr(92)) + str(chr(39)))
-        query = f"SELECT max(start_time) FROM traces WHERE application_name = '{escaped_name}'"
-        ch_res = client.query(query)
-        if ch_res.result_rows and ch_res.result_rows[0][0]:
-            last_trace_at = ch_res.result_rows[0][0].isoformat()
-    except Exception as e:
-        print(f"Failed to query last trace: {e}")
-
     return ApplicationRead(
         id=app_reloaded.id,
         name=app_reloaded.name,
         project_id=app_reloaded.project_id,
         rubric_prompt=app_reloaded.rubric_prompt,
         api_key=app_reloaded.api_keys[0].key if app_reloaded.api_keys else None,
-        last_trace_at=last_trace_at,
     )
 
 

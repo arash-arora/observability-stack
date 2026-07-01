@@ -16,9 +16,7 @@ import {
   FlaskConical,
   Check,
   Bot,
-  Wrench,
-  LayoutList,
-  Activity
+  Wrench
 } from "lucide-react";
 
 import api from "@/lib/api";
@@ -62,7 +60,6 @@ export default function TraceDetailSheet({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [isFullTraceEvalOpen, setIsFullTraceEvalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"tree" | "waterfall">("tree");
 
   // Fetch details when traceId changes
   useEffect(() => {
@@ -226,15 +223,6 @@ export default function TraceDetailSheet({
     return roots;
   }, [data]);
 
-  const traceDurationStats = useMemo(() => {
-    return getTraceDurationStats(data);
-  }, [data]);
-
-  const timelineTicks = useMemo(() => {
-    if (!traceDurationStats) return [];
-    return getTimelineTicks(traceDurationStats.duration);
-  }, [traceDurationStats]);
-
   // Update selection when data loads
   useEffect(() => {
     if (rootNodes.length > 0 && !selectedNodeId) {
@@ -325,88 +313,34 @@ export default function TraceDetailSheet({
         ) : (
           <div className="flex-1 flex overflow-hidden">
             {/* Left Pane: Tree */}
-            <div className="w-[450px] flex-none border-r border-black/[0.04] flex flex-col bg-neutral-50/50">
-              <div className="p-3 border-b border-black/[0.04] flex items-center justify-between bg-white/30 h-12 shrink-0">
-                <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-widest">
-                  Trace
+            <div className="w-87.5 flex-none border-r border-border flex flex-col bg-muted/10">
+              <div className="p-3 border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                <span>Execution Tree</span>
+                <span className="text-[10px] bg-muted px-1.5 rounded text-foreground">
+                  {rootNodes.length} roots
                 </span>
-
-                <div className="flex bg-neutral-100 p-0.5 rounded-lg border border-black/[0.02] shrink-0">
-                  <button
-                    onClick={() => setViewMode("tree")}
-                    className={`p-1.5 rounded-md transition-all cursor-pointer ${
-                      viewMode === "tree" ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                    }`}
-                    title="Tree View"
-                  >
-                    <LayoutList size={13} />
-                  </button>
-                  <button
-                    onClick={() => setViewMode("waterfall")}
-                    className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                      viewMode === "waterfall" ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                    }`}
-                    title="Waterfall View"
-                  >
-                    Waterfall
-                  </button>
-                </div>
               </div>
-
-              {/* Dynamic Waterfall ruler ticks at the top of the timeline track */}
-              {viewMode === "waterfall" && timelineTicks.length > 0 && (
-                <div className="relative h-6 border-b border-black/[0.04] bg-neutral-50/20 text-[9px] font-mono text-[#6e6e73] select-none">
-                  {timelineTicks.map((t, idx) => (
-                    <div 
-                      key={idx} 
-                      className="absolute top-1 transform -translate-x-1/2 flex flex-col items-center"
-                      style={{ left: `calc(70px + (100% - 80px) * ${t.position / 100})` }}
-                    >
-                      <span>{t.label}</span>
-                      <div className="w-px h-1 bg-black/[0.08] mt-0.5" />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex-1 overflow-y-auto p-3 space-y-0.5 relative">
-                {/* Dashed vertical guidelines for Gantt timing */}
-                {viewMode === "waterfall" && (
-                  <div className="absolute inset-y-0 pointer-events-none z-0" style={{ left: "70px", right: "10px" }}>
-                    {timelineTicks.map((t, idx) => (
-                      <div 
-                        key={idx}
-                        className="absolute inset-y-0 w-px border-l border-dashed border-black/[0.04]"
-                        style={{ left: `${t.position}%` }}
-                      />
-                    ))}
-                  </div>
-                )}
-                
-                <div className="relative z-10">
-                  {rootNodes.map((node) => (
-                    <TreeNode
-                      key={node.id}
-                      node={node}
-                      depth={0}
-                      selectedId={selectedNodeId}
-                      onSelect={setSelectedNodeId}
-                      traceDurationStats={traceDurationStats}
-                      viewMode={viewMode}
-                    />
-                  ))}
-                </div>
+              <div className="flex-1 overflow-y-auto p-2">
+                {rootNodes.map((node) => (
+                  <TreeNode
+                    key={node.id}
+                    node={node}
+                    depth={0}
+                    selectedId={selectedNodeId}
+                    onSelect={setSelectedNodeId}
+                  />
+                ))}
               </div>
             </div>
 
             {/* Right Pane: Details */}
-            <div className="flex-1 overflow-y-auto bg-white">
+            <div className="flex-1 overflow-y-auto bg-background">
               {selectedNode ? (
                 <NodeDetailView node={selectedNode} traceData={data} />
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-[#6e6e73]">
-                  <Layers size={48} className="opacity-20 mb-4 animate-pulse" />
-                  <p className="text-xs font-semibold">Select a waterfall node to view details</p>
+                <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
+                  <Layers size={48} className="opacity-20 mb-4" />
+                  <p>Select a node to view details</p>
                 </div>
               )}
             </div>
@@ -417,318 +351,90 @@ export default function TraceDetailSheet({
   );
 }
 
-// Compute trace Duration limit stats
-function getTraceDurationStats(data: any) {
-  if (!data || (!data.spans?.length && !data.observations?.length)) return null;
-  let minStart = Infinity;
-  let maxEnd = -Infinity;
-  
-  const checkTime = (timeStr: string) => {
-    if (!timeStr) return;
-    const ms = new Date(timeStr).getTime();
-    if (!isNaN(ms)) {
-      if (ms < minStart) minStart = ms;
-      if (ms > maxEnd) maxEnd = ms;
-    }
-  };
-  
-  data.spans?.forEach((s: any) => {
-    checkTime(s.start_time);
-    checkTime(s.end_time);
-  });
-  data.observations?.forEach((o: any) => {
-    checkTime(o.start_time);
-    checkTime(o.end_time);
-  });
-  
-  if (minStart === Infinity || maxEnd === -Infinity) return null;
-  return {
-    startTime: minStart,
-    endTime: maxEnd,
-    duration: maxEnd - minStart || 1
-  };
-}
-
-function getTimelineTicks(durationMs: number) {
-  const durSec = durationMs / 1000;
-  let interval = 0.1; // in seconds
-  if (durSec > 10) interval = 5;
-  else if (durSec > 5) interval = 2;
-  else if (durSec > 2) interval = 1;
-  else if (durSec > 1) interval = 0.5;
-  else if (durSec > 0.5) interval = 0.25;
-  else if (durSec > 0.2) interval = 0.1;
-  else interval = 0.05;
-  
-  const ticks = [];
-  let current = interval;
-  while (current < durSec) {
-    ticks.push({
-      label: current >= 1 ? `${current.toFixed(1)}s` : `${(current * 1000).toFixed(0)}ms`,
-      position: (current / durSec) * 100
-    });
-    current += interval;
-  }
-  // Add fallback first/last ticks if empty
-  if (ticks.length === 0) {
-    ticks.push({ label: "0s", position: 0 });
-    ticks.push({ label: `${(durationMs).toFixed(0)}ms`, position: 100 });
-  }
-  return ticks;
-}
-
 function TreeNode({
   node,
   depth,
   selectedId,
   onSelect,
-  traceDurationStats,
-  viewMode,
 }: {
   node: Node;
   depth: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  traceDurationStats: any;
-  viewMode: "tree" | "waterfall";
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
   const isSelected = node.id === selectedId;
   const isError = node.error || node.status === "ERROR";
 
-  // Calculations for Gantt timeline
-  const barStyle = useMemo(() => {
-    if (!traceDurationStats) return null;
-    const start = new Date(node.start_time).getTime();
-    const end = new Date(node.end_time).getTime();
-    const offset = ((start - traceDurationStats.startTime) / traceDurationStats.duration) * 100;
-    const width = Math.max(((end - start) / traceDurationStats.duration) * 100, 1.5);
-    return {
-      left: `${Math.max(0, Math.min(offset, 98.5))}%`,
-      width: `${Math.min(width, 100 - offset)}%`,
-      rawWidth: width
-    };
-  }, [node.start_time, node.end_time, traceDurationStats]);
-
-  const isWide = barStyle && barStyle.rawWidth >= 30;
-
-  // Metadata pills in tree view
-  const metadataBadges = useMemo(() => {
-    const badges = [];
-    
-    // Duration badge
-    if (node.duration_ms !== undefined) {
-      const durSec = node.duration_ms / 1000;
-      badges.push({
-        icon: <Clock size={10} className="opacity-70" />,
-        text: durSec >= 1 ? `${durSec.toFixed(2)}s` : `${node.duration_ms.toFixed(0)}ms`
-      });
-    }
-    
-    // Usage tokens/cost badge
-    if (node.usage?.total_tokens || node.usage?.prompt_tokens) {
-      const tokens = node.usage.total_tokens || (node.usage.prompt_tokens + (node.usage.completion_tokens || 0));
-      const costText = node.total_cost ? ` / $${node.total_cost.toFixed(4)}` : "";
-      badges.push({
-        icon: <Activity size={10} className="opacity-70" />,
-        text: `${tokens} tok${costText}`
-      });
-    } else if (node.total_cost) {
-      badges.push({
-        icon: <Activity size={10} className="opacity-70" />,
-        text: `$${node.total_cost.toFixed(4)}`
-      });
-    }
-    
-    // Model badge
-    if (node.model) {
-      badges.push({
-        text: node.model,
-        isModel: true
-      });
-    }
-    
-    return badges;
-  }, [node]);
-
-  if (viewMode === "tree") {
-    return (
-      <div className="select-none relative font-sans">
-        <div
-          className={`
-            group flex items-center justify-between py-2 px-2.5 rounded-xl cursor-pointer text-xs mb-0.5 transition-all
-            ${
-              isSelected
-                ? "bg-[#0071e3]/10 text-[#0071e3] ring-1 ring-[#0071e3]/20"
-                : "text-[#1d1d1f] hover:bg-black/[0.02]"
-            }
-          `}
-          style={{ paddingLeft: `${depth * 14 + 10}px` }}
-          onClick={() => onSelect(node.id)}
-        >
-          <div className="flex items-start gap-2 min-w-0 flex-1">
-            <div
-              className={`w-4 h-4 mt-0.5 flex items-center justify-center rounded hover:bg-black/[0.04] transition-colors ${
-                hasChildren ? "visible cursor-pointer" : "invisible"
-              }`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setExpanded(!expanded);
-              }}
-            >
-              {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            </div>
-
-            <div
-              className={`shrink-0 mt-0.5 ${
-                isError
-                  ? "text-red-500"
-                  : node.is_obs
-                  ? "text-blue-500"
-                  : "text-emerald-500"
-              }`}
-            >
-              {node.is_obs ? <Terminal size={13} /> : <Layers size={13} />}
-            </div>
-
-            <div className="flex flex-col min-w-0">
-              <span
-                className={`truncate font-mono text-[11px] ${
-                  isSelected ? "font-bold text-[#0071e3]" : "font-semibold"
-                } ${isError ? "text-red-600" : ""}`}
-                title={node.name}
-              >
-                {node.name}
-              </span>
-              
-              {/* Metadata Badges line */}
-              {metadataBadges.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap opacity-80">
-                  {metadataBadges.map((badge, idx) => (
-                    <span 
-                      key={idx} 
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
-                        badge.isModel 
-                          ? "bg-black/[0.04] text-[#6e6e73] border border-black/[0.02]"
-                          : "bg-black/[0.02] text-[#6e6e73]"
-                      }`}
-                    >
-                      {badge.icon}
-                      {badge.text}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {expanded && (
-          <div className="relative">
-            {hasChildren && (
-              <div
-                className="absolute bg-black/[0.04] w-px top-0 bottom-2.5"
-                style={{ left: `${depth * 14 + 17}px`, zIndex: 0 }}
-              />
-            )}
-            {node.children.map((child) => (
-              <TreeNode
-                key={child.id}
-                node={child}
-                depth={depth + 1}
-                selectedId={selectedId}
-                onSelect={onSelect}
-                traceDurationStats={traceDurationStats}
-                viewMode={viewMode}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Waterfall Mode (Image 1 style)
   return (
-    <div className="select-none relative w-full font-sans">
-      <div 
-        className="absolute left-0 top-0 h-8 flex items-center z-20 pointer-events-none"
-        style={{ width: `${depth * 14 + 20}px` }}
+    <div className="select-none relative">
+      {/* Visual guide line for hierarchy could go here */}
+      <div
+        className={`
+                    group flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer text-sm mb-0.5 transition-all
+                    ${
+                      isSelected
+                        ? "bg-primary/10 text-primary ring-1 ring-primary/20"
+                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                    }
+                `}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        onClick={() => {
+          onSelect(node.id);
+        }}
       >
         <div
-          className={`w-4 h-4 flex items-center justify-center rounded hover:bg-black/[0.04] transition-colors pointer-events-auto ${
-            hasChildren ? "visible cursor-pointer" : "invisible"
+          className={`w-4 h-4 flex items-center justify-center rounded hover:bg-muted/50 ${
+            hasChildren ? "visible" : "invisible"
           }`}
           onClick={(e) => {
             e.stopPropagation();
             setExpanded(!expanded);
           }}
         >
-          {expanded ? <ChevronDown size={11} className="text-[#6e6e73]" /> : <ChevronRight size={11} className="text-[#6e6e73]" />}
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </div>
-      </div>
 
-      <div
-        className={`
-          group relative flex items-center h-8 rounded-lg cursor-pointer transition-all border border-transparent
-          ${
-            isSelected
-              ? "bg-[#0071e3]/5 border-[#0071e3]/10"
-              : "hover:bg-black/[0.01]"
-          }
-        `}
-        style={{ paddingLeft: "70px" }}
-        onClick={() => onSelect(node.id)}
-      >
-        {/* Waterfall capsule timeline track container */}
-        <div className="relative flex-1 h-6">
-          {barStyle && (
-            <>
-              <div 
-                className={`absolute inset-y-0 rounded-md flex items-center px-2 text-[10px] text-white font-mono select-none overflow-hidden transition-all duration-150 shadow-sm ${
-                  isError 
-                    ? "bg-[#ff3b30]" 
-                    : node.type?.toLowerCase() === 'agent' 
-                    ? "bg-[#5856d6]"
-                    : node.type?.toLowerCase() === 'tool' 
-                    ? "bg-[#ff9500]"
-                    : node.is_obs
-                    ? "bg-[#0a84ff]"
-                    : "bg-[#34c759]"
-                }`}
-                style={{ left: barStyle.left, width: barStyle.width }}
-              >
-                {isWide && (
-                  <div className="flex items-center gap-1.5 truncate">
-                    {node.is_obs ? <Terminal size={11} /> : <Layers size={11} />}
-                    <span className="font-bold truncate">{node.name}</span>
-                    <span className="opacity-80 shrink-0 font-semibold">{(node.duration_ms / 1000).toFixed(2)}s</span>
-                  </div>
-                )}
-              </div>
+        <div
+          className={`shrink-0 ${
+            isError
+              ? "text-destructive"
+              : node.is_obs
+              ? "text-blue-500"
+              : "text-emerald-500"
+          }`}
+        >
+          {node.is_obs ? <Terminal size={14} /> : <Layers size={14} />}
+        </div>
 
-              {!isWide && (
-                <div 
-                  className="absolute inset-y-0 flex items-center gap-1.5 text-[10px] font-mono text-[#1d1d1f] whitespace-nowrap pl-2"
-                  style={{ left: `calc(${barStyle.left} + ${barStyle.width})` }}
-                >
-                  {node.is_obs ? <Terminal size={11} className="text-[#0a84ff]" /> : <Layers size={11} className="text-[#34c759]" />}
-                  <span className="font-bold truncate">{node.name}</span>
-                  <span className="text-[#6e6e73] font-semibold opacity-60">{(node.duration_ms / 1000).toFixed(2)}s</span>
-                </div>
-              )}
-            </>
-          )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <span
+              className={`truncate font-mono text-xs ${
+                isSelected ? "font-semibold" : ""
+              } ${isError ? "text-destructive" : ""}`}
+            >
+              {node.name}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] opacity-60 font-mono mt-0.5">
+            <span>{node.duration_ms.toFixed(0)}ms</span>
+            {/* Cost/Tokens could be shown here if available in node */}
+            {node.usage?.total_tokens && (
+              <span>{node.usage.total_tokens}tok</span>
+            )}
+          </div>
         </div>
       </div>
 
       {expanded && (
         <div className="relative">
+          {/* Vertical line for children */}
           {hasChildren && (
             <div
-              className="absolute bg-black/[0.04] w-px top-0 bottom-3"
-              style={{ left: `${depth * 14 + 7}px`, zIndex: 0 }}
+              className="absolute bg-border w-px top-0 bottom-2"
+              style={{ left: `${depth * 16 + 15}px`, zIndex: 0 }}
             />
           )}
           {node.children.map((child) => (
@@ -738,8 +444,6 @@ function TreeNode({
               depth={depth + 1}
               selectedId={selectedId}
               onSelect={onSelect}
-              traceDurationStats={traceDurationStats}
-              viewMode={viewMode}
             />
           ))}
         </div>

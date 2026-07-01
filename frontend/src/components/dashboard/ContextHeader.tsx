@@ -53,17 +53,15 @@ export default function ContextHeader() {
 
   return (
     <>
-    <div className="flex items-center gap-3 py-3 px-4 bg-white/60 backdrop-blur-md border border-black/[0.04] rounded-2xl mb-6 text-sm text-[#6e6e73] shadow-sm animate-in fade-in duration-200">
+    <div className="flex items-center gap-2 mb-8 text-sm text-muted-foreground bg-transparent">
       {/* Sidebar Toggle */}
       <button 
         onClick={toggleSidebar}
-        className="p-1.5 hover:bg-black/[0.03] rounded-lg transition-all duration-200 text-[#6e6e73] hover:text-[#1d1d1f] shrink-0 cursor-pointer"
+        className="mr-2 p-1 hover:bg-accent/50 rounded-sm transition-colors text-foreground/70 hover:text-foreground"
         title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
       >
-        <PanelLeft size={16} />
+        <PanelLeft size={18} />
       </button>
-
-      <span className="text-neutral-300 font-light shrink-0">/</span>
 
       {/* Organization Selector */}
       <div className="flex items-center">
@@ -78,21 +76,21 @@ export default function ContextHeader() {
                 }
             }}
         >
-            <SelectTrigger className="w-auto h-8 px-2.5 border-none shadow-none bg-transparent hover:bg-black/[0.03] rounded-lg focus:ring-0 focus:outline-none font-semibold text-[#1d1d1f] gap-1.5 transition-all cursor-pointer">
-                <SelectValue placeholder="Select Org" />
+            <SelectTrigger className="w-auto h-auto p-1 border-none shadow-none bg-transparent hover:bg-accent/50 focus:ring-0 font-medium text-foreground gap-1">
+                <SelectValue placeholder="Select Organization" />
             </SelectTrigger>
-            <SelectContent className="bg-white/95 backdrop-blur-lg border border-black/[0.05] rounded-xl shadow-lg p-1">
+            <SelectContent>
             {organizations.map((org) => (
-                <SelectItem key={org.id} value={org.id} className="rounded-lg cursor-pointer font-medium text-xs">
+                <SelectItem key={org.id} value={org.id}>
                 {org.name}
                 </SelectItem>
             ))}
             {user?.is_superuser && (
               <>
-                <div className="h-px bg-black/[0.04] my-1" />
-                <SelectItem value="create_new" className="text-[#0071e3] focus:text-[#0071e3] font-semibold rounded-lg cursor-pointer text-xs">
+                <div className="h-px bg-border my-1" />
+                <SelectItem value="create_new" className="text-primary focus:text-primary font-medium">
                     <div className="flex items-center gap-2">
-                        <Plus size={13} /> Create Org
+                        <Plus size={14} /> Create Organization
                     </div>
                 </SelectItem>
               </>
@@ -101,7 +99,7 @@ export default function ContextHeader() {
         </Select>
       </div>
 
-      <span className="text-neutral-300 font-light shrink-0">/</span>
+      <span className="text-muted-foreground/40 font-light">/</span>
 
       {/* Project Selector */}
       <div className="flex items-center">
@@ -111,29 +109,29 @@ export default function ContextHeader() {
                 if (val === 'create_new') {
                      setShowCreateProject(true);
                 } else {
-                     const proj = projects.find(p => p.id === val);
-                     if (proj) setSelectedProject(proj);
+                    const proj = projects.find(p => p.id === val);
+                    if (proj) setSelectedProject(proj);
                 }
             }}
             disabled={!selectedOrg}
         >
-            <SelectTrigger className="w-auto h-8 px-2.5 border-none shadow-none bg-transparent hover:bg-black/[0.03] rounded-lg focus:ring-0 focus:outline-none font-semibold text-[#1d1d1f] gap-1.5 transition-all cursor-pointer">
+            <SelectTrigger className="w-auto h-auto p-1 border-none shadow-none bg-transparent hover:bg-accent/50 focus:ring-0 font-medium text-foreground gap-1">
                  <SelectValue placeholder="Select Project" />
             </SelectTrigger>
-            <SelectContent className="bg-white/95 backdrop-blur-lg border border-black/[0.05] rounded-xl shadow-lg p-1">
+            <SelectContent>
             {availableProjects.length > 0 ? (
                 availableProjects.map((proj) => (
-                    <SelectItem key={proj.id} value={proj.id} className="rounded-lg cursor-pointer font-medium text-xs">
+                    <SelectItem key={proj.id} value={proj.id}>
                     {proj.name}
                     </SelectItem>
                 ))
             ) : (
-                <SelectItem value="none" disabled className="rounded-lg text-xs">No projects found</SelectItem>
+                <SelectItem value="none" disabled>No projects found</SelectItem>
             )}
-            <div className="h-px bg-black/[0.04] my-1" />
-            <SelectItem value="create_new" className="text-[#0071e3] focus:text-[#0071e3] font-semibold rounded-lg cursor-pointer text-xs">
+            <div className="h-px bg-border my-1" />
+            <SelectItem value="create_new" className="text-primary focus:text-primary font-medium">
                 <div className="flex items-center gap-2">
-                    <Plus size={13} /> Create Project
+                    <Plus size={14} /> Create Project
                 </div>
             </SelectItem>
             </SelectContent>

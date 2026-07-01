@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Open_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const inter = Inter({
+const openSans = Open_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
 });
@@ -19,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="light">
-      <body suppressHydrationWarning className={`${inter.variable} font-sans`}>
+    <html lang="en">
+      <body suppressHydrationWarning className={`${openSans.variable} font-sans`}>
         <Providers>{children}</Providers>
       </body>
     </html>

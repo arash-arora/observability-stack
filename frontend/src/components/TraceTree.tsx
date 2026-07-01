@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from 'react';
-import { ChevronRight, ChevronDown, Circle, Clock, AlertCircle, Play, Activity, LayoutList, Layers, Terminal } from 'lucide-react';
+import { ChevronRight, ChevronDown, Circle, Clock, AlertCircle, Play, Activity } from 'lucide-react';
 import api from '@/lib/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,9 +23,6 @@ interface Node {
   output?: string;
   children: Node[];
   is_obs?: boolean;
-  model?: string;
-  usage?: any;
-  total_cost?: number;
 }
 
 export default function TraceTree({ spans, observations, traceId }: { spans: any[], observations: any[], traceId?: string }) {
@@ -36,7 +33,6 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
   const [evalInputs, setEvalInputs] = useState<Record<string, string>>({});
   const [evalRunning, setEvalRunning] = useState(false);
   const [evalResult, setEvalResult] = useState<any>(null);
-  const [viewMode, setViewMode] = useState<'tree' | 'waterfall'>('tree');
 
   useEffect(() => {
       api.get('/evaluations/metrics').then(res => setMetrics(res.data)).catch(console.error);
@@ -120,16 +116,6 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
       const end = new Date(obs.end_time).getTime();
       const duration = end - start;
       
-      const parseJson = (val: any) => {
-        if (!val) return null;
-        if (typeof val === 'object') return val;
-        try {
-          return JSON.parse(val);
-        } catch {
-          return null;
-        }
-      };
-
       nodeMap.set(id, {
         id: id,
         name: obs.name || 'Unnamed Observation',
@@ -141,10 +127,7 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
         input: obs.input,
         output: obs.output,
         children: [],
-        is_obs: true,
-        model: obs.model,
-        usage: parseJson(obs.usage),
-        total_cost: obs.total_cost
+        is_obs: true
       });
     });
 
@@ -183,123 +166,21 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
     return roots.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   }, [spans, observations]);
 
-  const traceDurationStats = useMemo(() => {
-    if ((!spans || !spans.length) && (!observations || !observations.length)) return null;
-    let minStart = Infinity;
-    let maxEnd = -Infinity;
-    
-    const checkTime = (timeStr: string) => {
-      if (!timeStr) return;
-      const ms = new Date(timeStr).getTime();
-      if (!isNaN(ms)) {
-        if (ms < minStart) minStart = ms;
-        if (ms > maxEnd) maxEnd = ms;
-      }
-    };
-    
-    spans?.forEach(s => {
-      checkTime(s.start_time);
-      checkTime(s.end_time);
-    });
-    observations?.forEach(o => {
-      checkTime(o.start_time);
-      checkTime(o.end_time);
-    });
-    
-    if (minStart === Infinity || maxEnd === -Infinity) return null;
-    return {
-      startTime: minStart,
-      endTime: maxEnd,
-      duration: maxEnd - minStart || 1
-    };
-  }, [spans, observations]);
-
-  const timelineTicks = useMemo(() => {
-    if (!traceDurationStats) return [];
-    return getTimelineTicks(traceDurationStats.duration);
-  }, [traceDurationStats]);
-
   return (
-    <div className="space-y-4 font-sans">
-      <div className="flex justify-between items-center bg-white/40 p-4 border border-black/[0.04] rounded-2xl">
-        <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-widest">
-          {viewMode === "waterfall" ? "Execution Waterfall" : "Execution Tree"}
-        </span>
-        <div className="flex items-center gap-3">
-          <div className="flex bg-neutral-100 p-0.5 rounded-lg border border-black/[0.02] shrink-0">
-            <button
-              onClick={() => setViewMode("tree")}
-              className={`p-1.5 rounded-md transition-all cursor-pointer ${
-                viewMode === "tree" ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-              }`}
-              title="Tree View"
-            >
-              <LayoutList size={13} />
-            </button>
-            <button
-              onClick={() => setViewMode("waterfall")}
-              className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                viewMode === "waterfall" ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-              }`}
-              title="Waterfall View"
-            >
-              Waterfall
-            </button>
-          </div>
-
-          {traceId && (
+    <div className="space-y-4">
+      {traceId && (
+          <div className="flex justify-end fade-in animate-in">
              <Button onClick={() => openEvalModal('trace')} variant="outline" className="gap-2 shadow-sm" size="sm">
-                <Activity size={14} /> Evaluate Trace
+                <Activity size={16} /> Evaluate Trace
              </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="border border-black/[0.04] rounded-2xl overflow-hidden bg-white/70 backdrop-blur-xl shadow-sm relative flex flex-col">
-        {/* Waterfall horizontal ruler ticks */}
-        {viewMode === "waterfall" && timelineTicks.length > 0 && (
-          <div className="relative h-6 border-b border-black/[0.04] bg-neutral-50/20 text-[9px] font-mono text-[#6e6e73] select-none">
-            {timelineTicks.map((t, idx) => (
-              <div 
-                key={idx} 
-                className="absolute top-1 transform -translate-x-1/2 flex flex-col items-center"
-                style={{ left: `calc(70px + (100% - 80px) * ${t.position / 100})` }}
-              >
-                <span>{t.label}</span>
-                <div className="w-px h-1 bg-black/[0.08] mt-0.5" />
-              </div>
-            ))}
           </div>
-        )}
+      )}
 
-        <div className="p-3 space-y-0.5 relative flex-1">
-          {/* Waterfall grid vertical guidelines */}
-          {viewMode === "waterfall" && (
-            <div className="absolute inset-y-0 pointer-events-none z-0" style={{ left: "70px", right: "10px" }}>
-              {timelineTicks.map((t, idx) => (
-                <div 
-                  key={idx}
-                  className="absolute inset-y-0 w-px border-l border-dashed border-black/[0.04]"
-                  style={{ left: `${t.position}%` }}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="relative z-10">
-            {rootNodes.map(node => (
-              <TreeNode 
-                key={node.id} 
-                node={node} 
-                level={0} 
-                onEvaluate={() => openEvalModal(node)} 
-                traceDurationStats={traceDurationStats}
-                viewMode={viewMode}
-              />
-            ))}
-            {rootNodes.length === 0 && <div className="p-4 text-center text-muted">No data to display</div>}
-          </div>
-        </div>
+      <div className="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--card)]">
+        {rootNodes.map(node => (
+          <TreeNode key={node.id} node={node} level={0} onEvaluate={() => openEvalModal(node)} />
+        ))}
+        {rootNodes.length === 0 && <div className="p-4 text-center text-muted">No data to display</div>}
       </div>
 
       <Dialog open={evalModalOpen} onOpenChange={setEvalModalOpen}>
@@ -363,325 +244,81 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
   );
 }
 
-function getTimelineTicks(durationMs: number) {
-  const durSec = durationMs / 1000;
-  let interval = 0.1; // in seconds
-  if (durSec > 10) interval = 5;
-  else if (durSec > 5) interval = 2;
-  else if (durSec > 2) interval = 1;
-  else if (durSec > 1) interval = 0.5;
-  else if (durSec > 0.5) interval = 0.25;
-  else if (durSec > 0.2) interval = 0.1;
-  else interval = 0.05;
-  
-  const ticks = [];
-  let current = interval;
-  while (current < durSec) {
-    ticks.push({
-      label: current >= 1 ? `${current.toFixed(1)}s` : `${(current * 1000).toFixed(0)}ms`,
-      position: (current / durSec) * 100
-    });
-    current += interval;
-  }
-  if (ticks.length === 0) {
-    ticks.push({ label: "0s", position: 0 });
-    ticks.push({ label: `${(durationMs).toFixed(0)}ms`, position: 100 });
-  }
-  return ticks;
-}
-
-function TreeNode({ 
-  node, 
-  level, 
-  onEvaluate, 
-  traceDurationStats,
-  viewMode,
-}: { 
-  node: Node; 
-  level: number; 
-  onEvaluate: () => void; 
-  traceDurationStats: any;
-  viewMode: "tree" | "waterfall";
-}) {
+function TreeNode({ node, level, onEvaluate }: { node: Node, level: number, onEvaluate: () => void }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children && node.children.length > 0;
   
   const isError = node.error || node.status === 'ERROR';
 
-  // Calculations for Gantt timeline
-  const barStyle = useMemo(() => {
-    if (!traceDurationStats) return null;
-    const start = new Date(node.start_time).getTime();
-    const end = new Date(node.end_time).getTime();
-    const offset = ((start - traceDurationStats.startTime) / traceDurationStats.duration) * 100;
-    const width = Math.max(((end - start) / traceDurationStats.duration) * 100, 1.5);
-    return {
-      left: `${Math.max(0, Math.min(offset, 98.5))}%`,
-      width: `${Math.min(width, 100 - offset)}%`,
-      rawWidth: width
-    };
-  }, [node.start_time, node.end_time, traceDurationStats]);
-
-  const isWide = barStyle && barStyle.rawWidth >= 30;
-
-  // Metadata pills in tree view
-  const metadataBadges = useMemo(() => {
-    const badges = [];
-    
-    // Duration badge
-    if (node.duration_ms !== undefined) {
-      const durSec = node.duration_ms / 1000;
-      badges.push({
-        icon: <Clock size={10} className="opacity-70" />,
-        text: durSec >= 1 ? `${durSec.toFixed(2)}s` : `${node.duration_ms.toFixed(0)}ms`
-      });
-    }
-    
-    // Usage tokens/cost badge
-    if (node.usage?.total_tokens) {
-      badges.push({
-        icon: <Activity size={10} className="opacity-70" />,
-        text: `${node.usage.total_tokens} tok`
-      });
-    }
-    
-    // Model badge
-    if (node.model) {
-      badges.push({
-        text: node.model,
-        isModel: true
-      });
-    }
-    
-    return badges;
-  }, [node]);
-
-  if (viewMode === "tree") {
-    return (
-      <div className="border-b border-black/[0.04] last:border-0 bg-white/30 font-sans">
-        <div 
-          className={`flex items-center justify-between p-3 hover:bg-black/[0.02] cursor-pointer text-xs mb-0.5 transition-all`}
-          style={{ paddingLeft: `${level * 14 + 10}px` }}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {/* Left Side: Tree Toggle & Names */}
-          <div className="flex items-start gap-2 min-w-0 flex-1">
-            <div className="w-4 h-4 mt-0.5 flex items-center justify-center text-neutral-400 hover:text-[#1d1d1f] transition-colors rounded">
-              {hasChildren && (
-                expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />
-              )}
-            </div>
-            
-            <div className={`p-1 rounded-lg mt-0.5 shrink-0 ${
-              isError
-                ? "text-red-500 bg-red-50"
-                : node.is_obs
-                ? "text-blue-500 bg-blue-50"
-                : "text-emerald-500 bg-emerald-50"
-            }`}>
-              {node.is_obs ? <Terminal size={12} /> : <Layers size={12} />}
-            </div>
-
-            <div className="flex flex-col min-w-0">
-              <span className="font-semibold truncate text-[#1d1d1f] font-mono text-[11px]">{node.name}</span>
-              <span className="text-[9px] text-[#6e6e73] font-bold uppercase tracking-wider mt-0.5 self-start">
-                  {node.type}
-              </span>
-              
-              {/* Metadata Badges line */}
-              {metadataBadges.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap opacity-80">
-                  {metadataBadges.map((badge, idx) => (
-                    <span 
-                      key={idx} 
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
-                        badge.isModel 
-                          ? "bg-black/[0.04] text-[#6e6e73] border border-black/[0.02]"
-                          : "bg-black/[0.02] text-[#6e6e73]"
-                      }`}
-                    >
-                      {badge.icon}
-                      {badge.text}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Side: Evaluation buttons */}
-          <div className="flex items-center gap-4 flex-none font-mono text-[10px]">
-              <div className="flex items-center gap-2 text-[#6e6e73]">
-                  <button 
-                      onClick={(e) => { e.stopPropagation(); onEvaluate(); }}
-                      className="hover:text-[#0071e3] transition-colors hover:bg-neutral-100 p-1.5 rounded-lg group flex items-center gap-1 z-10 border border-transparent hover:border-black/[0.04] bg-white shadow-sm cursor-pointer"
-                      title="Evaluate Node"
-                  >
-                      <Activity size={12} className="text-neutral-500 group-hover:text-[#0071e3]" />
-                      <span className="text-[9px] font-bold">Eval</span>
-                  </button>
-                  <span className="opacity-70">{new Date(node.start_time).toLocaleTimeString()}</span>
-              </div>
-          </div>
-        </div>
-
-        {expanded && (
-          <>
-              {/* Detail View for Inputs/Outputs if available */}
-              {(node.input || node.output || node.error) && (
-                   <div style={{ marginLeft: `${level * 14 + 34}px` }} className="p-3 mb-2 bg-neutral-50 border border-black/[0.03] rounded-xl text-xs overflow-x-auto max-w-2xl font-mono text-[#6e6e73]">
-                      {node.input && (
-                          <div className="mb-1.5">
-                              <span className="font-bold text-[#1d1d1f]">Input: </span>
-                              <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.input}</pre>
-                          </div>
-                      )}
-                      {node.output && (
-                          <div>
-                               <span className="font-bold text-[#1d1d1f]">Output: </span>
-                               <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.output}</pre>
-                          </div>
-                      )}
-                      {node.error && (
-                           <div className="text-red-600 mt-1.5">
-                               <span className="font-bold">Error: </span>
-                               <pre className="inline text-red-600 whitespace-pre-wrap">{node.error}</pre>
-                          </div>
-                      )}
-                   </div>
-              )}
-              
-              {/* Children */}
-              {node.children.map(child => (
-                  <TreeNode 
-                    key={child.id} 
-                    node={child} 
-                    level={level + 1} 
-                    onEvaluate={onEvaluate} 
-                    traceDurationStats={traceDurationStats}
-                    viewMode={viewMode}
-                  />
-              ))}
-          </>
-        )}
-      </div>
-    );
-  }
-
-  // Waterfall Mode (Image 1 style)
   return (
-    <div className="select-none relative w-full font-sans border-b border-black/[0.02]">
+    <div className="border-b border-[var(--border)] last:border-0">
       <div 
-        className="absolute left-0 top-0 h-8 flex items-center z-20 pointer-events-none"
-        style={{ width: `${level * 14 + 20}px` }}
-      >
-        <div
-          className={`w-4 h-4 flex items-center justify-center rounded hover:bg-black/[0.04] transition-colors pointer-events-auto ${
-            hasChildren ? "visible cursor-pointer" : "invisible"
-          }`}
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(!expanded);
-          }}
-        >
-          {expanded ? <ChevronDown size={11} className="text-[#6e6e73]" /> : <ChevronRight size={11} className="text-[#6e6e73]" />}
-        </div>
-      </div>
-
-      <div
-        className="group relative flex items-center h-8 rounded-lg cursor-pointer transition-all border border-transparent hover:bg-black/[0.01]"
-        style={{ paddingLeft: "70px" }}
+        className={`flex items-center gap-2 p-2 hover:bg-[var(--background-subtle)] cursor-pointer text-sm font-mono`}
+        style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={() => setExpanded(!expanded)}
       >
-        {/* Waterfall capsule timeline track container */}
-        <div className="relative flex-1 h-6">
-          {barStyle && (
-            <>
-              <div 
-                className={`absolute inset-y-0 rounded-md flex items-center px-2 text-[10px] text-white font-mono select-none overflow-hidden transition-all duration-150 shadow-sm ${
-                  isError 
-                    ? "bg-[#ff3b30]" 
-                    : node.type?.toLowerCase() === 'agent' 
-                    ? "bg-[#5856d6]"
-                    : node.type?.toLowerCase() === 'tool' 
-                    ? "bg-[#ff9500]"
-                    : node.is_obs
-                    ? "bg-[#0a84ff]"
-                    : "bg-[#34c759]"
-                }`}
-                style={{ left: barStyle.left, width: barStyle.width }}
-              >
-                {isWide && (
-                  <div className="flex items-center gap-1.5 truncate">
-                    {node.is_obs ? <Terminal size={11} /> : <Layers size={11} />}
-                    <span className="font-bold truncate">{node.name}</span>
-                    <span className="opacity-80 shrink-0 font-semibold">{((node.duration_ms || 0) / 1000).toFixed(2)}s</span>
-                  </div>
-                )}
-              </div>
-
-              {!isWide && (
-                <div 
-                  className="absolute inset-y-0 flex items-center gap-1.5 text-[10px] font-mono text-[#1d1d1f] whitespace-nowrap pl-2"
-                  style={{ left: `calc(${barStyle.left} + ${barStyle.width})` }}
-                >
-                  {node.is_obs ? <Terminal size={11} className="text-[#0a84ff]" /> : <Layers size={11} className="text-[#34c759]" />}
-                  <span className="font-bold truncate">{node.name}</span>
-                  <span className="text-[#6e6e73] font-semibold opacity-60 font-mono">{((node.duration_ms || 0) / 1000).toFixed(2)}s</span>
-                </div>
-              )}
-            </>
+        <div className="w-4 h-4 flex items-center justify-center text-muted">
+          {hasChildren && (
+            expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
           )}
         </div>
+        
+        <div className={`p-1 rounded ${isError ? 'bg-red-100 text-red-700' : 'bg-blue-50 text-blue-700'}`}>
+            {isError ? <AlertCircle size={14} /> : <Circle size={10} />}
+        </div>
 
-        {/* Action icons hover overlay */}
-        <div className="absolute right-2 inset-y-0 flex items-center gap-2 z-30 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="font-semibold">{node.name}</span>
+        <span className="text-xs text-muted px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--background)]">
+            {node.type}
+        </span>
+        
+        <div className="ml-auto flex items-center justify-end gap-3 text-xs text-muted">
             <button 
                 onClick={(e) => { e.stopPropagation(); onEvaluate(); }}
-                className="text-[#6e6e73] hover:text-[#0071e3] transition-colors hover:bg-neutral-100 p-1.5 rounded-lg border border-black/[0.04] bg-white shadow-sm cursor-pointer flex items-center gap-1"
+                className="hover:text-primary transition-colors hover:bg-muted p-1 rounded group flex items-center gap-1 z-10"
                 title="Evaluate Node"
             >
-                <Activity size={12} />
-                <span className="text-[9px] font-bold">Eval</span>
+                <Activity size={14} />
+                <span className="hidden group-hover:inline text-[10px] font-semibold">Eval</span>
             </button>
+            {node.duration_ms !== undefined && (
+                <span className="flex items-center gap-1">
+                    <Clock size={12} /> {node.duration_ms.toFixed(2)}ms
+                </span>
+            )}
+            <span>{new Date(node.start_time).toLocaleTimeString()}</span>
         </div>
       </div>
 
       {expanded && (
         <>
-            {/* Detail View for Inputs/Outputs if available in waterfall mode too */}
+            {/* Detail View for Inputs/Outputs if available */}
             {(node.input || node.output || node.error) && (
-                 <div style={{ marginLeft: `${level * 14 + 34}px` }} className="p-3 mb-2 mt-1 bg-neutral-50 border border-black/[0.03] rounded-xl text-xs overflow-x-auto max-w-2xl font-mono text-[#6e6e73]">
+                 <div style={{ marginLeft: `${level * 16 + 32}px` }} className="p-2 mb-2 bg-[var(--background-subtle)] rounded text-xs overflow-x-auto">
                     {node.input && (
-                        <div className="mb-1.5">
-                            <span className="font-bold text-[#1d1d1f]">Input: </span>
-                            <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.input}</pre>
+                        <div className="mb-1">
+                            <span className="font-bold text-muted">Input: </span>
+                            <pre className="inline">{node.input}</pre>
                         </div>
                     )}
                     {node.output && (
                         <div>
-                             <span className="font-bold text-[#1d1d1f]">Output: </span>
-                             <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.output}</pre>
+                             <span className="font-bold text-muted">Output: </span>
+                             <pre className="inline">{node.output}</pre>
                         </div>
                     )}
                     {node.error && (
-                         <div className="text-red-600 mt-1.5">
+                         <div className="text-red-600 mt-1">
                              <span className="font-bold">Error: </span>
-                             <pre className="inline text-red-600 whitespace-pre-wrap">{node.error}</pre>
+                             <pre className="inline">{node.error}</pre>
                         </div>
                     )}
                  </div>
             )}
-
+            
+            {/* Children */}
             {node.children.map(child => (
-                <TreeNode 
-                  key={child.id} 
-                  node={child} 
-                  level={level + 1} 
-                  onEvaluate={onEvaluate} 
-                  traceDurationStats={traceDurationStats}
-                  viewMode={viewMode}
-                />
+                <TreeNode key={child.id} node={child} level={level + 1} onEvaluate={onEvaluate} />
             ))}
         </>
       )}

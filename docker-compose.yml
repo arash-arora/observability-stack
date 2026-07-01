@@ -1,39 +1,39 @@
 services:
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - NEXT_PUBLIC_API_URL=http://localhost:8000
-  #   depends_on:
-  #     - backend
-  #   restart: always
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: always
 
-  # backend:
-  #   build:
-  #     context: ./backend
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8000:8000"
-  #   environment:
-  #     POSTGRES_SERVER: postgres
-  #     POSTGRES_USER: postgres
-  #     POSTGRES_PASSWORD: password
-  #     POSTGRES_DB: obs_db
-  #     CLICKHOUSE_HOST: clickhouse
-  #     CLICKHOUSE_PORT: 8123
-  #     CLICKHOUSE_USER: clickhouse
-  #     CLICKHOUSE_PASSWORD: clickhouse
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     clickhouse:
-  #       condition: service_healthy
-  #   restart: always
-  #   volumes:
-  #     - ./backend/app:/app/app
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: obs_db
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: always
+    volumes:
+      - ./backend/app:/app/app
 
   postgres:
     image: postgres:15

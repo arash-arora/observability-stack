@@ -21,7 +21,6 @@ dependencies = [
     "litellm>=1.80.15",
     "ipykernel>=7.1.0",
     "ipywidgets>=8.1.8",
-    "psutil>=5.9.0",
 ]
 
 [tool.uv.sources]

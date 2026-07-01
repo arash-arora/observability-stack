@@ -14,87 +14,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/system-metrics")
-async def get_system_metrics(current_user: User = Depends(get_current_user)):
-    """
-    Get CPU, Memory, Disk, and process metrics.
-    """
-    import os
-    import time
-    try:
-        import psutil
-    except ImportError:
-        psutil = None
-
-    if psutil is None:
-        # Fallback to realistic mock metrics if psutil is not available
-        import random
-        cpu_p = 15.0 + random.uniform(-2, 2)
-        mem_total = 16 * 1024 * 1024 * 1024 # 16 GB
-        mem_percent = 62.5 + random.uniform(-1, 1)
-        mem_used = mem_total * (mem_percent / 100)
-        disk_total = 500 * 1024 * 1024 * 1024 # 500 GB
-        disk_percent = 45.2
-        disk_used = disk_total * (disk_percent / 100)
-        return {
-            "cpu_percent": round(cpu_p, 1),
-            "memory_total": int(mem_total),
-            "memory_used": int(mem_used),
-            "memory_percent": round(mem_percent, 1),
-            "disk_total": int(disk_total),
-            "disk_used": int(disk_used),
-            "disk_percent": round(disk_percent, 1),
-            "process_cpu": round(random.uniform(0.5, 2.5), 1),
-            "process_memory": int(120 * 1024 * 1024), # 120 MB
-            "timestamp": time.time(),
-            "status": "mocked"
-        }
-
-    try:
-        cpu_p = psutil.cpu_percent(interval=None)
-        if cpu_p == 0.0:
-            cpu_p = 5.4
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        
-        try:
-            proc = psutil.Process(os.getpid())
-            proc_mem = proc.memory_info().rss
-            proc_cpu = proc.cpu_percent(interval=None)
-        except Exception:
-            proc_mem = 0
-            proc_cpu = 0.0
-
-        return {
-            "cpu_percent": round(cpu_p, 1),
-            "memory_total": mem.total,
-            "memory_used": mem.used,
-            "memory_percent": mem.percent,
-            "disk_total": disk.total,
-            "disk_used": disk.used,
-            "disk_percent": disk.percent,
-            "process_cpu": round(proc_cpu, 1),
-            "process_memory": proc_mem,
-            "timestamp": time.time(),
-            "status": "active"
-        }
-    except Exception as e:
-        logger.error(f"Failed to read real system metrics: {e}")
-        return {
-            "cpu_percent": 12.5,
-            "memory_total": 8589934592,
-            "memory_used": 4294967296,
-            "memory_percent": 50.0,
-            "disk_total": 256000000000,
-            "disk_used": 128000000000,
-            "disk_percent": 50.0,
-            "process_cpu": 1.2,
-            "process_memory": 94371840,
-            "timestamp": time.time(),
-            "status": "error_fallback"
-        }
-
-
 @router.get("/traces")
 async def get_traces(
     project_id: str,
@@ -1081,31 +1000,18 @@ async def get_application_stats(
         token_series_res = client.query(token_series_query)
         cost_series_res = client.query(cost_series_query)
 
-        import math
-
-        def safe_float(val, default=0.0):
-            if val is None:
-                return default
-            try:
-                f = float(val)
-                if math.isnan(f) or math.isinf(f):
-                    return default
-                return f
-            except (ValueError, TypeError):
-                return default
-
         # Parse Overview
         row = overview_res.result_rows[0]
-        total_requests = row[0] or 0
-        total_duration = safe_float(row[1])
-        avg_latency = safe_float(row[2])
-        p95_latency = safe_float(row[3])
-        error_count = row[4] or 0
-        error_rate = (error_count / total_requests * 100) if total_requests > 0 else 0.0
+        total_requests = row[0]
+        total_duration = row[1]
+        avg_latency = row[2]
+        p95_latency = row[3]
+        error_count = row[4]
+        error_rate = (error_count / total_requests * 100) if total_requests > 0 else 0
 
         # Parse Cost
         c_row = cost_res.result_rows[0]
-        total_cost = safe_float(c_row[0])
+        total_cost = c_row[0] or 0.0
         total_tokens = c_row[1] or 0
 
         if total_cost == 0 and total_tokens > 0:
@@ -1121,7 +1027,7 @@ async def get_application_stats(
         for r in series_res.result_rows:
             t_str = fmt_time(r[0])
             request_series.append({"time": t_str, "requests": r[1]})
-            latency_series.append({"time": t_str, "latency": round(safe_float(r[2]), 2)})
+            latency_series.append({"time": t_str, "latency": round(r[2], 2)})
 
         # Parse Token & Cost Series
         token_series = []
@@ -1131,7 +1037,7 @@ async def get_application_stats(
         cost_series = []
         for r in cost_series_res.result_rows:
             # If cost is 0, estimate
-            val = safe_float(r[1])
+            val = r[1] or 0.0
             if val == 0 and r[2] > 0:
                 val = r[2] * 0.000002
             cost_series.append({"time": fmt_time(r[0]), "cost": round(val, 5)})

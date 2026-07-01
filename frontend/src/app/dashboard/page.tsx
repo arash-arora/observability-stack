@@ -11,11 +11,11 @@ import { ModelUsageChart } from '@/components/dashboard/ModelUsageChart';
 import { LatencyCard } from '@/components/dashboard/LatencyCard';
 import { AdvancedCharts } from '@/components/dashboard/AdvancedCharts';
 import { EvaluationTrendCard } from '@/components/dashboard/EvaluationTrendCard';
-import SystemMetrics from '@/components/dashboard/SystemMetrics';
 
 export default function DashboardPage() {
-  const { selectedProject } = useDashboard();
-  const [activeTab, setActiveTab] = useState<"llm" | "platform">("llm");
+  const { selectedProject, selectedOrg, organizations, projects, setSelectedOrg, setSelectedProject } = useDashboard();
+  
+  // Dashboard Data State
   const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
@@ -36,40 +36,14 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6 font-sans">
+    <div className="flex flex-col gap-6">
       <PageHeader 
         title="Overview" 
-        infoTooltip="Comprehensive view of your application telemetry and platform host performance metrics." 
+        infoTooltip="Comprehensive view of your application's telemetry and performance metrics." 
       />
 
-      {/* Tabs */}
-      <div className="flex border-b border-black/[0.04] shrink-0">
-        <button
-          onClick={() => setActiveTab("llm")}
-          className={`px-4 py-2.5 text-xs font-bold transition-all relative border-b-2 cursor-pointer ${
-            activeTab === "llm" 
-              ? "border-[#0071e3] text-[#1d1d1f]" 
-              : "border-transparent text-[#6e6e73] hover:text-[#1d1d1f]"
-          }`}
-        >
-          LLM Observability
-        </button>
-        <button
-          onClick={() => setActiveTab("platform")}
-          className={`px-4 py-2.5 text-xs font-bold transition-all relative border-b-2 cursor-pointer ${
-            activeTab === "platform" 
-              ? "border-[#0071e3] text-[#1d1d1f]" 
-              : "border-transparent text-[#6e6e73] hover:text-[#1d1d1f]"
-          }`}
-        >
-          Platform Observability
-        </button>
-      </div>
-
-      {/* Tab Contents */}
-      {activeTab === "llm" ? (
-        selectedProject ? (
-          <div className="space-y-8 animate-in fade-in duration-200">
+      {selectedProject ? (
+          <>
             {/* Row 1: Metrics */}
             <MetricsCards data={stats} />
 
@@ -85,22 +59,19 @@ export default function DashboardPage() {
                 <LatencyCard title="Trace Latency" data={stats?.trace_latency || []} />
             </div>
 
-            {/* Row 4: Gen Latency & Eval Trend */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+             {/* Row 4: Gen Latency & Eval Trend */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <LatencyCard title="Generation Latency" data={stats?.generation_latency || []} />
                 <EvaluationTrendCard data={stats?.eval_trend || []} />
             </div>
 
             {/* Advanced Application & General Analytics */}
             <AdvancedCharts data={stats} />
-          </div>
-        ) : (
-          <div className="text-center py-20 text-[#6e6e73] text-xs font-semibold">
-            Please select or create a project to view the LLM dashboard.
-          </div>
-        )
+          </>
       ) : (
-        <SystemMetrics />
+          <div className="text-center py-20 text-muted-foreground">
+              Please select or create a project to view the dashboard.
+          </div>
       )}
     </div>
   );

@@ -23,11 +23,6 @@ async def get_current_user(
             token, security.SECRET_KEY, algorithms=[security.ALGORITHM]
         )
         token_data = payload.get("sub")
-        if token_data is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Could not validate credentials",
-            )
     except (PyJWTError, ValidationError):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
