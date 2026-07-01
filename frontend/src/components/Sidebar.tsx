@@ -42,24 +42,29 @@ export default function Sidebar() {
   return (
     <aside 
         className={cn(
-            "fixed top-0 left-0 z-40 h-screen border-r bg-card flex flex-col transition-all duration-200 ease-in-out",
+            "fixed top-0 left-0 z-40 h-screen glass-sidebar flex flex-col transition-all duration-300 ease-in-out shadow-sm",
             isSidebarCollapsed ? "w-16" : "w-64"
         )}
     >
-      <div className={cn("flex flex-col items-center justify-center border-b py-2 gap-2", isSidebarCollapsed ? "px-0" : "px-4")}>
-        <img 
-            src="/logo.png" 
-            alt="Logo" 
-            className="w-full h-[70px] object-contain"
-        />
-        {!isSidebarCollapsed && (
-            <h1 className="text-lg font-bold tracking-tight text-center leading-tight animate-in fade-in duration-200">
-                AI Reliability Platform
+      <div className={cn("flex flex-col items-center justify-center py-7 gap-1 px-4 border-b border-black/[0.04] bg-white/30", isSidebarCollapsed ? "px-0" : "")}>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/10">
+            <Activity size={16} />
+          </div>
+          {!isSidebarCollapsed && (
+            <h1 className="text-[15px] font-semibold tracking-tight text-[#1d1d1f] leading-none">
+              AI Observability
             </h1>
+          )}
+        </div>
+        {!isSidebarCollapsed && (
+          <div className="text-[9px] text-[#6e6e73] font-semibold tracking-wider uppercase mt-1.5 opacity-80">
+            Reliability Platform
+          </div>
         )}
       </div>
       
-      <div className="flex-1 overflow-y-auto py-4 px-3">
+      <div className="flex-1 overflow-y-auto py-5 px-3">
         <nav className="space-y-1">
           {links.map((link) => {
             const Icon = link.icon;
@@ -70,54 +75,57 @@ export default function Sidebar() {
                 key={link.href} 
                 href={link.href}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-all duration-200",
+                  "flex items-center gap-3 px-3 py-2.5 text-[13px] font-semibold rounded-xl transition-all duration-200 relative group",
                   isActive 
-                    ? "bg-accent text-accent-foreground shadow-sm" 
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
+                    ? "bg-black/[0.04] text-[#1d1d1f]" 
+                    : "text-[#6e6e73] hover:bg-black/[0.02] hover:text-[#1d1d1f]",
                   isSidebarCollapsed && "justify-center px-2"
                 )}
                 title={isSidebarCollapsed ? link.label : undefined}
               >
-                <Icon size={16} className={cn("opacity-70 shrink-0", isActive && "opacity-100 text-primary")} />
-                {!isSidebarCollapsed && <span className="truncate animate-in fade-in duration-200">{link.label}</span>}
+                {isActive && (
+                  <span className="absolute left-0 top-1/4 bottom-1/4 w-[3px] rounded-r-full bg-[#0071e3]" />
+                )}
+                <Icon size={16} className={cn("opacity-70 shrink-0 transition-transform duration-200 group-hover:scale-105", isActive && "opacity-100 text-[#0071e3]")} />
+                {!isSidebarCollapsed && <span className="truncate">{link.label}</span>}
               </Link>
             );
           })}
         </nav>
       </div>
       
-      <div className="p-4 border-t relative">
+      <div className="p-4 border-t border-black/[0.04] relative bg-white/20">
         <Link 
             href="/documentation.pdf"
             target="_blank"
             className={cn(
-                "flex items-center gap-3 px-2 py-2 mb-2 text-sm font-medium text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground rounded-md transition-all duration-200",
+                "flex items-center gap-3 px-3 py-2.5 mb-3 text-[13px] font-semibold text-[#6e6e73] hover:bg-black/[0.02] hover:text-[#1d1d1f] rounded-xl transition-all duration-200",
                 isSidebarCollapsed && "justify-center"
             )}
             title={isSidebarCollapsed ? "Documentation" : undefined}
         >
             <Book size={16} className="opacity-70 shrink-0" />
-            {!isSidebarCollapsed && <span className="truncate animate-in fade-in duration-200">Documentation</span>}
+            {!isSidebarCollapsed && <span className="truncate">Documentation</span>}
         </Link>
         {showUserMenu && (
              <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>
                 <div className={cn(
-                    "absolute bottom-16 bg-card border border-border shadow-lg rounded-md overflow-hidden z-20 animate-in fade-in zoom-in-95 duration-200 p-1",
-                    isSidebarCollapsed ? "left-14 w-48" : "left-4 w-56"
+                    "absolute bottom-16 bg-white/95 border border-black/[0.05] shadow-[0_10px_30px_rgba(0,0,0,0.08)] rounded-2xl overflow-hidden z-20 animate-in fade-in zoom-in-95 duration-200 p-1.5 backdrop-blur-lg w-56",
+                    isSidebarCollapsed ? "left-14" : "left-4"
                 )}>
                     <Link 
                         href="/dashboard/settings" 
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded-sm transition-colors"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[#1d1d1f] hover:bg-black/[0.03] rounded-lg transition-colors"
                         onClick={() => setShowUserMenu(false)}
                     >
-                        <Settings size={14} className="opacity-70" />
+                        <Settings size={14} className="opacity-70 text-[#6e6e73]" />
                         Settings
                     </Link>
-                    <div className="h-px bg-border my-1"></div>
+                    <div className="h-px bg-black/[0.04] my-1"></div>
                     <button 
                         onClick={() => { setShowUserMenu(false); logout(); }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 rounded-sm transition-colors"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                     >
                         <LogOut size={14} />
                         Sign Out
@@ -129,19 +137,19 @@ export default function Sidebar() {
         <button 
           onClick={() => setShowUserMenu(!showUserMenu)}
           className={cn(
-            "flex w-full items-center gap-3 px-2 py-2 text-sm font-medium hover:bg-accent/50 rounded-md transition-colors text-left group",
-            isSidebarCollapsed && "justify-center"
+            "flex w-full items-center gap-3 px-2 py-2 text-sm font-medium hover:bg-black/[0.03] rounded-2xl transition-all duration-200 text-left group cursor-pointer",
+            isSidebarCollapsed && "justify-center px-1"
           )}
         >
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-xs ring-2 ring-background shrink-0">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xs ring-2 ring-white shrink-0 shadow-sm">
               {user?.full_name ? user.full_name[0].toUpperCase() : (user?.email?.[0].toUpperCase() || 'U')}
           </div>
           {!isSidebarCollapsed && (
-              <div className="flex-1 min-w-0 animate-in fade-in duration-200">
-                 <div className="text-sm font-medium truncate text-foreground group-hover:text-accent-foreground transition-colors">
+              <div className="flex-1 min-w-0">
+                 <div className="text-xs font-semibold truncate text-[#1d1d1f] group-hover:text-[#0071e3] transition-colors">
                      {user?.full_name || 'User'}
                  </div>
-                 <div className="text-xs text-muted-foreground truncate opacity-70 group-hover:opacity-100 transition-opacity">
+                 <div className="text-[10px] text-[#6e6e73] truncate opacity-80 group-hover:opacity-100 transition-opacity">
                      {user?.email || 'user@example.com'}
                  </div>
               </div>

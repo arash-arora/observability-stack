@@ -9,56 +9,66 @@ interface TokenTimeChartProps {
 
 export function TokenTimeChart({ data, totalTokens }: TokenTimeChartProps) {
   return (
-    <div className="rounded-lg border border-border bg-card p-6">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_12px_36px_rgba(0,0,0,0.04)] transition-all duration-300 overflow-hidden">
+      <div className="mb-4 flex items-center justify-between">
         <div>
-            <h3 className="text-lg font-semibold text-foreground">Tokens by time</h3>
-            <div className="flex gap-4 mt-2 border-b border-border w-full">
-                <button className="pb-2 text-sm font-medium text-primary border-b-2 border-primary">Tokens</button>
-            </div>
+            <h3 className="text-[11px] font-bold text-[#6e6e73] uppercase tracking-widest">Tokens by time</h3>
         </div>
       </div>
       
-      <div className="h-[250px] w-full">
-         <div className="mb-4">
-             <span className="text-3xl font-bold text-foreground">{totalTokens.toLocaleString()}</span>
-             <span className="ml-2 text-sm text-muted-foreground">Total tokens</span>
+      <div className="h-[270px] w-full flex flex-col justify-between">
+         <div className="mb-2">
+             <span className="text-3xl font-semibold tracking-tight text-[#1d1d1f]">{totalTokens.toLocaleString()}</span>
+             <span className="ml-2 text-xs font-semibold text-[#6e6e73]">Total tokens</span>
          </div>
-         <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data}>
-                <defs>
-                    <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                    </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis 
-                    dataKey="time" 
-                    stroke="#94a3b8" 
-                    fontSize={10} 
-                    tickLine={false}
-                    axisLine={false}
-                />
-                <YAxis 
-                    stroke="#94a3b8" 
-                    fontSize={10} 
-                    tickLine={false} 
-                    axisLine={false}
-                />
-                <Tooltip 
-                    contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderColor: 'hsl(var(--border))', color: 'hsl(var(--popover-foreground))' }}
-                />
-                <Area 
-                    type="monotone" 
-                    dataKey="tokens" 
-                    stroke="#8b5cf6" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorTokens)" 
-                />
-            </AreaChart>
-         </ResponsiveContainer>
+         <div className="h-[200px] w-full mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+               <AreaChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                   <defs>
+                       <linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+                       <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.12}/>
+                       <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                       </linearGradient>
+                   </defs>
+                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0, 0, 0, 0.03)" vertical={false} />
+                   <XAxis 
+                       dataKey="time" 
+                       stroke="#86868b" 
+                       fontSize={10} 
+                       tickLine={false}
+                       axisLine={false}
+                       dy={8}
+                   />
+                   <YAxis 
+                       stroke="#86868b" 
+                       fontSize={10} 
+                       tickLine={false} 
+                       axisLine={false}
+                       dx={-4}
+                   />
+                   <Tooltip 
+                       contentStyle={{ 
+                         backgroundColor: 'rgba(255, 255, 255, 0.85)', 
+                         backdropFilter: 'blur(16px)',
+                         border: '1px solid rgba(0,0,0,0.05)', 
+                         borderRadius: '16px',
+                         color: '#1d1d1f',
+                         fontSize: '11px',
+                         boxShadow: '0 8px 32px rgba(0, 0, 0, 0.04)'
+                       }}
+                   />
+                   <Area 
+                       type="monotone" 
+                       dataKey="tokens" 
+                       stroke="#8b5cf6" 
+                       strokeWidth={2}
+                       fillOpacity={1} 
+                       fill="url(#colorTokens)" 
+                       className="accent-glow-purple"
+                   />
+               </AreaChart>
+            </ResponsiveContainer>
+         </div>
       </div>
     </div>
   );

@@ -41,46 +41,86 @@
   Tailwind v4 reads these to generate utilities.
 */
 :root {
-  /* User requested light theme background: #f2f2f2 */
-  --background: 0 0% 95%;
-  /* Dark text for contrast on light background */
-  --foreground: 222.2 84% 4.9%;
+  /* Apple Light Gray background #f5f5f7 */
+  --background: 240 11% 96.1%;
+  /* Apple Dark Charcoal text #1d1d1f */
+  --foreground: 240 3% 12%;
 
-  /* White cards for standard light theme look */
+  /* White cards for glassmorphism and shadow overlays */
   --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
+  --card-foreground: 240 3% 12%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222.2 84% 4.9%;
+  --popover-foreground: 240 3% 12%;
 
-  /* User requested primary color: #098BCB */
-  --primary: 200 91% 42%;
-  --primary-foreground: 210 40% 98%;
+  /* Apple signature blue #0071e3 */
+  --primary: 210 100% 45%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 210 40% 96.1%;
-  --secondary-foreground: 222.2 47.4% 11.2%;
+  /* Apple subtle hover gray #f5f5f7 */
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 240 3% 12%;
 
-  --muted: 210 40% 96.1%;
-  --muted-foreground: 215.4 16.3% 46.9%;
+  --muted: 240 5% 96%;
+  --muted-foreground: 240 3% 45%; /* Apple secondary text #6e6e73 */
 
-  --accent: 210 40% 96.1%;
-  --accent-foreground: 222.2 47.4% 11.2%;
+  --accent: 240 5% 96%;
+  --accent-foreground: 240 3% 12%;
 
   --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 210 40% 98%;
+  --destructive-foreground: 0 0% 100%;
 
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 200 91% 42%;
+  --border: 240 6% 90%; /* Apple border #d2d2d7 */
+  --input: 240 6% 90%;
+  --ring: 210 100% 45%;
 
-  --radius: 0.5rem;
+  --radius: 0.75rem; /* Larger, smoother rounded corners for Apple style */
 }
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-border/60;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground tracking-tight antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
+
+/* Glassmorphism & Apple visual utilities */
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px) saturate(190%);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03);
+}
+
+.glass-sidebar {
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.apple-hover {
+  transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.apple-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.05);
+}
+
+.glow-chart-line {
+  filter: drop-shadow(0px 4px 8px rgba(0, 113, 227, 0.2));
+}
+
+.accent-glow-cyan {
+  filter: drop-shadow(0px 4px 8px rgba(6, 182, 212, 0.2));
+}
+
+.accent-glow-purple {
+  filter: drop-shadow(0px 4px 8px rgba(168, 85, 247, 0.2));
+}
+
