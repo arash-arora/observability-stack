@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     CLICKHOUSE_USER: str = "clickhouse"
     CLICKHOUSE_PASSWORD: str = "clickhouse"
 
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8011"
+
+    @property
+    def CORS_ORIGINS_LIST(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
     class Config:
         env_file = ".env"
         extra = "ignore"

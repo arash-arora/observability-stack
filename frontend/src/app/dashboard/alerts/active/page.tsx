@@ -269,7 +269,7 @@ export default function ActiveAlertsPage() {
                         )}
                         {(alert.state === "TRIGGERED" || alert.state === "ACKNOWLEDGED") && (
                           <Button
-                            variant="default"
+                            variant="primary"
                             size="sm"
                             onClick={() => handleResolve(alert.id)}
                             title="Resolve"

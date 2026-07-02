@@ -1,7 +1,7 @@
 from app.models.alert import Alert
 from app.models.alert_rule import AlertRule
 from app.models.notification_channel import NotificationChannel
-from app.core.database import get_session
+from app.core.database import get_session_ctx
 from sqlmodel import select
 from datetime import datetime
 import logging
@@ -14,7 +14,7 @@ class NotificationService:
         """Send notifications to all configured channels"""
         channel_ids = rule.notification_config.get("channels", [])
 
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             stmt = select(NotificationChannel).where(
                 NotificationChannel.id.in_(channel_ids),
                 NotificationChannel.enabled == True

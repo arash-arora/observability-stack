@@ -31,4 +31,4 @@ class ModelQualityMetric(SQLModel, table=True):
     sample_size: int
     baseline_comparison: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
 
-    metadata: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
+    metric_metadata: Optional[Dict] = Field(default=None, sa_column=Column("metadata", JSON))

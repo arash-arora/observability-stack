@@ -88,6 +88,7 @@ export default function MetricsPage() {
   const router = useRouter();
   const { selectedOrg } = useDashboard();
   const [metrics, setMetrics] = useState<Metric[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSource, setSelectedSource] = useState<
     "all" | "preset" | "custom"
@@ -100,6 +101,7 @@ export default function MetricsPage() {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
+        setFetchError(null);
         const res = await api.get("/evaluations/metrics");
         const mapped = res.data.map((m: any) => ({
           id: m.id,
@@ -111,8 +113,9 @@ export default function MetricsPage() {
           inputs: m.inputs || [],
         }));
         setMetrics(mapped);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Failed to fetch metrics", err);
+        setFetchError(err.response?.data?.detail || "Failed to load metrics");
       } finally {
         setLoading(false);
       }
@@ -237,6 +240,12 @@ export default function MetricsPage() {
           </div>
 
           {/* Metrics Tables */}
+          {fetchError && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {fetchError}
+            </div>
+          )}
+
           {filteredMetrics.filter(m => m.type === 'custom').length > 0 && (
             <div className="mb-8">
               <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">

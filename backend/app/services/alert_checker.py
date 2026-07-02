@@ -1,6 +1,6 @@
 from app.models.alert_rule import AlertRule
 from app.services.alert_runner import AlertRunner
-from app.core.database import get_session
+from app.core.database import get_session_ctx
 from sqlmodel import select
 import asyncio
 import logging
@@ -13,7 +13,7 @@ async def run_all_alert_checks():
     logger.info("Running alert checks...")
 
     try:
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             stmt = select(AlertRule).where(AlertRule.active == True)
             result = await session.execute(stmt)
             rules = result.scalars().all()

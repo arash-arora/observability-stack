@@ -1,7 +1,29 @@
 import axios from 'axios';
 
+const normalizeBase = (value: string) => value.replace(/\/+$/, '');
+
+const resolveApiBaseUrl = () => {
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    return normalizeBase(process.env.NEXT_PUBLIC_API_BASE_URL);
+  }
+
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return `${normalizeBase(process.env.NEXT_PUBLIC_API_URL)}/api/v1`;
+  }
+
+  // Fallback for misconfigured NEXT_PUBLIC envs in containerized deployments.
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:8010/api/v1`;
+  }
+
+  return '/api/v1';
+};
+
+const apiBaseUrl = resolveApiBaseUrl();
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: apiBaseUrl,
   headers: {
     'Content-Type': 'application/json',
   },

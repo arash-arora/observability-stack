@@ -1,6 +1,4 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from app.core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,11 +8,9 @@ scheduler = None
 def init_scheduler():
     global scheduler
 
-    jobstores = {
-        'default': SQLAlchemyJobStore(url=str(settings.DATABASE_URL))
-    }
-
-    scheduler = AsyncIOScheduler(jobstores=jobstores)
+    # Use the default in-memory store. SQLAlchemyJobStore expects a sync SQLAlchemy
+    # engine/url, while this service uses an async database URL.
+    scheduler = AsyncIOScheduler()
 
     # System metric alert checks - every 1 minute
     scheduler.add_job(

@@ -14,7 +14,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit, Power, PowerOff, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import AlertRuleModal from "@/components/alerts/AlertRuleModal";
 import { useDashboard } from "@/context/DashboardContext";
 

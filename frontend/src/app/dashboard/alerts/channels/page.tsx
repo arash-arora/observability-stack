@@ -14,7 +14,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit, MessageSquare, Send, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import NotificationChannelModal from "@/components/alerts/NotificationChannelModal";
 import { useDashboard } from "@/context/DashboardContext";
 

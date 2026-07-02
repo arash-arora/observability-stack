@@ -1,6 +1,6 @@
 from app.models.alert_rule import AlertRule
 from app.models.alert import Alert
-from app.core.database import get_session
+from app.core.database import get_session_ctx
 from app.core.clickhouse import get_clickhouse_client
 from sqlmodel import select
 from datetime import datetime, timedelta
@@ -71,7 +71,7 @@ class AlertRunner:
 
     async def get_evaluation_metric(self, rule: AlertRule) -> float:
         """Query PostgreSQL for evaluation metrics"""
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             metric_ids = rule.metric_filter.get("metric_ids", [])
             window_minutes = self.parse_window(rule.aggregation_window)
 
@@ -94,7 +94,7 @@ class AlertRunner:
 
     async def get_drift_metric(self, rule: AlertRule) -> float:
         """Query PostgreSQL for drift metrics"""
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             from app.models.drift_metric import DataDriftMetric
             from sqlalchemy import func
 
@@ -115,7 +115,7 @@ class AlertRunner:
 
     async def get_quality_metric(self, rule: AlertRule) -> float:
         """Query PostgreSQL for quality metrics"""
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             from app.models.quality_metric import ModelQualityMetric
             from sqlalchemy import func
 
@@ -149,7 +149,7 @@ class AlertRunner:
 
     async def trigger_alert(self, rule: AlertRule, metric_value: float):
         """Create or update alert"""
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             fingerprint = self.generate_fingerprint(rule)
 
             # Check for existing active alert
@@ -189,7 +189,7 @@ class AlertRunner:
 
     async def resolve_alert(self, rule: AlertRule):
         """Resolve existing alerts for this rule"""
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             fingerprint = self.generate_fingerprint(rule)
 
             stmt = select(Alert).where(
@@ -234,7 +234,7 @@ class AlertRunner:
 
     async def get_application_name(self, application_id) -> str:
         """Get application name from ID"""
-        async with get_session() as session:
+        async with get_session_ctx() as session:
             from app.models.all_models import Application
             stmt = select(Application.name).where(Application.id == application_id)
             result = await session.execute(stmt)

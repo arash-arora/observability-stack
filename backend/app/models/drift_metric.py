@@ -33,4 +33,4 @@ class DataDriftMetric(SQLModel, table=True):
     comparison_statistics: Dict = Field(sa_column=Column(JSON))
 
     model_name: Optional[str] = None
-    metadata: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
+    metric_metadata: Optional[Dict] = Field(default=None, sa_column=Column("metadata", JSON))
