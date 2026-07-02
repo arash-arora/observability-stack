@@ -5,14 +5,19 @@ from app.core.config import settings
 
 from app.api.v1.api import api_router
 from app.core.clickhouse import init_clickhouse
+from app.core.scheduler import init_scheduler, shutdown_scheduler
 from fastapi.middleware.cors import CORSMiddleware
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup
     await init_db()
     init_clickhouse()
+    init_scheduler()
     yield
+    # Shutdown
+    shutdown_scheduler()
 
 
 app = FastAPI(

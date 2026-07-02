@@ -12,6 +12,8 @@ import { LayoutDashboard, Activity, Key, LogOut, LayoutList,
   Shield,
   Building2,
   Book,
+  Bell,
+  TrendingUp,
 } from "lucide-react";
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
@@ -30,6 +32,8 @@ export default function Sidebar() {
     { href: '/dashboard/evaluations', label: 'Evaluations', icon: FlaskConical },
     { href: '/dashboard/models', label: 'Model Hub', icon: Sparkles },
     { href: '/dashboard/metrics', label: 'Metrics Hub', icon: Beaker },
+    { href: '/dashboard/alerts/active', label: 'Alerts', icon: Bell },
+    { href: '/dashboard/metrics/system', label: 'System Metrics', icon: TrendingUp },
     // Show Organizations only if superuser
     ...(user?.is_superuser ? [{ href: '/dashboard/organizations', label: 'Organizations', icon: Building2 }] : []),
     // Show Admin Pages only if superuser

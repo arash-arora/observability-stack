@@ -3,10 +3,14 @@ from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
 import uuid
 from app.models.metric import Metric
-from app.models.metric import Metric
 from app.models.evaluation_result import EvaluationResult
 from app.models.llm_provider import LLMProvider
 from app.models.evaluation_rule import EvaluationRule
+from app.models.alert_rule import AlertRule
+from app.models.alert import Alert
+from app.models.drift_metric import DataDriftMetric
+from app.models.quality_metric import ModelQualityMetric
+from app.models.notification_channel import NotificationChannel
 
 
 class Role(SQLModel, table=True):

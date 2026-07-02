@@ -10,6 +10,10 @@ from app.api.v1.endpoints import (
     rules,
     admin,
     roles,
+    alert_rules,
+    alerts,
+    system_metrics,
+    notification_channels,
 )
 
 api_router = APIRouter()
@@ -27,3 +31,7 @@ api_router.include_router(roles.router, prefix="/roles", tags=["roles"])
 api_router.include_router(
     providers.router, prefix="/management/providers", tags=["providers"]
 )
+api_router.include_router(alert_rules.router, tags=["alerts"])
+api_router.include_router(alerts.router, tags=["alerts"])
+api_router.include_router(system_metrics.router, tags=["metrics"])
+api_router.include_router(notification_channels.router, tags=["notifications"])
