@@ -47,80 +47,68 @@ export const extractContent = (data: any): string => {
 
     const parsed = safeParseJSON(data);
 
-    // 0. Handle SDK Wrapper (args/kwargs)
-    if (typeof parsed === 'object' && parsed !== null && 'args' in parsed && Array.isArray(parsed.args)) {
-        // Try to find the primary content (Message List or Prompt) in args
-        for (const arg of parsed.args) {
-             // 1. Check for list of messages
-             if (Array.isArray(arg) && arg.length > 0 && arg.every(item => typeof item === 'object' && ('role' in item || 'content' in item))) {
-                 return extractContent(arg);
-             }
-             // 2. Check for single message object
-             if (typeof arg === 'object' && arg !== null && 'role' in arg && 'content' in arg) {
-                 return extractContent(arg); 
-             }
-        }
+    if (typeof parsed === 'string') {
+        return parsed;
     }
 
-    // 1. Array of messages (Chat History) -> Concatenate content
     if (Array.isArray(parsed)) {
-        // Check if it looks like a message list
-        const isMessageList = parsed.every(item => typeof item === 'object' && item !== null && ('role' in item || 'content' in item));
+        const isMessageList = parsed.every(item => typeof item === 'object' && item !== null && ('role' in item || 'content' in item || 'text' in item || 'type' in item));
         
         if (isMessageList) {
             return parsed.map(msg => {
                 const role = msg.role ? `${msg.role}: ` : '';
-                const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+                const rawContent = msg.content || msg.text || msg.message || '';
+                const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
                 let msgStr = `${role}${content}`;
                 if ('tool_calls' in msg && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-                    msgStr += `\n[Tool Calls]: ${JSON.stringify(msg.tool_calls)}`;
+                    msgStr += ` [Tool Calls: ${msg.tool_calls.map((tc: any) => tc.name || tc.function?.name || 'unknown').join(', ')}]`;
                 }
                 return msgStr;
-            }).join('\n');
+            }).join(' \n ');
         }
-        return JSON.stringify(parsed);
+        return parsed.map(item => extractContent(item)).filter(Boolean).join(' ');
     }
-    
-    // 2. OpenAI / Azure Response Format (choices array)
-    if (typeof parsed === 'object' && parsed !== null && 'choices' in parsed && Array.isArray(parsed.choices) && parsed.choices.length > 0) {
-        const choice = parsed.choices[0];
-        // Chat Completion
-        if (choice.message && typeof choice.message === 'object' && 'content' in choice.message) {
-            let choiceStr = extractContent(choice.message.content);
-            if ('tool_calls' in choice.message && Array.isArray(choice.message.tool_calls) && choice.message.tool_calls.length > 0) {
-                choiceStr += `\n[Tool Calls]: ${JSON.stringify(choice.message.tool_calls, null, 2)}`;
-            }
-            return choiceStr;
-        }
-        // Legacy Completion
-        if ('text' in choice) {
-            return extractContent(choice.text);
-        }
-    }
-    
-    // 3. Single Object with 'content' or 'text' key
+
     if (typeof parsed === 'object' && parsed !== null) {
-        let extractedStr = '';
-        if ('content' in parsed) {
-            extractedStr = typeof parsed.content === 'string' ? parsed.content : JSON.stringify(parsed.content);
-        } else if ('text' in parsed) {
-            extractedStr = typeof parsed.text === 'string' ? parsed.text : JSON.stringify(parsed.text);
+        if ('content' in parsed && parsed.content !== undefined && parsed.content !== null) {
+            return extractContent(parsed.content);
+        }
+        if ('text' in parsed && parsed.text !== undefined && parsed.text !== null) {
+            return extractContent(parsed.text);
+        }
+        if ('message' in parsed && parsed.message !== undefined && parsed.message !== null) {
+            return extractContent(parsed.message);
+        }
+        if ('messages' in parsed && parsed.messages !== undefined && parsed.messages !== null) {
+            return extractContent(parsed.messages);
+        }
+        if ('prompt' in parsed && parsed.prompt !== undefined && parsed.prompt !== null) {
+            return extractContent(parsed.prompt);
+        }
+        if ('input' in parsed && parsed.input !== undefined && parsed.input !== null) {
+            return extractContent(parsed.input);
+        }
+        if ('output' in parsed && parsed.output !== undefined && parsed.output !== null) {
+            return extractContent(parsed.output);
+        }
+        if ('args' in parsed && parsed.args !== undefined && parsed.args !== null) {
+            return extractContent(parsed.args);
+        }
+        if ('kwargs' in parsed && parsed.kwargs !== undefined && parsed.kwargs !== null) {
+            return extractContent(parsed.kwargs);
+        }
+        if ('choices' in parsed && Array.isArray(parsed.choices) && parsed.choices.length > 0) {
+            return extractContent(parsed.choices[0]);
         }
 
-        if ('tool_calls' in parsed && Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
-            const tcStr = JSON.stringify(parsed.tool_calls, null, 2);
-            extractedStr = extractedStr ? `${extractedStr}\n\n[Tool Calls]:\n${tcStr}` : `[Tool Calls]:\n${tcStr}`;
-            return extractedStr;
+        const values = Object.values(parsed);
+        if (values.length === 1) {
+            return extractContent(values[0]);
         }
-
-        if ('content' in parsed || 'text' in parsed) {
-            return extractedStr;
-        }
-        // If it's a generic object without specific content fields, return stringified
+        
         return JSON.stringify(parsed);
     }
 
-    // 4. String or primitive
     return String(parsed);
 };
 

@@ -36,9 +36,8 @@ const Button = ({
   };
   return (
     <button
-      className={`${baseClass} ${
-        variants[variant as keyof typeof variants]
-      } ${className}`}
+      className={`${baseClass} ${variants[variant as keyof typeof variants]
+        } ${className}`}
       {...props}
     >
       {children}
@@ -65,9 +64,8 @@ const Badge = ({ children, variant = "default", className }: any) => {
   };
   return (
     <div
-      className={`${base} ${
-        variants[variant as keyof typeof variants]
-      } ${className}`}
+      className={`${base} ${variants[variant as keyof typeof variants]
+        } ${className}`}
     >
       {children}
     </div>
@@ -133,39 +131,39 @@ export default function MetricsPage() {
       selectedSource === "all"
         ? true
         : selectedSource === "preset"
-        ? metric.tags.includes("preset")
-        : !metric.tags.includes("preset");
+          ? metric.tags.includes("preset")
+          : !metric.tags.includes("preset");
     return matchesSearch && matchesSource;
   });
 
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
-      e.stopPropagation();
-      if (confirm(`Are you sure you want to delete the metric "${name}"?`)) {
-          try {
-              await api.delete(`/evaluations/metrics/${id}`);
-              setMetrics(metrics.filter(m => m.id !== id));
-          } catch (err: any) {
-              console.error(err);
-              alert("Failed to delete metric: " + (err.response?.data?.detail || err.message));
-          }
+    e.stopPropagation();
+    if (confirm(`Are you sure you want to delete the metric "${name}"?`)) {
+      try {
+        await api.delete(`/evaluations/metrics/${id}`);
+        setMetrics(metrics.filter(m => m.id !== id));
+      } catch (err: any) {
+        console.error(err);
+        alert("Failed to delete metric: " + (err.response?.data?.detail || err.message));
       }
+    }
   };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <PageHeader 
-        title="Metrics Hub" 
-        infoTooltip="Manage and explore your evaluation metrics. Define custom metrics or use preset ones." 
+      <PageHeader
+        title="Metrics Hub"
+        infoTooltip="Manage and explore your evaluation metrics. Define custom metrics or use preset ones."
       >
         {canCreate && (
-            <Button
-                variant="primary"
-                className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
-                onClick={() => router.push("/dashboard/metrics/new")}
-            >
-                <Plus size={16} />
-                Create Metric
-            </Button>
+          <Button
+            variant="primary"
+            className="shadow-lg hover:shadow-xl transition-all duration-300 gap-2"
+            onClick={() => router.push("/dashboard/metrics/new")}
+          >
+            <Plus size={16} />
+            Create Metric
+          </Button>
         )}
       </PageHeader>
 
@@ -279,18 +277,18 @@ export default function MetricsPage() {
                             </div>
                           </td>
                           <td className="p-4 align-top">
-                             <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-primary/10 text-primary hover:bg-primary/20">
-                                {metric.type}
-                             </div>
+                            <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-primary/10 text-primary hover:bg-primary/20">
+                              {metric.type}
+                            </div>
                           </td>
                           <td className="p-4 align-top">
                             <div className="flex flex-wrap gap-1.5">
-                                {metric.inputs.map((input) => (
-                                    <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
-                                        {input}
-                                    </code>
-                                ))}
-                                {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
+                              {metric.inputs.map((input) => (
+                                <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
+                                  {input}
+                                </code>
+                              ))}
+                              {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
                             </div>
                           </td>
                           <td className="p-4 align-top">
@@ -304,25 +302,25 @@ export default function MetricsPage() {
                             </div>
                           </td>
                           <td className="p-4 align-middle text-right">
-                              <div className="flex items-center justify-end gap-2 text-muted-foreground">
-                                  <button 
-                                      className="p-1.5 cursor-pointer hover:bg-muted hover:text-foreground rounded transition-colors"
-                                      onClick={(e) => {
-                                          e.stopPropagation();
-                                          router.push(`/dashboard/metrics/${metric.id}/edit`);
-                                      }}
-                                      title="Edit Metric"
-                                  >
-                                      <Edit2 size={16} />
-                                  </button>
-                                  <button 
-                                      className="p-1.5 cursor-pointer hover:bg-destructive/10 text-destructive rounded transition-colors"
-                                      onClick={(e) => handleDelete(e, metric.id, metric.name)}
-                                      title="Delete Metric"
-                                  >
-                                      <Trash2 size={16} />
-                                  </button>
-                              </div>
+                            <div className="flex items-center justify-end gap-2 text-muted-foreground">
+                              <button
+                                className="p-1.5 cursor-pointer hover:bg-muted hover:text-foreground rounded transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/dashboard/metrics/${metric.id}/edit`);
+                                }}
+                                title="Edit Metric"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              <button
+                                className="p-1.5 cursor-pointer hover:bg-destructive/10 text-destructive rounded transition-colors"
+                                onClick={(e) => handleDelete(e, metric.id, metric.name)}
+                                title="Delete Metric"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -337,7 +335,7 @@ export default function MetricsPage() {
             <div>
               <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
                 <Beaker size={18} className="text-muted-foreground" />
-                SDK Preset Metrics
+                Metrics
                 <Badge variant="secondary" className="ml-2 font-normal">{filteredMetrics.filter(m => m.type !== 'custom').length}</Badge>
               </h2>
               <div className="rounded-md border bg-card shadow-sm overflow-hidden">
@@ -366,18 +364,18 @@ export default function MetricsPage() {
                             </div>
                           </td>
                           <td className="p-4 align-top">
-                             <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
-                                {metric.type}
-                             </div>
+                            <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
+                              {metric.type}
+                            </div>
                           </td>
                           <td className="p-4 align-top">
                             <div className="flex flex-wrap gap-1.5">
-                                {metric.inputs.map((input) => (
-                                    <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
-                                        {input}
-                                    </code>
-                                ))}
-                                {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
+                              {metric.inputs.map((input) => (
+                                <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
+                                  {input}
+                                </code>
+                              ))}
+                              {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
                             </div>
                           </td>
                           <td className="p-4 align-top">
@@ -391,7 +389,7 @@ export default function MetricsPage() {
                             </div>
                           </td>
                           <td className="p-4 align-middle text-right text-muted-foreground">
-                              -
+                            -
                           </td>
                         </tr>
                       ))}
