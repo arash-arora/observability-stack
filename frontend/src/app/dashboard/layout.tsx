@@ -21,7 +21,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           isSidebarCollapsed ? "pl-16" : "pl-64"
         )}
       >
-        <div className="container max-w-7xl mx-auto p-8 pt-6">
+        <div className="w-full px-8 py-6">
           <ContextHeader />
           {children}
         </div>

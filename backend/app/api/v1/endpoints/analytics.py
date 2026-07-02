@@ -187,14 +187,22 @@ async def get_traces(
         SELECT trace_id, input_text
         FROM observations
         WHERE project_id = '{project_id}'
-        ORDER BY start_time ASC
+          AND input_text IS NOT NULL
+          AND input_text != ''
+          AND input_text != '{{"args":[],"kwargs":{{}}}}'
+          AND input_text != '{{}}'
+        ORDER BY (parent_observation_id IS NULL) ASC, start_time ASC
         LIMIT 1 BY trace_id
     ) o_first ON t.trace_id = o_first.trace_id
     LEFT JOIN (
         SELECT trace_id, output_text
         FROM observations
         WHERE project_id = '{project_id}'
-        ORDER BY start_time DESC
+          AND output_text IS NOT NULL
+          AND output_text != ''
+          AND output_text != '{{"args":[],"kwargs":{{}}}}'
+          AND output_text != '{{}}'
+        ORDER BY (parent_observation_id IS NULL) ASC, start_time DESC
         LIMIT 1 BY trace_id
     ) o_last ON t.trace_id = o_last.trace_id
     LEFT JOIN (

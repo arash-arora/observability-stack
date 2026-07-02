@@ -1,13 +1,16 @@
 "use client";
 
 import { useState, useMemo, useEffect } from 'react';
-import { ChevronRight, ChevronDown, Circle, Clock, AlertCircle, Play, Activity, LayoutList, Layers, Terminal } from 'lucide-react';
+import { 
+    ChevronRight, ChevronDown, Clock, AlertCircle, PlayCircle, 
+    Activity, LayoutList, Layers, Terminal, Sparkles, Bot, User, 
+    Copy, Check, Wrench, FileJson, FileText, FlaskConical
+} from 'lucide-react';
 import api from '@/lib/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 interface Node {
@@ -19,13 +22,215 @@ interface Node {
   duration_ms?: number; 
   status?: string;
   error?: string;
-  input?: string;
-  output?: string;
+  input?: any;
+  output?: any;
   children: Node[];
   is_obs?: boolean;
   model?: string;
   usage?: any;
   total_cost?: number;
+}
+
+interface ChatMessage {
+  role: 'system' | 'user' | 'ai' | 'other';
+  content: string;
+}
+
+// Copy to Clipboard Utility
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1.5 rounded-lg border border-black/[0.04] bg-white hover:bg-neutral-50 text-neutral-500 hover:text-neutral-700 transition-colors shadow-sm cursor-pointer"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+// Safe parse JSON helper
+function safeParseJSON(val: any): any {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return null;
+  }
+}
+
+// Custom Markdown inline code, bold, and block formatter
+function formatMarkdown(text: string) {
+  if (!text) return "";
+  // Escape HTML
+  let formatted = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  
+  // Format code blocks: ```lang ... ```
+  formatted = formatted.replace(/```([\s\S]*?)```/g, '<pre class="bg-black/90 text-neutral-200 p-3.5 rounded-xl font-mono text-xs my-2.5 overflow-x-auto whitespace-pre-wrap">$1</pre>');
+  
+  // Format inline code: `code`
+  formatted = formatted.replace(/`([^`]+)`/g, '<code class="bg-black/[0.04] px-1.5 py-0.5 rounded font-mono text-xs text-red-500">$1</code>');
+  
+  // Format bold: **text**
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  
+  // Format newlines
+  formatted = formatted.replace(/\n/g, "<br />");
+  
+  return <div dangerouslySetInnerHTML={{ __html: formatted }} className="leading-relaxed text-xs text-[#1d1d1f]" />;
+}
+
+// Helper to extract nested chat list recursively
+function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boolean): ChatMessage[] {
+  if (!val) return [];
+
+  // 1. If string, check if JSON
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return parseMessages(parsed, forceInputMapping, hideSystem);
+      } catch {
+        // Fallback
+      }
+    }
+    return [{ role: forceInputMapping ? 'user' : 'user', content: val }];
+  }
+
+  // 2. If array, process elements recursively and flatten
+  if (Array.isArray(val)) {
+    const flat: ChatMessage[] = [];
+    val.forEach(item => {
+      const parsed = parseMessages(item, forceInputMapping, hideSystem);
+      flat.push(...parsed);
+    });
+    return flat;
+  }
+
+  // 3. If object
+  if (typeof val === 'object' && val !== null) {
+    if (val.content !== undefined || val.text !== undefined || val.role !== undefined || val.type !== undefined) {
+      const single = parseSingleMessage(val, forceInputMapping);
+      if (single && single.role === 'system' && hideSystem) {
+        return [];
+      }
+      return single ? [single] : [];
+    }
+
+    if (val.messages && Array.isArray(val.messages)) {
+      return parseMessages(val.messages, forceInputMapping, hideSystem);
+    }
+    if (val.args && Array.isArray(val.args)) {
+      return parseMessages(val.args, forceInputMapping, hideSystem);
+    }
+    if (val.kwargs?.messages && Array.isArray(val.kwargs.messages)) {
+      return parseMessages(val.kwargs.messages, forceInputMapping, hideSystem);
+    }
+    if (val.kwargs?.prompt) {
+      return parseMessages(val.kwargs.prompt, forceInputMapping, hideSystem);
+    }
+    if (val.prompt) {
+      return parseMessages(val.prompt, forceInputMapping, hideSystem);
+    }
+    if (val.input) {
+      return parseMessages(val.input, forceInputMapping, hideSystem);
+    }
+    if (val.output) {
+      return parseMessages(val.output, forceInputMapping, hideSystem);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Converts Python-repr strings (single quotes, True/False/None) to valid JSON then parses.
+ * Falls back to the raw value on failure.
+ */
+function parsePythonLikeValue(raw: any): any {
+  if (typeof raw !== 'string') return raw;
+  try {
+    // First attempt: standard JSON
+    return JSON.parse(raw);
+  } catch { /* not valid JSON */ }
+  try {
+    // Convert Python repr → JSON:
+    //  single quotes → double quotes (but not apostrophes inside words)
+    //  True/False/None → true/false/null
+    const jsonStr = raw
+      .replace(/'/g, '"')
+      .replace(/\bTrue\b/g, 'true')
+      .replace(/\bFalse\b/g, 'false')
+      .replace(/\bNone\b/g, 'null');
+    return JSON.parse(jsonStr);
+  } catch { /* still not parseable */ }
+  return raw;
+}
+
+function parseSingleMessage(m: any, forceInputMapping?: boolean): ChatMessage | null {
+  if (!m) return null;
+  if (typeof m === 'string') return { role: forceInputMapping ? 'user' : 'other', content: m };
+  
+  const roleStr = String(m.role || m.type || 'other').toLowerCase();
+  let role: 'system' | 'user' | 'ai' | 'other' = 'other';
+  
+  if (roleStr.includes('system')) {
+    role = 'system';
+  } else if (roleStr.includes('user') || roleStr.includes('human')) {
+    role = 'user';
+  } else if (roleStr.includes('ai') || roleStr.includes('assistant') || roleStr.includes('model') || roleStr.includes('output')) {
+    role = forceInputMapping ? 'user' : 'ai';
+  } else {
+    role = forceInputMapping ? 'user' : 'other';
+  }
+  
+  let content = m.content || m.text || m.message || (typeof m === 'object' ? JSON.stringify(m) : String(m));
+
+  // Parse LLM tool calls — handle both native arrays and Python-serialized strings
+  let rawToolCalls = m.tool_calls
+    ?? m.additional_kwargs?.tool_calls
+    ?? m.kwargs?.tool_calls
+    ?? m.kwargs?.additional_kwargs?.tool_calls;
+  // If it came back as a string (Python repr or JSON string of an array), parse it
+  if (typeof rawToolCalls === 'string') {
+    rawToolCalls = parsePythonLikeValue(rawToolCalls);
+  }
+  const toolCalls: any[] = Array.isArray(rawToolCalls) ? rawToolCalls : [];
+  if (toolCalls.length > 0) {
+    const callsList = toolCalls.map((tc: any) => {
+      const name = tc.name || tc.function?.name || 'unknown_tool';
+      let args = tc.args ?? tc.function?.arguments ?? {};
+      if (typeof args === 'string') {
+        args = parsePythonLikeValue(args);
+      }
+      const argsStr = (typeof args === 'object' && args !== null)
+        ? JSON.stringify(args, null, 2)
+        : String(args);
+      return `🔧 **Calls Tool:** \`${name}\`\n**Arguments:**\n\`\`\`json\n${argsStr}\n\`\`\``;
+    }).join('\n\n');
+    if (callsList) {
+      content = typeof content === 'string' && content.trim() ? `${content}\n\n${callsList}` : callsList;
+    }
+  }
+
+  return { role, content };
 }
 
 export default function TraceTree({ spans, observations, traceId }: { spans: any[], observations: any[], traceId?: string }) {
@@ -37,6 +242,9 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
   const [evalRunning, setEvalRunning] = useState(false);
   const [evalResult, setEvalResult] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'tree' | 'waterfall'>('tree');
+  
+  // Selected Node State
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   useEffect(() => {
       api.get('/evaluations/metrics').then(res => setMetrics(res.data)).catch(console.error);
@@ -58,9 +266,13 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
           const prefill: Record<string, string> = {};
           selectedMetric.inputs.forEach((input: string) => {
               if (input.toLowerCase() === 'input' || input.toLowerCase() === 'query') {
-                  prefill[input] = (evalTarget as Node).input || '';
+                  prefill[input] = typeof (evalTarget as Node).input === 'string' 
+                    ? (evalTarget as Node).input 
+                    : JSON.stringify((evalTarget as Node).input || '', null, 2);
               } else if (input.toLowerCase() === 'output' || input.toLowerCase() === 'response') {
-                  prefill[input] = (evalTarget as Node).output || '';
+                  prefill[input] = typeof (evalTarget as Node).output === 'string' 
+                    ? (evalTarget as Node).output 
+                    : JSON.stringify((evalTarget as Node).output || '', null, 2);
               } else {
                   prefill[input] = '';
               }
@@ -83,7 +295,6 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
               inputs: {
                   ...evalInputs,
                   trace: traceId,
-                  // We can pass trace payload if needed, backend traces use Trace ID for observation data usually
               }
           });
           setEvalResult(res.data);
@@ -108,28 +319,19 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
         end_time: span.end_time,
         duration_ms: span.duration_ms,
         status: span.status_code,
+        input: safeParseJSON(span.attributes?.input || span.input),
+        output: safeParseJSON(span.attributes?.output || span.output),
         children: []
       });
     });
 
     // Process Observations
     observations.forEach(obs => {
-      const id = obs.id;
-      // Duration might need calc if not provided
+      const id = String(obs.id);
       const start = new Date(obs.start_time).getTime();
       const end = new Date(obs.end_time).getTime();
       const duration = end - start;
       
-      const parseJson = (val: any) => {
-        if (!val) return null;
-        if (typeof val === 'object') return val;
-        try {
-          return JSON.parse(val);
-        } catch {
-          return null;
-        }
-      };
-
       nodeMap.set(id, {
         id: id,
         name: obs.name || 'Unnamed Observation',
@@ -138,50 +340,84 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
         end_time: obs.end_time,
         duration_ms: duration,
         error: obs.error,
-        input: obs.input,
-        output: obs.output,
+        input: safeParseJSON(obs.input),
+        output: safeParseJSON(obs.output),
         children: [],
         is_obs: true,
         model: obs.model,
-        usage: parseJson(obs.usage),
+        usage: safeParseJSON(obs.usage),
         total_cost: obs.total_cost
       });
     });
 
     const roots: Node[] = [];
     
-    // Build Tree
     // Link Spans -> Spans
     spans.forEach(span => {
       const node = nodeMap.get(span.span_id)!;
       if (span.parent_span_id && nodeMap.has(span.parent_span_id)) {
         nodeMap.get(span.parent_span_id)!.children.push(node);
       } else {
-        // Only treat as root if it's a root span. 
-        // Note: observations might be independent or linked.
-        // For mixed tree, it's tricky without explicit links.
-        // Assuming pure span tree OR pure observation tree for now if links missing.
-        // But let's check if span parent is missing.
-        // If parent_span_id is null, it's root.
         if (!span.parent_span_id) roots.push(node);
       }
     });
 
     // Link Observations -> Observations
     observations.forEach(obs => {
-      const node = nodeMap.get(obs.id)!;
-      if (obs.parent_observation_id && nodeMap.get(obs.parent_observation_id)) {
-        nodeMap.get(obs.parent_observation_id)!.children.push(node);
+      const node = nodeMap.get(String(obs.id))!;
+      if (obs.parent_observation_id && nodeMap.get(String(obs.parent_observation_id))) {
+        nodeMap.get(String(obs.parent_observation_id))!.children.push(node);
       } else {
-        // If not linked to another observation, is it linked to a span?
-        // Current logic might not link obs to spans explicitly via IDs in this list.
         roots.push(node);
       }
     });
 
-    // Sort roots by start time
+    const aggregateNode = (node: Node) => {
+      // First, recursively process all children so they are fully aggregated bottom-up
+      node.children.forEach(child => aggregateNode(child));
+      
+      if (node.children && node.children.length > 0) {
+        const totalDuration = node.children.reduce((sum, c) => sum + (c.duration_ms || 0), 0);
+        const totalTokens = node.children.reduce((sum, c) => sum + (c.usage?.total_tokens || 0), 0);
+        const totalCost = node.children.reduce((sum, c) => {
+          const cCost = (c.total_cost !== undefined && c.total_cost !== null && Number(c.total_cost) > 0)
+            ? Number(c.total_cost)
+            : ((c.usage?.total_tokens || 0) * 0.000002);
+          return sum + cCost;
+        }, 0);
+        
+        node.duration_ms = totalDuration;
+        if (!node.usage) {
+          node.usage = { total_tokens: totalTokens };
+        } else {
+          node.usage.total_tokens = totalTokens;
+        }
+        node.total_cost = totalCost;
+      }
+    };
+
+    roots.forEach(root => aggregateNode(root));
+
     return roots.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   }, [spans, observations]);
+
+  // Set default selection to first root node
+  useEffect(() => {
+    if (rootNodes.length > 0 && !selectedNodeId) {
+      setSelectedNodeId(rootNodes[0].id);
+    }
+  }, [rootNodes, selectedNodeId]);
+
+  const selectedNode = useMemo(() => {
+    const findNode = (nodes: Node[]): Node | undefined => {
+      for (const node of nodes) {
+        if (node.id === selectedNodeId) return node;
+        const found = findNode(node.children);
+        if (found) return found;
+      }
+    };
+    return findNode(rootNodes);
+  }, [rootNodes, selectedNodeId]);
 
   const traceDurationStats = useMemo(() => {
     if ((!spans || !spans.length) && (!observations || !observations.length)) return null;
@@ -220,10 +456,12 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
   }, [traceDurationStats]);
 
   return (
-    <div className="space-y-4 font-sans">
-      <div className="flex justify-between items-center bg-white/40 p-4 border border-black/[0.04] rounded-2xl">
-        <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-widest">
-          {viewMode === "waterfall" ? "Execution Waterfall" : "Execution Tree"}
+    <div className="flex flex-col h-[calc(100vh-13rem)] border border-black/[0.04] rounded-3xl overflow-hidden bg-white/70 backdrop-blur-xl shadow-sm relative mt-2">
+      {/* Top Header Control bar */}
+      <div className="flex justify-between items-center bg-neutral-50/50 p-4 border-b border-black/[0.04] shrink-0 h-14">
+        <span className="text-[10px] font-bold text-[#6e6e73] uppercase tracking-widest flex items-center gap-2">
+          <Activity size={14} className="text-[#0071e3]" />
+          Trace execution flow
         </span>
         <div className="flex items-center gap-3">
           <div className="flex bg-neutral-100 p-0.5 rounded-lg border border-black/[0.02] shrink-0">
@@ -248,60 +486,83 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
           </div>
 
           {traceId && (
-             <Button onClick={() => openEvalModal('trace')} variant="outline" className="gap-2 shadow-sm" size="sm">
-                <Activity size={14} /> Evaluate Trace
+             <Button onClick={() => openEvalModal('trace')} variant="outline" className="gap-2 shadow-sm text-xs font-bold rounded-xl h-8 cursor-pointer" size="sm">
+                <FlaskConical size={13} /> Evaluate Trace
              </Button>
           )}
         </div>
       </div>
 
-      <div className="border border-black/[0.04] rounded-2xl overflow-hidden bg-white/70 backdrop-blur-xl shadow-sm relative flex flex-col">
-        {/* Waterfall horizontal ruler ticks */}
-        {viewMode === "waterfall" && timelineTicks.length > 0 && (
-          <div className="relative h-6 border-b border-black/[0.04] bg-neutral-50/20 text-[9px] font-mono text-[#6e6e73] select-none">
-            {timelineTicks.map((t, idx) => (
-              <div 
-                key={idx} 
-                className="absolute top-1 transform -translate-x-1/2 flex flex-col items-center"
-                style={{ left: `calc(70px + (100% - 80px) * ${t.position / 100})` }}
-              >
-                <span>{t.label}</span>
-                <div className="w-px h-1 bg-black/[0.08] mt-0.5" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="p-3 space-y-0.5 relative flex-1">
-          {/* Waterfall grid vertical guidelines */}
-          {viewMode === "waterfall" && (
-            <div className="absolute inset-y-0 pointer-events-none z-0" style={{ left: "70px", right: "10px" }}>
+      {/* Main Split Layout */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Column: Trace Tree Selector */}
+        <div className="w-[420px] flex-none border-r border-black/[0.04] flex flex-col bg-neutral-50/30">
+          {/* Waterfall horizontal ticks if in waterfall view mode */}
+          {viewMode === "waterfall" && timelineTicks.length > 0 && (
+            <div className="relative h-6 border-b border-black/[0.04] bg-neutral-50/20 text-[9px] font-mono text-[#6e6e73] select-none shrink-0">
               {timelineTicks.map((t, idx) => (
                 <div 
-                  key={idx}
-                  className="absolute inset-y-0 w-px border-l border-dashed border-black/[0.04]"
-                  style={{ left: `${t.position}%` }}
-                />
+                  key={idx} 
+                  className="absolute top-1 transform -translate-x-1/2 flex flex-col items-center"
+                  style={{ left: `calc(70px + (100% - 80px) * ${t.position / 100})` }}
+                >
+                  <span>{t.label}</span>
+                  <div className="w-px h-1 bg-black/[0.08] mt-0.5" />
+                </div>
               ))}
             </div>
           )}
 
-          <div className="relative z-10">
-            {rootNodes.map(node => (
-              <TreeNode 
-                key={node.id} 
-                node={node} 
-                level={0} 
-                onEvaluate={() => openEvalModal(node)} 
-                traceDurationStats={traceDurationStats}
-                viewMode={viewMode}
-              />
-            ))}
-            {rootNodes.length === 0 && <div className="p-4 text-center text-muted">No data to display</div>}
+          <div className="flex-1 overflow-y-auto p-3 space-y-0.5 relative">
+            {/* Waterfall guidelines background */}
+            {viewMode === "waterfall" && (
+              <div className="absolute inset-y-0 pointer-events-none z-0" style={{ left: "70px", right: "10px" }}>
+                {timelineTicks.map((t, idx) => (
+                  <div 
+                    key={idx}
+                    className="absolute inset-y-0 w-px border-l border-dashed border-black/[0.04]"
+                    style={{ left: `${t.position}%` }}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="relative z-10">
+              {rootNodes.map(node => (
+                <TreeNode 
+                  key={node.id} 
+                  node={node} 
+                  level={0} 
+                  selectedId={selectedNodeId}
+                  onSelect={setSelectedNodeId}
+                  onEvaluate={() => openEvalModal(node)} 
+                  traceDurationStats={traceDurationStats}
+                  viewMode={viewMode}
+                />
+              ))}
+              {rootNodes.length === 0 && <div className="p-8 text-center text-[#6e6e73] text-xs">No execution logs logged.</div>}
+            </div>
           </div>
+        </div>
+
+        {/* Right Column: Node Details panel */}
+        <div className="flex-1 overflow-y-auto bg-white flex flex-col">
+          {selectedNode ? (
+            <NodeDetailView 
+              node={selectedNode} 
+              isRootNode={rootNodes.some(r => r.id === selectedNode.id)}
+              onEvaluate={() => openEvaluateNode(selectedNode)}
+            />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-[#6e6e73] p-8">
+              <Layers size={36} className="opacity-20 mb-3 animate-pulse" />
+              <p className="text-xs font-semibold">Select a tree span node to view arguments.</p>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Evaluate Dialog Modal */}
       <Dialog open={evalModalOpen} onOpenChange={setEvalModalOpen}>
           <DialogContent className="sm:max-w-[500px]">
               <DialogHeader>
@@ -361,11 +622,15 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
       </Dialog>
     </div>
   );
+
+  function openEvaluateNode(targetNode: Node) {
+    openEvalModal(targetNode);
+  }
 }
 
 function getTimelineTicks(durationMs: number) {
   const durSec = durationMs / 1000;
-  let interval = 0.1; // in seconds
+  let interval = 0.1; 
   if (durSec > 10) interval = 5;
   else if (durSec > 5) interval = 2;
   else if (durSec > 2) interval = 1;
@@ -390,25 +655,29 @@ function getTimelineTicks(durationMs: number) {
   return ticks;
 }
 
+// Interactive Tree Node list component
 function TreeNode({ 
   node, 
   level, 
   onEvaluate, 
   traceDurationStats,
   viewMode,
+  selectedId,
+  onSelect
 }: { 
   node: Node; 
   level: number; 
   onEvaluate: () => void; 
   traceDurationStats: any;
   viewMode: "tree" | "waterfall";
+  selectedId: string | null;
+  onSelect: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children && node.children.length > 0;
-  
+  const isSelected = selectedId === node.id;
   const isError = node.error || node.status === 'ERROR';
 
-  // Calculations for Gantt timeline
   const barStyle = useMemo(() => {
     if (!traceDurationStats) return null;
     const start = new Date(node.start_time).getTime();
@@ -424,11 +693,8 @@ function TreeNode({
 
   const isWide = barStyle && barStyle.rawWidth >= 30;
 
-  // Metadata pills in tree view
   const metadataBadges = useMemo(() => {
     const badges = [];
-    
-    // Duration badge
     if (node.duration_ms !== undefined) {
       const durSec = node.duration_ms / 1000;
       badges.push({
@@ -436,65 +702,69 @@ function TreeNode({
         text: durSec >= 1 ? `${durSec.toFixed(2)}s` : `${node.duration_ms.toFixed(0)}ms`
       });
     }
-    
-    // Usage tokens/cost badge
     if (node.usage?.total_tokens) {
       badges.push({
-        icon: <Activity size={10} className="opacity-70" />,
-        text: `${node.usage.total_tokens} tok`
+        text: `${node.usage.total_tokens} tokens`
       });
     }
-    
-    // Model badge
+    if (node.total_cost !== undefined && node.total_cost !== null && Number(node.total_cost) > 0) {
+      badges.push({
+        text: `$${Number(node.total_cost).toFixed(5)}`
+      });
+    }
     if (node.model) {
       badges.push({
         text: node.model,
         isModel: true
       });
     }
-    
     return badges;
   }, [node]);
 
   if (viewMode === "tree") {
     return (
-      <div className="border-b border-black/[0.04] last:border-0 bg-white/30 font-sans">
-        <div 
-          className={`flex items-center justify-between p-3 hover:bg-black/[0.02] cursor-pointer text-xs mb-0.5 transition-all`}
+      <div className="select-none relative font-sans border-b border-black/[0.02] last:border-0">
+        <div
+          className={`flex items-center justify-between py-2.5 px-3 rounded-xl cursor-pointer text-xs mb-0.5 transition-all ${
+            isSelected
+              ? "bg-[#0071e3]/10 text-[#0071e3] ring-1 ring-[#0071e3]/20"
+              : "text-[#1d1d1f] hover:bg-black/[0.02]"
+          }`}
           style={{ paddingLeft: `${level * 14 + 10}px` }}
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => onSelect(node.id)}
         >
-          {/* Left Side: Tree Toggle & Names */}
           <div className="flex items-start gap-2 min-w-0 flex-1">
-            <div className="w-4 h-4 mt-0.5 flex items-center justify-center text-neutral-400 hover:text-[#1d1d1f] transition-colors rounded">
-              {hasChildren && (
-                expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />
-              )}
+            <div
+              className={`w-4 h-4 mt-0.5 flex items-center justify-center rounded hover:bg-black/[0.04] transition-colors ${
+                hasChildren ? "visible cursor-pointer" : "invisible"
+              }`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded(!expanded);
+              }}
+            >
+              {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
             </div>
-            
-            <div className={`p-1 rounded-lg mt-0.5 shrink-0 ${
-              isError
-                ? "text-red-500 bg-red-50"
-                : node.is_obs
-                ? "text-blue-500 bg-blue-50"
-                : "text-emerald-500 bg-emerald-50"
+
+            <div className={`shrink-0 mt-0.5 ${
+              isError ? "text-red-500" : node.is_obs ? "text-blue-500" : "text-emerald-500"
             }`}>
               {node.is_obs ? <Terminal size={12} /> : <Layers size={12} />}
             </div>
 
             <div className="flex flex-col min-w-0">
-              <span className="font-semibold truncate text-[#1d1d1f] font-mono text-[11px]">{node.name}</span>
-              <span className="text-[9px] text-[#6e6e73] font-bold uppercase tracking-wider mt-0.5 self-start">
-                  {node.type}
+              <span className={`truncate font-mono text-[11px] ${
+                isSelected ? "font-bold text-[#0071e3]" : "font-semibold"
+              } ${isError ? "text-red-600" : ""}`} title={node.name}>
+                {node.name}
               </span>
               
-              {/* Metadata Badges line */}
               {metadataBadges.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap opacity-80">
+                <div className="flex items-center gap-1 mt-1 flex-wrap opacity-80">
                   {metadataBadges.map((badge, idx) => (
                     <span 
                       key={idx} 
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                      className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-mono font-bold leading-none ${
                         badge.isModel 
                           ? "bg-black/[0.04] text-[#6e6e73] border border-black/[0.02]"
                           : "bg-black/[0.02] text-[#6e6e73]"
@@ -508,67 +778,33 @@ function TreeNode({
               )}
             </div>
           </div>
-
-          {/* Right Side: Evaluation buttons */}
-          <div className="flex items-center gap-4 flex-none font-mono text-[10px]">
-              <div className="flex items-center gap-2 text-[#6e6e73]">
-                  <button 
-                      onClick={(e) => { e.stopPropagation(); onEvaluate(); }}
-                      className="hover:text-[#0071e3] transition-colors hover:bg-neutral-100 p-1.5 rounded-lg group flex items-center gap-1 z-10 border border-transparent hover:border-black/[0.04] bg-white shadow-sm cursor-pointer"
-                      title="Evaluate Node"
-                  >
-                      <Activity size={12} className="text-neutral-500 group-hover:text-[#0071e3]" />
-                      <span className="text-[9px] font-bold">Eval</span>
-                  </button>
-                  <span className="opacity-70">{new Date(node.start_time).toLocaleTimeString()}</span>
-              </div>
-          </div>
         </div>
 
-        {expanded && (
-          <>
-              {/* Detail View for Inputs/Outputs if available */}
-              {(node.input || node.output || node.error) && (
-                   <div style={{ marginLeft: `${level * 14 + 34}px` }} className="p-3 mb-2 bg-neutral-50 border border-black/[0.03] rounded-xl text-xs overflow-x-auto max-w-2xl font-mono text-[#6e6e73]">
-                      {node.input && (
-                          <div className="mb-1.5">
-                              <span className="font-bold text-[#1d1d1f]">Input: </span>
-                              <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.input}</pre>
-                          </div>
-                      )}
-                      {node.output && (
-                          <div>
-                               <span className="font-bold text-[#1d1d1f]">Output: </span>
-                               <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.output}</pre>
-                          </div>
-                      )}
-                      {node.error && (
-                           <div className="text-red-600 mt-1.5">
-                               <span className="font-bold">Error: </span>
-                               <pre className="inline text-red-600 whitespace-pre-wrap">{node.error}</pre>
-                          </div>
-                      )}
-                   </div>
-              )}
-              
-              {/* Children */}
-              {node.children.map(child => (
-                  <TreeNode 
-                    key={child.id} 
-                    node={child} 
-                    level={level + 1} 
-                    onEvaluate={onEvaluate} 
-                    traceDurationStats={traceDurationStats}
-                    viewMode={viewMode}
-                  />
-              ))}
-          </>
+        {expanded && hasChildren && (
+          <div className="relative">
+            <div
+              className="absolute bg-black/[0.03] w-px top-0 bottom-2.5"
+              style={{ left: `${level * 14 + 17}px`, zIndex: 0 }}
+            />
+            {node.children.map(child => (
+              <TreeNode 
+                key={child.id} 
+                node={child} 
+                level={level + 1} 
+                selectedId={selectedId}
+                onSelect={onSelect}
+                onEvaluate={onEvaluate} 
+                traceDurationStats={traceDurationStats}
+                viewMode={viewMode}
+              />
+            ))}
+          </div>
         )}
       </div>
     );
   }
 
-  // Waterfall Mode (Image 1 style)
+  // Waterfall Gantt chart row
   return (
     <div className="select-none relative w-full font-sans border-b border-black/[0.02]">
       <div 
@@ -589,11 +825,12 @@ function TreeNode({
       </div>
 
       <div
-        className="group relative flex items-center h-8 rounded-lg cursor-pointer transition-all border border-transparent hover:bg-black/[0.01]"
+        className={`group relative flex items-center h-8 rounded-lg cursor-pointer transition-all border border-transparent ${
+          isSelected ? "bg-[#0071e3]/5 border-[#0071e3]/10" : "hover:bg-black/[0.01]"
+        }`}
         style={{ paddingLeft: "70px" }}
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => onSelect(node.id)}
       >
-        {/* Waterfall capsule timeline track container */}
         <div className="relative flex-1 h-6">
           {barStyle && (
             <>
@@ -633,58 +870,358 @@ function TreeNode({
             </>
           )}
         </div>
+      </div>
 
-        {/* Action icons hover overlay */}
-        <div className="absolute right-2 inset-y-0 flex items-center gap-2 z-30 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity">
-            <button 
-                onClick={(e) => { e.stopPropagation(); onEvaluate(); }}
-                className="text-[#6e6e73] hover:text-[#0071e3] transition-colors hover:bg-neutral-100 p-1.5 rounded-lg border border-black/[0.04] bg-white shadow-sm cursor-pointer flex items-center gap-1"
-                title="Evaluate Node"
+      {expanded && hasChildren && (
+        <div className="relative">
+          <div
+            className="absolute bg-black/[0.03] w-px top-0 bottom-2"
+            style={{ left: `${level * 14 + 7}px`, zIndex: 0 }}
+          />
+          {node.children.map(child => (
+            <TreeNode 
+              key={child.id} 
+              node={child} 
+              level={level + 1} 
+              selectedId={selectedId}
+              onSelect={onSelect}
+              onEvaluate={onEvaluate} 
+              traceDurationStats={traceDurationStats}
+              viewMode={viewMode}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Right panel: Detailed parameters, parsed input prompt lists and response text bubbles
+function NodeDetailView({ 
+  node, 
+  isRootNode, 
+  onEvaluate 
+}: { 
+  node: Node; 
+  isRootNode: boolean; 
+  onEvaluate: () => void;
+}) {
+  const [inputFormat, setInputFormat] = useState<'markdown' | 'json' | 'raw'>('markdown');
+  const [outputFormat, setOutputFormat] = useState<'markdown' | 'json' | 'raw'>('markdown');
+  const [inputCollapsed, setInputCollapsed] = useState(false);
+  const [outputCollapsed, setOutputCollapsed] = useState(false);
+
+  // For agent nodes: input comes from first child, output from last child
+  const isAgentNode = node.type?.toLowerCase() === 'agent';
+
+  // Find first child input (skip self — look directly at children in order)
+  const getFirstChildInput = (n: Node): any => {
+    if (n.children && n.children.length > 0) {
+      for (const child of n.children) {
+        const hasInput = child.input && 
+                         child.input !== '{}' && 
+                         child.input !== '{"args":[],"kwargs":{}}' &&
+                         !(typeof child.input === 'object' && Object.keys(child.input).length === 0);
+        if (hasInput) {
+          return child.input;
+        }
+        // Walk deeper into this child's subtree
+        const subInput = getFirstChildInput(child);
+        if (subInput) return subInput;
+      }
+    }
+    return null;
+  };
+
+  // Find last child output (skip self — look directly at children in reverse)
+  const getLastChildOutput = (n: Node): any => {
+    if (n.children && n.children.length > 0) {
+      for (let i = n.children.length - 1; i >= 0; i--) {
+        const child = n.children[i];
+        const hasOutput = child.output && 
+                          child.output !== '{}' && 
+                          !(typeof child.output === 'object' && Object.keys(child.output).length === 0);
+        if (hasOutput) {
+          return child.output;
+        }
+        // Walk deeper into this child's subtree
+        const res = getLastChildOutput(child);
+        if (res) return res;
+      }
+    }
+    return null;
+  };
+
+  const hasNoInput = !node.input || (typeof node.input === 'object' && Object.keys(node.input).length === 0) || node.input === '{"args":[],"kwargs":{}}' || node.input === '{}';
+  const hasNoOutput = !node.output || (typeof node.output === 'object' && Object.keys(node.output).length === 0) || node.output === '{}';
+  const hasChildren = node.children && node.children.length > 0;
+  const shouldOverride = isAgentNode || isRootNode || (hasNoInput && hasNoOutput && hasChildren);
+
+  const displayInput = useMemo(() => {
+    if (shouldOverride) return getFirstChildInput(node) ?? node.input;
+    return node.input;
+  }, [node, isRootNode, isAgentNode, shouldOverride]);
+
+  const displayOutput = useMemo(() => {
+    if (shouldOverride) return getLastChildOutput(node) ?? node.output;
+    return node.output;
+  }, [node, isRootNode, isAgentNode, shouldOverride]);
+
+  const contentFormatSelector = (
+    currentFormat: 'markdown' | 'json' | 'raw', 
+    setFormat: (f: 'markdown' | 'json' | 'raw') => void
+  ) => (
+    <div className="flex bg-neutral-100 p-0.5 rounded-lg border border-black/[0.02]">
+      <button
+        onClick={() => setFormat('markdown')}
+        className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer ${
+          currentFormat === 'markdown' ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+        }`}
+      >
+        Markdown
+      </button>
+      <button
+        onClick={() => setFormat('json')}
+        className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer flex items-center gap-0.5 ${
+          currentFormat === 'json' ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+        }`}
+      >
+        <FileJson size={9} />
+        JSON
+      </button>
+      <button
+        onClick={() => setFormat('raw')}
+        className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer flex items-center gap-0.5 ${
+          currentFormat === 'raw' ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+        }`}
+      >
+        <FileText size={9} />
+        Raw
+      </button>
+    </div>
+  );
+  const renderContentBox = (content: any, format: 'markdown' | 'json' | 'raw', isInput?: boolean, hideSystem?: boolean) => {
+    if (!content) return <div className="text-neutral-400 italic text-[11px] p-2 bg-neutral-50/50 rounded-xl">Empty payload</div>;
+    
+    const rawString = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+
+    if (format === 'json') {
+      try {
+        const obj = typeof content === 'string' ? JSON.parse(content) : content;
+        return (
+          <pre className="font-mono text-[11px] bg-black/95 text-neutral-300 p-3.5 rounded-2xl overflow-x-auto select-all leading-normal">
+            {JSON.stringify(obj, null, 2)}
+          </pre>
+        );
+      } catch {
+        return (
+          <pre className="font-mono text-[11px] bg-black/95 text-neutral-300 p-3.5 rounded-2xl overflow-x-auto select-all leading-normal">
+            {rawString}
+          </pre>
+        );
+      }
+    }
+
+    if (format === 'raw') {
+      return (
+        <pre className="font-mono text-[11px] bg-neutral-50 border border-black/[0.04] text-[#1d1d1f] p-3.5 rounded-2xl overflow-x-auto select-all leading-normal whitespace-pre-wrap">
+          {rawString}
+        </pre>
+      );
+    }
+
+    // Markdown / Role-based prompt bubbles
+    const chatMsgs = parseMessages(content, isInput, hideSystem);
+    const hasChatMessages = chatMsgs.length > 0 && chatMsgs.some(m => m.role === 'system' || m.role === 'user' || m.role === 'ai');
+
+    if (format === 'markdown' && !hasChatMessages) {
+      try {
+        const obj = typeof content === 'string' ? JSON.parse(content) : content;
+        return (
+          <pre className="font-mono text-[11px] bg-neutral-50 border border-black/[0.04] text-[#1d1d1f] p-3.5 rounded-2xl overflow-x-auto select-all leading-normal whitespace-pre">
+            {JSON.stringify(obj, null, 2)}
+          </pre>
+        );
+      } catch {
+        return (
+          <pre className="font-mono text-[11px] bg-neutral-50 border border-black/[0.04] text-[#1d1d1f] p-3.5 rounded-2xl overflow-x-auto select-all leading-normal whitespace-pre-wrap">
+            {rawString}
+          </pre>
+        );
+      }
+    }
+
+    return (
+      <div className="space-y-3">
+        {chatMsgs.map((msg, index) => {
+          const isSystem = msg.role === 'system';
+          const isUser = msg.role === 'user';
+          const isAI = msg.role === 'ai';
+
+          return (
+            <div 
+              key={index}
+              className={`p-3.5 rounded-2xl border transition-all ${
+                isSystem 
+                  ? "bg-neutral-50 border-black/[0.03] text-[#6e6e73]" 
+                  : isUser
+                  ? "bg-[#0071e3]/5 border-[#0071e3]/10 text-[#1d1d1f]"
+                  : isAI
+                  ? "bg-orange-50/40 border-orange-100 text-[#1d1d1f]"
+                  : "bg-neutral-50 border-black/[0.03] text-[#1d1d1f]"
+              }`}
             >
-                <Activity size={12} />
-                <span className="text-[9px] font-bold">Eval</span>
-            </button>
+              <div className="flex items-center gap-1.5 mb-2 font-semibold text-[9px] uppercase tracking-wider">
+                {isSystem && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-neutral-100 flex items-center justify-center border border-black/[0.03] text-neutral-500">
+                      <Terminal size={10} />
+                    </div>
+                    <span>System Prompt</span>
+                  </>
+                )}
+                {isUser && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-[#0071e3]/10 flex items-center justify-center border border-[#0071e3]/10 text-[#0071e3]">
+                      <User size={10} />
+                    </div>
+                    <span>User Input</span>
+                  </>
+                )}
+                {isAI && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-orange-100 flex items-center justify-center border border-orange-200 text-orange-600">
+                      <Bot size={10} />
+                    </div>
+                    <span>AI Response</span>
+                  </>
+                )}
+                {!isSystem && !isUser && !isAI && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-neutral-100 flex items-center justify-center border border-black/[0.03] text-neutral-500">
+                      <Layers size={10} />
+                    </div>
+                    <span>Payload</span>
+                  </>
+                )}
+              </div>
+              <div className="text-[11px] leading-relaxed break-words font-sans">
+                {formatMarkdown(msg.content)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-6 space-y-6 flex-1 flex flex-col justify-start">
+      {/* Detail title header */}
+      <div className="flex justify-between items-start gap-4 border-b border-black/[0.04] pb-4 shrink-0">
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-bold text-[#1d1d1f] font-mono truncate">{node.name}</h2>
+            {node.type?.toLowerCase() === 'agent' && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 text-[10px] border border-purple-500/20 font-bold uppercase tracking-wide select-none">
+                <Bot size={10} /> Agent
+              </span>
+            )}
+            {node.type?.toLowerCase() === 'tool' && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 text-[10px] border border-amber-500/20 font-bold uppercase tracking-wide select-none">
+                <Wrench size={10} /> Tool
+              </span>
+            )}
+            <span className="px-1.5 py-0.5 bg-black/[0.03] text-[#6e6e73] text-[9px] font-mono border border-black/[0.04] rounded-md shrink-0 select-all">
+              ID: {node.id.slice(0, 8)}
+            </span>
+          </div>
+        </div>
+        <Button onClick={onEvaluate} variant="outline" className="gap-1.5 shadow-sm text-xs font-bold rounded-xl h-8 cursor-pointer hover:bg-neutral-50 shrink-0" size="sm">
+          <FlaskConical size={12} /> Evaluate Node
+        </Button>
+      </div>
+
+      {/* Node resource summary statistics parameters */}
+      <div className="grid grid-cols-3 gap-4 p-4 border border-black/[0.04] rounded-2xl bg-neutral-50/50 shrink-0 select-all text-xs font-semibold text-[#1d1d1f]">
+        <div className="space-y-1">
+          <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Duration</span>
+          <span className="font-mono">
+            {node.duration_ms !== undefined 
+              ? (node.duration_ms >= 1000 
+                 ? `${(node.duration_ms / 1000).toFixed(3)}s` 
+                 : `${node.duration_ms.toFixed(0)}ms`) 
+              : "-"}
+          </span>
+        </div>
+        <div className="space-y-1">
+          <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Tokens</span>
+          <span className="font-mono">{node.usage?.total_tokens ?? 0}</span>
+        </div>
+        <div className="space-y-1">
+          <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Cost</span>
+          <span className="font-mono text-emerald-600">
+            {(() => {
+              const displayCost = (node.total_cost !== undefined && node.total_cost !== null && Number(node.total_cost) > 0)
+                ? Number(node.total_cost)
+                : ((node.usage?.total_tokens || 0) * 0.000002);
+              return displayCost > 0 ? `$${displayCost.toFixed(5)}` : "$0.00000";
+            })()}
+          </span>
         </div>
       </div>
 
-      {expanded && (
-        <>
-            {/* Detail View for Inputs/Outputs if available in waterfall mode too */}
-            {(node.input || node.output || node.error) && (
-                 <div style={{ marginLeft: `${level * 14 + 34}px` }} className="p-3 mb-2 mt-1 bg-neutral-50 border border-black/[0.03] rounded-xl text-xs overflow-x-auto max-w-2xl font-mono text-[#6e6e73]">
-                    {node.input && (
-                        <div className="mb-1.5">
-                            <span className="font-bold text-[#1d1d1f]">Input: </span>
-                            <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.input}</pre>
-                        </div>
-                    )}
-                    {node.output && (
-                        <div>
-                             <span className="font-bold text-[#1d1d1f]">Output: </span>
-                             <pre className="inline text-[#6e6e73] whitespace-pre-wrap">{node.output}</pre>
-                        </div>
-                    )}
-                    {node.error && (
-                         <div className="text-red-600 mt-1.5">
-                             <span className="font-bold">Error: </span>
-                             <pre className="inline text-red-600 whitespace-pre-wrap">{node.error}</pre>
-                        </div>
-                    )}
-                 </div>
-            )}
+      {/* Main Parameters lists */}
+      <div className="space-y-5 flex-1 overflow-y-auto pr-1">
+        {/* INPUT Section */}
+        <div className="space-y-2.5">
+          <div className="flex justify-between items-center">
+            <span 
+              className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer hover:text-[#1d1d1f] transition-colors select-none"
+              onClick={() => setInputCollapsed(!inputCollapsed)}
+            >
+              {inputCollapsed ? <ChevronRight size={11} className="text-neutral-400" /> : <ChevronDown size={11} className="text-neutral-400" />}
+              <Sparkles size={11} className="text-[#0071e3]" />
+              Input Parameters
+            </span>
+            <div className="flex items-center gap-2">
+              {contentFormatSelector(inputFormat, setInputFormat)}
+              <CopyButton text={typeof displayInput === 'string' ? displayInput : JSON.stringify(displayInput, null, 2)} />
+            </div>
+          </div>
+          {!inputCollapsed && renderContentBox(displayInput, inputFormat, true, isAgentNode)}
+        </div>
 
-            {node.children.map(child => (
-                <TreeNode 
-                  key={child.id} 
-                  node={child} 
-                  level={level + 1} 
-                  onEvaluate={onEvaluate} 
-                  traceDurationStats={traceDurationStats}
-                  viewMode={viewMode}
-                />
-            ))}
-        </>
-      )}
+        {/* OUTPUT Section */}
+        <div className="space-y-2.5">
+          <div className="flex justify-between items-center border-t border-black/[0.04] pt-4 mt-2">
+            <span 
+              className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer hover:text-[#1d1d1f] transition-colors select-none"
+              onClick={() => setOutputCollapsed(!outputCollapsed)}
+            >
+              {outputCollapsed ? <ChevronRight size={11} className="text-neutral-400" /> : <ChevronDown size={11} className="text-neutral-400" />}
+              <Bot size={11} className="text-orange-500" />
+              Output Response
+            </span>
+            <div className="flex items-center gap-2">
+              {contentFormatSelector(outputFormat, setOutputFormat)}
+              <CopyButton text={typeof displayOutput === 'string' ? displayOutput : JSON.stringify(displayOutput, null, 2)} />
+            </div>
+          </div>
+          {!outputCollapsed && renderContentBox(displayOutput, outputFormat, false)}
+        </div>
+
+        {/* Error notification alert if applicable */}
+        {node.error && (
+          <div className="p-4 bg-red-50 border border-red-200/50 rounded-2xl text-xs font-mono text-red-600 flex items-start gap-2.5">
+            <AlertCircle size={14} className="shrink-0 mt-0.5 text-red-500" />
+            <div className="space-y-1 min-w-0">
+              <span className="font-bold text-red-700 uppercase tracking-wider text-[10px]">Execution Error</span>
+              <pre className="whitespace-pre-wrap leading-relaxed text-[11px] text-red-600 select-all">{node.error}</pre>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

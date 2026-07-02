@@ -32,16 +32,15 @@ export default function TraceDetailPage() {
   if (!data) return <div className="p-8">Trace not found</div>;
 
   return (
-    <div>
-      <div className="flex items-center gap-4 mb-6">
-        <button onClick={() => router.back()} className="btn btn-outline p-2">
-            <ArrowLeft size={20} />
+    <div className="flex flex-col h-[calc(100vh-6rem)]">
+      <div className="flex items-center gap-3 mb-4 shrink-0">
+        <button onClick={() => router.back()} className="p-2 border border-black/[0.04] bg-white hover:bg-neutral-50 rounded-xl transition-all shadow-sm cursor-pointer text-[#6e6e73] hover:text-[#1d1d1f]">
+            <ArrowLeft size={16} />
         </button>
-        <h1 className="text-2xl font-bold font-mono">Trace: {id}</h1>
+        <h1 className="text-base font-bold text-[#1d1d1f] font-mono">Trace: {id}</h1>
       </div>
 
-      <div className="card">
-        <h2 className="text-lg font-semibold mb-4 border-b pb-2">Execution Trace</h2>
+      <div className="flex-1 min-h-0">
         <TraceTree spans={data.spans} observations={data.observations} traceId={id as string} />
       </div>
     </div>

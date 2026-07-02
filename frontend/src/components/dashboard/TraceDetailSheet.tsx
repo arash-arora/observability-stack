@@ -18,10 +18,16 @@ import {
   Bot,
   Wrench,
   LayoutList,
-  Activity
+  Activity,
+  User,
+  Sparkles,
+  FileJson,
+  FileText,
+  AlertCircle
 } from "lucide-react";
 
 import api from "@/lib/api";
+import { Button } from "@/components/ui/button";
 import { extractContent, extractSystemMessage, safeParseJSON } from "@/lib/traceUtils";
 
 interface TraceDetailSheetProps {
@@ -214,6 +220,32 @@ export default function TraceDetailSheet({
         }
       }
     });
+
+    const aggregateNode = (node: Node) => {
+      // First, recursively process all children so they are fully aggregated bottom-up
+      node.children.forEach(child => aggregateNode(child));
+      
+      if (node.children && node.children.length > 0) {
+        const totalDuration = node.children.reduce((sum, c) => sum + (c.duration_ms || 0), 0);
+        const totalTokens = node.children.reduce((sum, c) => sum + (c.usage?.total_tokens || 0), 0);
+        const totalCost = node.children.reduce((sum, c) => {
+          const cCost = (c.total_cost !== undefined && c.total_cost !== null && Number(c.total_cost) > 0)
+            ? Number(c.total_cost)
+            : ((c.usage?.total_tokens || 0) * 0.000002);
+          return sum + cCost;
+        }, 0);
+        
+        node.duration_ms = totalDuration;
+        if (!node.usage) {
+          node.usage = { total_tokens: totalTokens };
+        } else {
+          node.usage.total_tokens = totalTokens;
+        }
+        node.total_cost = totalCost;
+      }
+    };
+
+    roots.forEach(root => aggregateNode(root));
 
     const sortNodes = (nodes: Node[]) => {
       nodes.sort(
@@ -529,15 +561,15 @@ function TreeNode({
     // Usage tokens/cost badge
     if (node.usage?.total_tokens || node.usage?.prompt_tokens) {
       const tokens = node.usage.total_tokens || (node.usage.prompt_tokens + (node.usage.completion_tokens || 0));
-      const costText = node.total_cost ? ` / $${node.total_cost.toFixed(4)}` : "";
+      const costText = (node.total_cost !== undefined && node.total_cost !== null) ? ` / $${Number(node.total_cost).toFixed(4)}` : "";
       badges.push({
         icon: <Activity size={10} className="opacity-70" />,
         text: `${tokens} tok${costText}`
       });
-    } else if (node.total_cost) {
+    } else if (node.total_cost !== undefined && node.total_cost !== null && Number(node.total_cost) > 0) {
       badges.push({
         icon: <Activity size={10} className="opacity-70" />,
-        text: `$${node.total_cost.toFixed(4)}`
+        text: `$${Number(node.total_cost).toFixed(4)}`
       });
     }
     
@@ -748,13 +780,260 @@ function TreeNode({
   );
 }
 
+// Copy to Clipboard Utility
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1.5 rounded-lg border border-black/[0.04] bg-white hover:bg-neutral-50 text-neutral-500 hover:text-neutral-700 transition-colors shadow-sm cursor-pointer"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+// Custom Markdown inline code, bold, and block formatter
+function formatMarkdown(text: string) {
+  if (!text) return "";
+  // Escape HTML
+  let formatted = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  
+  // Format code blocks: ```lang ... ```
+  formatted = formatted.replace(/```([\s\S]*?)```/g, '<pre class="bg-black/90 text-neutral-200 p-3.5 rounded-xl font-mono text-xs my-2.5 overflow-x-auto whitespace-pre-wrap">$1</pre>');
+  
+  // Format inline code: `code`
+  formatted = formatted.replace(/`([^`]+)`/g, '<code class="bg-black/[0.04] px-1.5 py-0.5 rounded font-mono text-xs text-red-500">$1</code>');
+  
+  // Format bold: **text**
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  
+  // Format newlines
+  formatted = formatted.replace(/\n/g, "<br />");
+  
+  return <div dangerouslySetInnerHTML={{ __html: formatted }} className="leading-relaxed text-xs text-[#1d1d1f]" />;
+}
+
+interface ChatMessage {
+  role: 'system' | 'user' | 'ai' | 'other';
+  content: string;
+}
+
+
+
+// Helper to extract nested chat list recursively
+function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boolean): ChatMessage[] {
+  if (!val) return [];
+
+  // 1. If string, check if JSON
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return parseMessages(parsed, forceInputMapping, hideSystem);
+      } catch {
+        // Fallback
+      }
+    }
+    return [{ role: forceInputMapping ? 'user' : 'user', content: val }];
+  }
+
+  // 2. If array, process elements recursively and flatten
+  if (Array.isArray(val)) {
+    const flat: ChatMessage[] = [];
+    val.forEach(item => {
+      const parsed = parseMessages(item, forceInputMapping, hideSystem);
+      flat.push(...parsed);
+    });
+    return flat;
+  }
+
+  // 3. If object
+  if (typeof val === 'object' && val !== null) {
+    if (val.content !== undefined || val.text !== undefined || val.role !== undefined || val.type !== undefined) {
+      const single = parseSingleMessage(val, forceInputMapping);
+      if (single && single.role === 'system' && hideSystem) {
+        return [];
+      }
+      return single ? [single] : [];
+    }
+
+    if (val.messages && Array.isArray(val.messages)) {
+      return parseMessages(val.messages, forceInputMapping, hideSystem);
+    }
+    if (val.args && Array.isArray(val.args)) {
+      return parseMessages(val.args, forceInputMapping, hideSystem);
+    }
+    if (val.kwargs?.messages && Array.isArray(val.kwargs.messages)) {
+      return parseMessages(val.kwargs.messages, forceInputMapping, hideSystem);
+    }
+    if (val.kwargs?.prompt) {
+      return parseMessages(val.kwargs.prompt, forceInputMapping, hideSystem);
+    }
+    if (val.prompt) {
+      return parseMessages(val.prompt, forceInputMapping, hideSystem);
+    }
+    if (val.input) {
+      return parseMessages(val.input, forceInputMapping, hideSystem);
+    }
+    if (val.output) {
+      return parseMessages(val.output, forceInputMapping, hideSystem);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Converts Python-repr strings (single quotes, True/False/None) to valid JSON then parses.
+ * Falls back to the raw value on failure.
+ */
+function parsePythonLikeValue(raw: any): any {
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch { /* not valid JSON */ }
+  try {
+    const jsonStr = raw
+      .replace(/'/g, '"')
+      .replace(/\bTrue\b/g, 'true')
+      .replace(/\bFalse\b/g, 'false')
+      .replace(/\bNone\b/g, 'null');
+    return JSON.parse(jsonStr);
+  } catch { /* still not parseable */ }
+  return raw;
+}
+
+function parseSingleMessage(m: any, forceInputMapping?: boolean): ChatMessage | null {
+  if (!m) return null;
+  if (typeof m === 'string') return { role: forceInputMapping ? 'user' : 'other', content: m };
+  
+  const roleStr = String(m.role || m.type || 'other').toLowerCase();
+  let role: 'system' | 'user' | 'ai' | 'other' = 'other';
+  
+  if (roleStr.includes('system')) {
+    role = 'system';
+  } else if (roleStr.includes('user') || roleStr.includes('human')) {
+    role = 'user';
+  } else if (roleStr.includes('ai') || roleStr.includes('assistant') || roleStr.includes('model') || roleStr.includes('output')) {
+    role = forceInputMapping ? 'user' : 'ai';
+  } else {
+    role = forceInputMapping ? 'user' : 'other';
+  }
+  
+  let content = m.content || m.text || m.message || (typeof m === 'object' ? JSON.stringify(m) : String(m));
+
+  // Parse LLM tool calls — handle both native arrays and Python-serialized strings
+  let rawToolCalls = m.tool_calls
+    ?? m.additional_kwargs?.tool_calls
+    ?? m.kwargs?.tool_calls
+    ?? m.kwargs?.additional_kwargs?.tool_calls;
+  if (typeof rawToolCalls === 'string') {
+    rawToolCalls = parsePythonLikeValue(rawToolCalls);
+  }
+  const toolCalls: any[] = Array.isArray(rawToolCalls) ? rawToolCalls : [];
+  if (toolCalls.length > 0) {
+    const callsList = toolCalls.map((tc: any) => {
+      const name = tc.name || tc.function?.name || 'unknown_tool';
+      let args = tc.args ?? tc.function?.arguments ?? {};
+      if (typeof args === 'string') {
+        args = parsePythonLikeValue(args);
+      }
+      const argsStr = (typeof args === 'object' && args !== null)
+        ? JSON.stringify(args, null, 2)
+        : String(args);
+      return `🔧 **Calls Tool:** \`${name}\`\n**Arguments:**\n\`\`\`json\n${argsStr}\n\`\`\``;
+    }).join('\n\n');
+    if (callsList) {
+      content = typeof content === 'string' && content.trim() ? `${content}\n\n${callsList}` : callsList;
+    }
+  }
+
+  return { role, content };
+}
+
 function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
-  const sections = [
-    { id: "preview", label: "Preview" },
-    { id: "log", label: "Log View" },
-  ];
-  const [activeSection, setActiveSection] = useState("preview");
+  const [inputFormat, setInputFormat] = useState<'markdown' | 'json' | 'raw'>('markdown');
+  const [outputFormat, setOutputFormat] = useState<'markdown' | 'json' | 'raw'>('markdown');
+  const [inputCollapsed, setInputCollapsed] = useState(false);
+  const [outputCollapsed, setOutputCollapsed] = useState(false);
   const [isEvalOpen, setIsEvalOpen] = useState(false);
+
+  // For agent nodes: input comes from first child, output from last child
+  const isAgentNode = node.type?.toLowerCase() === 'agent';
+
+  // Find first child input (skip self — look directly at children in order)
+  const getFirstChildInput = (n: Node): any => {
+    if (n.children && n.children.length > 0) {
+      for (const child of n.children) {
+        const hasInput = child.input && 
+                         child.input !== '{}' && 
+                         child.input !== '{"args":[],"kwargs":{}}' &&
+                         !(typeof child.input === 'object' && Object.keys(child.input).length === 0);
+        if (hasInput) {
+          return child.input;
+        }
+        // Walk deeper into this child's subtree
+        const subInput = getFirstChildInput(child);
+        if (subInput) return subInput;
+      }
+    }
+    return null;
+  };
+
+  // Find last child output (skip self — look directly at children in reverse)
+  const getLastChildOutput = (n: Node): any => {
+    if (n.children && n.children.length > 0) {
+      for (let i = n.children.length - 1; i >= 0; i--) {
+        const child = n.children[i];
+        const hasOutput = child.output && 
+                          child.output !== '{}' && 
+                          !(typeof child.output === 'object' && Object.keys(child.output).length === 0);
+        if (hasOutput) {
+          return child.output;
+        }
+        // Walk deeper into this child's subtree
+        const res = getLastChildOutput(child);
+        if (res) return res;
+      }
+    }
+    return null;
+  };
+
+  const isRootNode = useMemo(() => {
+    return !traceData?.spans?.find((s: any) => s.span_id === node.id)?.parent_span_id;
+  }, [node, traceData]);
+
+  const hasNoInput = !node.input || (typeof node.input === 'object' && Object.keys(node.input).length === 0) || node.input === '{"args":[],"kwargs":{}}' || node.input === '{}';
+  const hasNoOutput = !node.output || (typeof node.output === 'object' && Object.keys(node.output).length === 0) || node.output === '{}';
+  const hasChildren = node.children && node.children.length > 0;
+  const shouldOverride = isAgentNode || isRootNode || (hasNoInput && hasNoOutput && hasChildren);
+
+  const displayInput = useMemo(() => {
+    if (shouldOverride) return getFirstChildInput(node) ?? node.input;
+    return node.input;
+  }, [node, isRootNode, isAgentNode, shouldOverride]);
+
+  const displayOutput = useMemo(() => {
+    if (shouldOverride) return getLastChildOutput(node) ?? node.output;
+    return node.output;
+  }, [node, isRootNode, isAgentNode, shouldOverride]);
 
   // Helper to stringify data for the modal
   const prepareData = (val: any) => {
@@ -763,143 +1042,277 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
       return JSON.stringify(val, null, 2);
   };
 
-  // Check if evaluation is possible (needs input and output OR trace data)
-  const canEvaluate = Boolean(
-      (node.input && 
-      node.output && 
-      (typeof node.input === 'string' ? node.input.trim().length > 0 : Object.keys(node.input).length > 0) &&
-      (typeof node.output === 'string' ? node.output.trim().length > 0 : Object.keys(node.output).length > 0)) ||
-      (traceData && (traceData.observations?.length > 0 || traceData.spans?.length > 0))
+  const contentFormatSelector = (
+    currentFormat: 'markdown' | 'json' | 'raw', 
+    setFormat: (f: 'markdown' | 'json' | 'raw') => void
+  ) => (
+    <div className="flex bg-neutral-100 p-0.5 rounded-lg border border-black/[0.02]">
+      <button
+        onClick={() => setFormat('markdown')}
+        className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer ${
+          currentFormat === 'markdown' ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+        }`}
+      >
+        Markdown
+      </button>
+      <button
+        onClick={() => setFormat('json')}
+        className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer flex items-center gap-0.5 ${
+          currentFormat === 'json' ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+        }`}
+      >
+        <FileJson size={9} />
+        JSON
+      </button>
+      <button
+        onClick={() => setFormat('raw')}
+        className={`px-2 py-0.5 rounded-md text-[9px] font-bold transition-all cursor-pointer flex items-center gap-0.5 ${
+          currentFormat === 'raw' ? "bg-white shadow-sm text-[#1d1d1f]" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+        }`}
+      >
+        <FileText size={9} />
+        Raw
+      </button>
+    </div>
   );
+  const renderContentBox = (content: any, format: 'markdown' | 'json' | 'raw', isInput?: boolean, hideSystem?: boolean) => {
+    if (!content) return <div className="text-neutral-400 italic text-[11px] p-2 bg-neutral-50/50 rounded-xl">Empty payload</div>;
+    
+    const rawString = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+
+    if (format === 'json') {
+      try {
+        const obj = typeof content === 'string' ? JSON.parse(content) : content;
+        return (
+          <pre className="font-mono text-[11px] bg-black/95 text-neutral-300 p-3.5 rounded-2xl overflow-x-auto select-all leading-normal">
+            {JSON.stringify(obj, null, 2)}
+          </pre>
+        );
+      } catch {
+        return (
+          <pre className="font-mono text-[11px] bg-black/95 text-neutral-300 p-3.5 rounded-2xl overflow-x-auto select-all leading-normal">
+            {rawString}
+          </pre>
+        );
+      }
+    }
+
+    if (format === 'raw') {
+      return (
+        <pre className="font-mono text-[11px] bg-neutral-50 border border-black/[0.04] text-[#1d1d1f] p-3.5 rounded-2xl overflow-x-auto select-all leading-normal whitespace-pre-wrap">
+          {rawString}
+        </pre>
+      );
+    }
+
+    // Markdown / Role-based prompt bubbles
+    const chatMsgs = parseMessages(content, isInput, hideSystem);
+    const hasChatMessages = chatMsgs.length > 0 && chatMsgs.some(m => m.role === 'system' || m.role === 'user' || m.role === 'ai');
+
+    if (format === 'markdown' && !hasChatMessages) {
+      try {
+        const obj = typeof content === 'string' ? JSON.parse(content) : content;
+        return (
+          <pre className="font-mono text-[11px] bg-neutral-50 border border-black/[0.04] text-[#1d1d1f] p-3.5 rounded-2xl overflow-x-auto select-all leading-normal whitespace-pre">
+            {JSON.stringify(obj, null, 2)}
+          </pre>
+        );
+      } catch {
+        return (
+          <pre className="font-mono text-[11px] bg-neutral-50 border border-black/[0.04] text-[#1d1d1f] p-3.5 rounded-2xl overflow-x-auto select-all leading-normal whitespace-pre-wrap">
+            {rawString}
+          </pre>
+        );
+      }
+    }
+
+    return (
+      <div className="space-y-3">
+        {chatMsgs.map((msg, index) => {
+          const isSystem = msg.role === 'system';
+          const isUser = msg.role === 'user';
+          const isAI = msg.role === 'ai';
+
+          return (
+            <div 
+              key={index}
+              className={`p-3.5 rounded-2xl border transition-all ${
+                isSystem 
+                  ? "bg-neutral-50 border-black/[0.03] text-[#6e6e73]" 
+                  : isUser
+                  ? "bg-[#0071e3]/5 border-[#0071e3]/10 text-[#1d1d1f]"
+                  : isAI
+                  ? "bg-orange-50/40 border-orange-100 text-[#1d1d1f]"
+                  : "bg-neutral-50 border-black/[0.03] text-[#1d1d1f]"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 mb-2 font-semibold text-[9px] uppercase tracking-wider">
+                {isSystem && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-neutral-100 flex items-center justify-center border border-black/[0.03] text-neutral-500">
+                      <Terminal size={10} />
+                    </div>
+                    <span>System Prompt</span>
+                  </>
+                )}
+                {isUser && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-[#0071e3]/10 flex items-center justify-center border border-[#0071e3]/10 text-[#0071e3]">
+                      <User size={10} />
+                    </div>
+                    <span>User Input</span>
+                  </>
+                )}
+                {isAI && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-orange-100 flex items-center justify-center border border-orange-200 text-orange-600">
+                      <Bot size={10} />
+                    </div>
+                    <span>AI Response</span>
+                  </>
+                )}
+                {!isSystem && !isUser && !isAI && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-neutral-100 flex items-center justify-center border border-black/[0.03] text-neutral-500">
+                      <Layers size={10} />
+                    </div>
+                    <span>Payload</span>
+                  </>
+                )}
+              </div>
+              <div className="text-[11px] leading-relaxed break-words font-sans">
+                {formatMarkdown(msg.content)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 space-y-6 flex-1 flex flex-col justify-start">
       <EvaluationModal 
         isOpen={isEvalOpen} 
         onClose={() => setIsEvalOpen(false)}
         initialData={{
-            input: prepareData(node.input),
-            output: prepareData(node.output),
+            input: prepareData(displayInput),
+            output: prepareData(displayOutput),
             context: node.attributes?.context,
             application_name: node.application_name,
             trace: {
                 trace_id: traceData?.trace_id,
-                observations: [node] // Wrap single node as the only observation for specific eval
+                observations: [node]
             },
             workflow_details: extractWorkflowDetails(traceData)
         }}
         defaultObserve={true}
       />
 
-      {/* Node Header */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-            <h2 className="text-xl font-bold font-mono text-foreground flex items-center gap-2">
-                {node.is_obs ? (
-                <Terminal className="text-blue-500" />
-                ) : (
-                <Layers className="text-emerald-500" />
-                )}
-                {node.name}
-
-                {/* Agent/Tool Badges */}
-                {node.type?.toLowerCase() === 'agent' && (
-                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 text-[10px] border border-purple-500/20 font-medium uppercase tracking-wide ml-2">
-                        <Bot size={12} /> Agent
-                    </span>
-                )}
-                {node.type?.toLowerCase() === 'tool' && (
-                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 text-[10px] border border-amber-500/20 font-medium uppercase tracking-wide ml-2">
-                        <Wrench size={12} /> Tool
-                    </span>
-                )}
-
-                <span className="text-xs font-normal text-muted-foreground border border-border px-1.5 py-0.5 rounded ml-2">
-                ID: {node.id.slice(0, 8)}
-                </span>
-            </h2>
-            </div>
-            
-            {canEvaluate && (
-                <button
-                    onClick={() => setIsEvalOpen(true)}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-background hover:bg-muted text-foreground border border-border rounded-md text-sm font-medium transition-colors"
-                >
-                    <FlaskConical size={14} className="text-muted-foreground" />
-                    Evaluate Node
-                </button>
+      {/* Detail title header */}
+      <div className="flex justify-between items-start gap-4 border-b border-black/[0.04] pb-4 shrink-0">
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-bold text-[#1d1d1f] font-mono truncate">{node.name}</h2>
+            {node.type?.toLowerCase() === 'agent' && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 text-[10px] border border-purple-500/20 font-bold uppercase tracking-wide select-none">
+                <Bot size={10} /> Agent
+              </span>
             )}
+            {node.type?.toLowerCase() === 'tool' && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 text-[10px] border border-amber-500/20 font-bold uppercase tracking-wide select-none">
+                <Wrench size={10} /> Tool
+              </span>
+            )}
+            <span className="px-1.5 py-0.5 bg-black/[0.03] text-[#6e6e73] text-[9px] font-mono border border-black/[0.04] rounded-md shrink-0 select-all">
+              ID: {node.id.slice(0, 8)}
+            </span>
+          </div>
         </div>
+        <Button onClick={() => setIsEvalOpen(true)} variant="outline" className="gap-1.5 shadow-sm text-xs font-bold rounded-xl h-8 cursor-pointer hover:bg-neutral-50 shrink-0" size="sm">
+          <FlaskConical size={12} /> Evaluate Node
+        </Button>
+      </div>
 
-        {/* Metrics Bar */}
-        <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground bg-muted/30 p-3 rounded-lg border border-border">
-          <div className="flex items-center gap-1.5">
-            <Clock size={14} className="text-muted-foreground" />
-            <span className="text-foreground">
-              {node.duration_ms.toFixed(3)}s
-            </span>
-          </div>
-          <div className="w-px h-4 bg-border" />
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">Tokens</span>
-            <span className="text-foreground">
-              {node.usage?.total_tokens || 0}
-            </span>
-          </div>
-          <div className="w-px h-4 bg-border" />
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">Cost</span>
-            <span className="text-foreground">
-              $
-              {(
-                node.total_cost || (node.usage?.total_tokens || 0) * 0.000002
-              ).toFixed(5)}
-            </span>
-          </div>
-          {node.model && (
-            <>
-              <div className="w-px h-4 bg-border" />
-              <div className="flex items-center gap-1.5">
-                <Cpu size={14} className="text-muted-foreground" />
-                <span className="text-blue-500">{node.model}</span>
-              </div>
-            </>
-          )}
+      {/* Node resource summary statistics parameters */}
+      <div className="grid grid-cols-3 gap-4 p-4 border border-black/[0.04] rounded-2xl bg-neutral-50/50 shrink-0 select-all text-xs font-semibold text-[#1d1d1f]">
+        <div className="space-y-1">
+          <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Duration</span>
+          <span className="font-mono">
+            {node.duration_ms !== undefined 
+              ? (node.duration_ms >= 1000 
+                 ? `${(node.duration_ms / 1000).toFixed(3)}s` 
+                 : `${node.duration_ms.toFixed(0)}ms`) 
+              : "-"}
+          </span>
+        </div>
+        <div className="space-y-1">
+          <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Tokens</span>
+          <span className="font-mono">{node.usage?.total_tokens ?? 0}</span>
+        </div>
+        <div className="space-y-1">
+          <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Cost</span>
+          <span className="font-mono text-emerald-600">
+            {(() => {
+              const displayCost = (node.total_cost !== undefined && node.total_cost !== null && Number(node.total_cost) > 0)
+                ? Number(node.total_cost)
+                : ((node.usage?.total_tokens || 0) * 0.000002);
+              return displayCost > 0 ? `$${displayCost.toFixed(5)}` : "$0.00000";
+            })()}
+          </span>
         </div>
       </div>
 
-      {/* Tab Switcher */}
-      <div className="flex border-b border-border mb-6">
-        {sections.map((s) => (
-          <button
-            key={s.id}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeSection === s.id
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setActiveSection(s.id)}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
+      {/* Main Parameters lists */}
+      <div className="space-y-5 flex-1 overflow-y-auto pr-1">
+        {/* INPUT Section */}
+        <div className="space-y-2.5">
+          <div className="flex justify-between items-center">
+            <span 
+              className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer hover:text-[#1d1d1f] transition-colors select-none"
+              onClick={() => setInputCollapsed(!inputCollapsed)}
+            >
+              {inputCollapsed ? <ChevronRight size={11} className="text-neutral-400" /> : <ChevronDown size={11} className="text-neutral-400" />}
+              <Sparkles size={11} className="text-[#0071e3]" />
+              Input Parameters
+            </span>
+            <div className="flex items-center gap-2">
+              {contentFormatSelector(inputFormat, setInputFormat)}
+              <CopyButton text={typeof displayInput === 'string' ? displayInput : JSON.stringify(displayInput, null, 2)} />
+            </div>
+          </div>
+          {!inputCollapsed && renderContentBox(displayInput, inputFormat, true, isAgentNode)}
+        </div>
 
-      {/* Content */}
-      <div className="space-y-6">
-        <DataSection title="System Message" data={extractSystemMessage(node.input)} />
-        <DataSection title="Input" data={node.input} />
-        <DataSection title="Output" data={node.output} isOutput />
-        <DataSection
-          title="Metadata"
-          data={{
-            ...node.attributes,
-            start_time: node.start_time,
-            end_time: node.end_time,
-            status: node.status,
-          }}
-        />
+        {/* OUTPUT Section */}
+        <div className="space-y-2.5">
+          <div className="flex justify-between items-center border-t border-black/[0.04] pt-4 mt-2">
+            <span 
+              className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer hover:text-[#1d1d1f] transition-colors select-none"
+              onClick={() => setOutputCollapsed(!outputCollapsed)}
+            >
+              {outputCollapsed ? <ChevronRight size={11} className="text-neutral-400" /> : <ChevronDown size={11} className="text-neutral-400" />}
+              <Bot size={11} className="text-orange-500" />
+              Output Response
+            </span>
+            <div className="flex items-center gap-2">
+              {contentFormatSelector(outputFormat, setOutputFormat)}
+              <CopyButton text={typeof displayOutput === 'string' ? displayOutput : JSON.stringify(displayOutput, null, 2)} />
+            </div>
+          </div>
+          {!outputCollapsed && renderContentBox(displayOutput, outputFormat, false)}
+        </div>
+
+        {/* Error notification alert if applicable */}
+        {node.error && (
+          <div className="p-4 bg-red-50 border border-red-200/50 rounded-2xl text-xs font-mono text-red-600 flex items-start gap-2.5">
+            <AlertCircle size={14} className="shrink-0 mt-0.5 text-red-500" />
+            <div className="space-y-1 min-w-0">
+              <span className="font-bold text-red-700 uppercase tracking-wider text-[10px]">Execution Error</span>
+              <pre className="whitespace-pre-wrap leading-relaxed text-[11px] text-red-600 select-all">{node.error}</pre>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
