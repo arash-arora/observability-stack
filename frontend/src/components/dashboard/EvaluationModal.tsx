@@ -259,10 +259,15 @@ export default function EvaluationModal({
         }
       }
 
-      const payload = {
+      const payload: any = {
         metric_id: metric,
         inputs: inputs
       };
+
+      const targetTraceId = initialData.trace?.trace_id || inputs.trace?.trace_id;
+      if (targetTraceId) {
+        payload.trace_id = targetTraceId;
+      }
 
       const res = await api.post("/evaluations/run", payload);
       setResult(res.data);

@@ -292,6 +292,7 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
       try {
           const res = await api.post('/evaluations/run', {
               metric_id: selectedMetricId,
+              trace_id: traceId,
               inputs: {
                   ...evalInputs,
                   trace: traceId,

@@ -107,7 +107,10 @@ export default function RunDetailPage() {
                     initialData={{
                         input: rerunData.input,
                         output: rerunData.output,
-                        context: rerunData.context
+                        context: rerunData.context,
+                        trace: {
+                            trace_id: rerunData.trace_id || traceId
+                        }
                     }}
                 />
             )}
