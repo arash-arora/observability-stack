@@ -203,7 +203,7 @@ export default function ApplicationsPage() {
                     {app.api_key ? (
                         <div className="flex items-center gap-2">
                             <span>{app.api_key}</span>
-                            <CopyButton text={app.api_key} size="icon" />
+                            {/* <CopyButton text={app.api_key} size="icon" /> */}
                         </div>
                     ) : (
                         "sk-••••••••••••••••"
@@ -368,6 +368,15 @@ export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`
         </DialogHeader>
 
         <div className="space-y-5 my-4 max-h-[400px] overflow-y-auto pr-1">
+          <div className="rounded-2xl border border-black/[0.06] bg-[#f8fbff] p-3.5">
+            <p className="text-[10px] font-bold tracking-wider uppercase text-[#6e6e73]">Application API Key</p>
+            <div className="mt-1.5 flex items-center gap-2">
+              <code className="text-[11px] font-mono text-[#1d1d1f] break-all">{app.api_key || "sk-your-new-app-key"}</code>
+              {app.api_key && <CopyButton text={app.api_key} size="icon" />}
+            </div>
+            <p className="mt-1.5 text-[10px] text-[#6e6e73]">Copy and store this key securely before closing.</p>
+          </div>
+
           {/* Step 1 */}
           <div className="space-y-1.5">
             <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">

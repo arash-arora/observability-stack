@@ -47,6 +47,12 @@ export default function TracesPage() {
   const [evalModalOpen, setEvalModalOpen] = useState(false);
   const [evalTraceData, setEvalTraceData] = useState<any>(null);
 
+  interface ManagedApplication {
+    id: string;
+    name: string;
+    project_id: string;
+  }
+
   // Sync state with URL params on mount/update
   useEffect(() => {
     const traceId = searchParams.get('trace_id');
@@ -96,10 +102,12 @@ export default function TracesPage() {
 
   const fetchAppNames = async (projectId: string) => {
     try {
-      const res = await api.get('/analytics/traces/applications', {
-        params: { project_id: projectId }
-      });
-      setAppNames(res.data);
+      const res = await api.get('/management/applications');
+      const names = (res.data as ManagedApplication[])
+        .filter((app) => app.project_id === projectId)
+        .map((app) => app.name)
+        .sort((a, b) => a.localeCompare(b));
+      setAppNames(names);
     } catch (err) {
       console.error("Failed to fetch app names for filter", err);
     }
@@ -171,7 +179,8 @@ export default function TracesPage() {
 
     traces.forEach(t => {
       if (t.status_code !== 'ERROR') successCount++;
-      sumLatency += t.duration_ms || 0;
+      // Backend returns duration in milliseconds; convert to seconds for UI stats.
+      sumLatency += (t.duration_ms || 0) / 1000;
       totalTokens += t.total_tokens || 0;
       totalCost += t.total_cost || ((t.total_tokens || 0) * 0.000002);
     });
@@ -470,6 +479,9 @@ export default function TracesPage() {
               {traces.length > 0 && (
                 <tbody className="text-xs divide-y divide-black/[0.03]">
                   {traces.map((trace: any) => (
+                    (() => {
+                      const latencySeconds = (trace.duration_ms || 0) / 1000;
+                      return (
                     <tr
                       key={trace.trace_id}
                       className="group hover:bg-neutral-50/50 cursor-pointer transition-colors"
@@ -505,13 +517,17 @@ export default function TracesPage() {
                         {trace.application_name || <span className="italic opacity-40 font-sans">global</span>}
                       </td>
                       <td className="px-4 py-3.5 text-[10px] font-mono text-[#6e6e73]">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${trace.duration_ms > 3
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${latencySeconds > 3
                             ? 'bg-red-50 border-red-100 text-red-600'
-                            : trace.duration_ms > 1
+                            : latencySeconds > 1
                               ? 'bg-amber-50 border-amber-100 text-amber-600'
                               : 'bg-emerald-50 border-emerald-100 text-emerald-600'
                           }`}>
-                          {trace.duration_ms ? `${trace.duration_ms.toFixed(2)}s` : '-'}
+                          {trace.duration_ms
+                            ? (latencySeconds >= 1
+                              ? `${latencySeconds.toFixed(2)}s`
+                              : `${Math.round(trace.duration_ms)}ms`)
+                            : '-'}
                         </span>
                       </td>
                       <td className="px-4 py-3.5 text-[10px] font-mono text-right text-[#1d1d1f] font-semibold">
@@ -532,6 +548,8 @@ export default function TracesPage() {
                         {renderMetadata(trace.metadata)}
                       </td>
                     </tr>
+                      );
+                    })()
                   ))}
                 </tbody>
               )}
@@ -618,7 +636,7 @@ export default function TracesPage() {
           input: "",
           output: "",
           context: "",
-          application_name: "",
+          application_name: evalTraceData?.application_name || "",
           trace: evalTraceData
         }}
         defaultObserve={true}

@@ -116,8 +116,8 @@ export default function EditMetricPage() {
 
       const selectedProvider = providers.find(p => p.id === selectedProviderId);
       if (selectedProvider) {
+          inputsPayload.provider_id = selectedProvider.id;
           inputsPayload.provider = selectedProvider.provider;
-          inputsPayload.api_key = selectedProvider.api_key;
           if (selectedProvider.provider === 'azure') {
                inputsPayload.azure_endpoint = selectedProvider.base_url;
                inputsPayload.api_version = selectedProvider.api_version;

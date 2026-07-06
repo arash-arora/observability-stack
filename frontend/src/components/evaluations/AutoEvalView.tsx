@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useDashboard } from "@/context/DashboardContext";
 import { format } from "date-fns";
@@ -63,10 +63,11 @@ interface LLMProvider {
     name: string;
     provider: string;
     model_name: string;
+    deployment_name?: string;
 }
 
 export default function AutoEvalView() {
-  const { selectedOrg } = useDashboard();
+  const { selectedOrg, selectedProject } = useDashboard();
   const [rules, setRules] = useState<Rule[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
@@ -81,9 +82,19 @@ export default function AutoEvalView() {
   const [newName, setNewName] = useState("");
   const [newApp, setNewApp] = useState("");
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState<string>("custom");
-  const [newInputs, setNewInputs] = useState("{}");
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+  const [configType, setConfigType] = useState<"registered" | "custom">("registered");
+  const [customProvider, setCustomProvider] = useState("openai");
+  const [customApiKey, setCustomApiKey] = useState("");
+  const [customModelName, setCustomModelName] = useState("gpt-4o");
   const [formError, setFormError] = useState("");
+
+  const filteredApplications = useMemo(() => {
+    if (!selectedProject) {
+      return applications;
+    }
+    return applications.filter((app) => app.project_id === selectedProject.id);
+  }, [applications, selectedProject]);
 
   const fetchData = async () => {
     setIdxLoading(true);
@@ -126,40 +137,45 @@ export default function AutoEvalView() {
       } else {
           setProviders([]);
       }
-      setSelectedProviderId("custom"); 
   }, [newApp, applications]);
-  
-  const handleProviderChange = (val: string) => {
-      setSelectedProviderId(val);
-      if (val === "custom") {
-          // Do nothing to inputs? or reset? Let's leave it.
-          return;
+
+  useEffect(() => {
+    if (newApp && !filteredApplications.some((app) => app.id === newApp)) {
+      setNewApp("");
+    }
+  }, [newApp, filteredApplications]);
+
+  useEffect(() => {
+      if (providers.length > 0) {
+          setSelectedProviderId(providers[0].id);
+      } else {
+          setSelectedProviderId("");
       }
-      
-      const provider = providers.find(p => p.id === val);
-      if (provider) {
-          const inputs = {
-              provider: provider.provider,
-              model: provider.model_name
-          };
-          setNewInputs(JSON.stringify(inputs, null, 2));
-      }
-  };
+  }, [providers]);
 
   const handleCreate = async () => {
     setFormError("");
     try {
-      let parsedInputs: any = {};
-      try {
-        parsedInputs = JSON.parse(newInputs);
-      } catch (e) {
-        setFormError("Invalid JSON in Inputs field");
-        return;
-      }
-
-      if (!parsedInputs.model) {
-        setFormError("Evaluation Model is required. Please specify a 'model' in the Inputs JSON.");
-        return;
+      let finalInputs: any = {};
+      if (configType === "custom") {
+          if (!customModelName) {
+              setFormError("Model Name is required for Custom Config.");
+              return;
+          }
+          finalInputs.provider = customProvider;
+          finalInputs.model = customModelName;
+          if (customApiKey) {
+              finalInputs.api_key = customApiKey;
+          }
+      } else {
+          const provider = providers.find(p => p.id === selectedProviderId);
+          if (!provider) {
+              setFormError("Please select a registered model or switch to Custom Config.");
+              return;
+          }
+          finalInputs.provider = provider.provider;
+          finalInputs.model = provider.model_name;
+          finalInputs.provider_id = provider.id;
       }
 
       if (!newName || !newApp || selectedMetrics.length === 0) {
@@ -171,7 +187,7 @@ export default function AutoEvalView() {
         name: newName,
         application_id: newApp,
         metric_ids: selectedMetrics.join(","),
-        inputs: parsedInputs,
+        inputs: finalInputs,
         active: true,
         percentage: 100.0
       });
@@ -207,8 +223,11 @@ export default function AutoEvalView() {
     setNewName("");
     setNewApp("");
     setSelectedMetrics([]);
-    setSelectedProviderId("custom");
-    setNewInputs("{}");
+    setSelectedProviderId("");
+    setConfigType("custom");
+    setCustomProvider("openai");
+    setCustomApiKey("");
+    setCustomModelName("gpt-4o");
     setFormError("");
   };
 
@@ -228,7 +247,7 @@ export default function AutoEvalView() {
                 <Plus className="mr-2 h-4 w-4" /> New Rule
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                 <DialogTitle>Create Auto-Eval Rule</DialogTitle>
                 </DialogHeader>
@@ -245,7 +264,7 @@ export default function AutoEvalView() {
                         <SelectValue placeholder="Select Application" />
                     </SelectTrigger>
                     <SelectContent>
-                        {applications.map((app) => (
+                      {filteredApplications.map((app) => (
                         <SelectItem key={app.id} value={app.id}>{app.name}</SelectItem>
                         ))}
                     </SelectContent>
@@ -325,45 +344,92 @@ export default function AutoEvalView() {
                     )}
                 </div>
 
-                <div className="grid gap-2">
-                    <Label>Model Configuration</Label>
-                    <Select value={selectedProviderId} onValueChange={handleProviderChange} disabled={!newApp}>
-                    <SelectTrigger>
-                        <SelectValue placeholder={!newApp ? "Select Application first" : "Select Model Source"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="custom">Custom / Manual (Specify in JSON)</SelectItem>
-                        {providers.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                            {p.name} ({p.provider} - {p.model_name})
-                        </SelectItem>
-                        ))}
-                    </SelectContent>
-                    </Select>
+                {/* Evaluator Model Configuration block */}
+                <div className="grid gap-3 p-4 border rounded-2xl bg-muted/10">
+                    <div className="space-y-1">
+                        <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
+                            Evaluator Configuration
+                        </span>
+                    </div>
+
+                    <div className="flex bg-muted/20 p-0.5 rounded-lg border border-black/[0.02]">
+                        <button
+                            type="button"
+                            onClick={() => setConfigType("registered")}
+                            className={`flex-1 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                                configType === "registered" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            Registered Model
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setConfigType("custom")}
+                            className={`flex-1 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                                configType === "custom" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            Custom Config
+                        </button>
+                    </div>
+
+                    {configType === "registered" ? (
+                        <div className="grid gap-1.5">
+                            <Label className="text-xs text-muted-foreground font-bold uppercase">Select Registered Model</Label>
+                            <Select value={selectedProviderId} onValueChange={setSelectedProviderId} disabled={!newApp}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder={!newApp ? "Select Application first" : "Select Model Source"} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {providers.map((p) => (
+                                        <SelectItem key={p.id} value={p.id}>
+                                            {p.name} ({p.provider} - {p.model_name || p.deployment_name})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    ) : (
+                        <div className="grid gap-3">
+                            <div className="grid gap-1.5">
+                                <Label className="text-xs text-muted-foreground font-bold uppercase">Provider</Label>
+                                <Select value={customProvider} onValueChange={setCustomProvider}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select Provider" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="openai">OpenAI</SelectItem>
+                                        <SelectItem value="groq">Groq</SelectItem>
+                                        <SelectItem value="anthropic">Anthropic</SelectItem>
+                                        <SelectItem value="google">Google</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="grid gap-1.5">
+                                <Label className="text-xs text-muted-foreground font-bold uppercase">LLM API Key</Label>
+                                <Input 
+                                    type="password" 
+                                    value={customApiKey} 
+                                    onChange={(e) => setCustomApiKey(e.target.value)} 
+                                    placeholder="Enter custom API key (optional)" 
+                                />
+                            </div>
+
+                            <div className="grid gap-1.5">
+                                <Label className="text-xs text-muted-foreground font-bold uppercase">Model Name</Label>
+                                <Input 
+                                    type="text" 
+                                    value={customModelName} 
+                                    onChange={(e) => setCustomModelName(e.target.value)} 
+                                    placeholder="gpt-4o" 
+                                />
+                            </div>
+                        </div>
+                    )}
                 </div>
                 
-                <div className="grid gap-2">
-                    <div className="flex justify-between items-center">
-                        <Label>Inputs Override & Model Config (JSON)</Label>
-                        <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-6 text-xs"
-                            onClick={() => setNewInputs('{\n  "model": "gpt-4o",\n  "provider": "openai"\n}')}
-                        >
-                            Load Template
-                        </Button>
-                    </div>
-                    <Textarea 
-                       value={newInputs} 
-                       onChange={(e) => setNewInputs(e.target.value)} 
-                       placeholder='{"model": "gpt-4o", "provider": "openai"}'
-                       className="font-mono text-xs h-24"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                        By default, input/output/context are extracted from the trace. Use this to override inputs or set model config.
-                    </p>
-                </div>
+
                 {formError && <p className="text-sm text-red-500">{formError}</p>}
                 </div>
                 <DialogFooter>

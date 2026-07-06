@@ -5,6 +5,7 @@ from app.models.evaluation_rule import EvaluationRule
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
+from app.core.security import resolve_ingest_key_hash
 from app.models.all_models import ApiKey
 from app.core.clickhouse import get_clickhouse_client
 import json
@@ -24,8 +25,12 @@ async def ingest_traces(
     """
     try:
         # 1. Validate API Key
+        key_hash = resolve_ingest_key_hash(x_api_key)
+        if not key_hash:
+            raise HTTPException(status_code=403, detail="Invalid API Key")
+
         result = await session.execute(
-            select(ApiKey).options(selectinload(ApiKey.application)).where(ApiKey.key == x_api_key)
+            select(ApiKey).options(selectinload(ApiKey.application)).where(ApiKey.key == key_hash)
         )
         api_key_obj = result.scalars().first()
         
@@ -108,8 +113,12 @@ async def ingest_observations(
     """
     try:
         # 1. Validate API Key
+        key_hash = resolve_ingest_key_hash(x_api_key)
+        if not key_hash:
+            raise HTTPException(status_code=403, detail="Invalid API Key")
+
         result = await session.execute(
-            select(ApiKey).options(selectinload(ApiKey.application)).where(ApiKey.key == x_api_key)
+            select(ApiKey).options(selectinload(ApiKey.application)).where(ApiKey.key == key_hash)
         )
         api_key_obj = result.scalars().first()
         
