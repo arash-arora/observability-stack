@@ -8,6 +8,7 @@ interface EvaluationsChartsProps {
     pass_fail: any[];
     avg_scores: any[];
     score_trend: any[];
+    score_distribution?: any[];
   } | null;
 }
 
@@ -72,24 +73,57 @@ export function EvaluationsCharts({ data }: EvaluationsChartsProps) {
         </Card>
       </div>
 
-       {/* 3. Score Trend */}
-       <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Quality Trend</CardTitle>
-            <CardDescription>Average evaluation score over time</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={score_trend}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                <XAxis dataKey="date" tick={{fontSize: 12}} minTickGap={30}/>
-                <YAxis domain={[0, 1]} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderColor: 'hsl(var(--border))' }} />
-                <Line type="monotone" dataKey="avg_score" stroke="#8884d8" strokeWidth={2} dot={{r: 4}} activeDot={{r: 6}} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+      {/* Second Row: Quality Trend (2/3 width) and Score Distribution (1/3 width) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+         {/* 3. Score Trend */}
+         <Card className="col-span-1 lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Quality Trend</CardTitle>
+              <CardDescription>Average evaluation score over time</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={score_trend}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+                  <XAxis dataKey="date" tick={{fontSize: 12}} minTickGap={30}/>
+                  <YAxis domain={[0, 1]} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderColor: 'hsl(var(--border))' }} />
+                  <Line type="monotone" dataKey="avg_score" stroke="#8884d8" strokeWidth={2} dot={{r: 4}} activeDot={{r: 6}} />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* 4. Score Quality Distribution */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Score Distribution</CardTitle>
+              <CardDescription>Number of evaluations per score range</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[300px]">
+              {data.score_distribution && data.score_distribution.some(d => d.count > 0) ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.score_distribution}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+                    <XAxis dataKey="range" tick={{fontSize: 9}} interval={0} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderColor: 'hsl(var(--border))' }} cursor={{fill: 'transparent'}} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={35}>
+                      {data.score_distribution.map((entry: any, index: number) => {
+                        const colors = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444"];
+                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  No score distribution data available.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+      </div>
     </div>
   );
 }

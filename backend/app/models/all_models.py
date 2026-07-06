@@ -85,7 +85,8 @@ Scoring Criteria:
 
 class ApiKey(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    key: str = Field(index=True, unique=True)
+    key: str = Field(index=True, unique=True)   # SHA-256 hash of the actual key
+    key_prefix: str = Field(default="")         # First 12 chars of plaintext for display
     name: str
     application_id: uuid.UUID = Field(foreign_key="application.id")
     is_active: bool = True

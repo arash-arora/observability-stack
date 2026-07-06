@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.core.database import get_session
+from app.core.security import encrypt_value, decrypt_value
 from app.models.llm_provider import LLMProvider
 from app.api.deps import get_current_user
 from app.models.all_models import User
@@ -47,7 +48,41 @@ class UpdateProviderRequest(BaseModel):
     is_public: Optional[bool] = None
 
 
-@router.get("/", response_model=List[LLMProvider])
+class LLMProviderRead(BaseModel):
+    """Response model that never exposes the raw api_key."""
+    id: uuid.UUID
+    name: str
+    provider: str
+    model_name: str
+    api_key: str          # Always masked in responses
+    base_url: Optional[str] = None
+    api_version: Optional[str] = None
+    deployment_name: Optional[str] = None
+    project_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    is_public: bool
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_db(cls, p: LLMProvider) -> "LLMProviderRead":
+        return cls(
+            id=p.id,
+            name=p.name,
+            provider=p.provider,
+            model_name=p.model_name,
+            api_key="sk-***...",  # Never return the encrypted blob
+            base_url=p.base_url,
+            api_version=p.api_version,
+            deployment_name=p.deployment_name,
+            project_id=p.project_id,
+            user_id=p.user_id,
+            is_public=p.is_public,
+        )
+
+
+@router.get("/", response_model=List[LLMProviderRead])
 async def list_providers(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_session),
@@ -55,16 +90,17 @@ async def list_providers(
 ):
     """
     List configured providers for a project, filtered by the current user.
+    The api_key field is always masked in the response.
     """
     stmt = select(LLMProvider).where(
         LLMProvider.project_id == project_id,
         (LLMProvider.user_id == current_user.id) | (LLMProvider.is_public == True),
     )
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return [LLMProviderRead.from_db(p) for p in result.scalars().all()]
 
 
-@router.post("/", response_model=LLMProvider)
+@router.post("/", response_model=LLMProviderRead)
 async def create_provider(
     provider_in: CreateProviderRequest,
     db: AsyncSession = Depends(get_session),
@@ -72,19 +108,20 @@ async def create_provider(
 ):
     """
     Create a new LLM provider configuration for the current user.
+    The api_key is encrypted before being stored.
     """
     provider_data = provider_in.dict()
     provider_data["user_id"] = current_user.id
+    provider_data["api_key"] = encrypt_value(provider_in.api_key)
 
     provider = LLMProvider(**provider_data)
     db.add(provider)
     await db.commit()
     await db.refresh(provider)
-    await db.refresh(provider)
-    return provider
+    return LLMProviderRead.from_db(provider)
 
 
-@router.patch("/{id}", response_model=LLMProvider)
+@router.patch("/{id}", response_model=LLMProviderRead)
 async def update_provider(
     id: uuid.UUID,
     provider_in: UpdateProviderRequest,
@@ -93,6 +130,7 @@ async def update_provider(
 ):
     """
     Update a provider configuration.
+    If api_key is supplied it will be encrypted before storage.
     """
     provider = await db.get(LLMProvider, id)
     if not provider:
@@ -105,6 +143,8 @@ async def update_provider(
         )
 
     update_data = provider_in.dict(exclude_unset=True)
+    if "api_key" in update_data and update_data["api_key"]:
+        update_data["api_key"] = encrypt_value(update_data["api_key"])
 
     for key, value in update_data.items():
         setattr(provider, key, value)
@@ -112,7 +152,7 @@ async def update_provider(
     db.add(provider)
     await db.commit()
     await db.refresh(provider)
-    return provider
+    return LLMProviderRead.from_db(provider)
 
 
 @router.delete("/{id}")
@@ -153,6 +193,9 @@ async def test_provider(
         raise HTTPException(status_code=404, detail="Provider configuration not found")
 
     try:
+        # Decrypt the stored api_key before using it
+        plaintext_api_key = decrypt_value(provider_config.api_key)
+
         # Dynamic import to avoid heavy dependencies if unused
         from observix import llm
 
@@ -162,7 +205,7 @@ async def test_provider(
         if provider_config.provider == "openai":
             from openai import AsyncOpenAI
 
-            client = AsyncOpenAI(api_key=provider_config.api_key)
+            client = AsyncOpenAI(api_key=plaintext_api_key)
 
             response = await client.chat.completions.create(
                 model=provider_config.model_name,
@@ -174,14 +217,12 @@ async def test_provider(
             from openai import AsyncAzureOpenAI
 
             client = AsyncAzureOpenAI(
-                api_key=provider_config.api_key,
+                api_key=plaintext_api_key,
                 azure_endpoint=provider_config.base_url,
                 api_version=provider_config.api_version,
                 azure_deployment=provider_config.deployment_name,
             )
 
-            # Use deployment name as model if not specified, or model_name if deployment is separate
-            # Usually in Azure SDK, model kwarg is ignored or same as deployment
             response = await client.chat.completions.create(
                 model=provider_config.deployment_name or provider_config.model_name,
                 messages=[{"role": "user", "content": request.input_text}],
@@ -191,12 +232,8 @@ async def test_provider(
         elif provider_config.provider == "langchain":
             from langchain_groq import ChatGroq
 
-            # Assuming Langchain == Groq based on user request "Langchain - only groq"
-            # But "langchain" suggests generic.
-            # User requirement: "1. Langchain - only groq -> only api key is required and model name"
-
             chat = ChatGroq(
-                api_key=provider_config.api_key, model_name=provider_config.model_name
+                api_key=plaintext_api_key, model_name=provider_config.model_name
             )
             from langchain_core.messages import HumanMessage
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.api import deps
+from app.core import security
 from app.core.database import get_session
 from app.models.all_models import (
     ApiKey,
@@ -69,7 +70,16 @@ class ApiKeyCreate(BaseModel):
 
 class ApiKeyRead(BaseModel):
     id: uuid.UUID
-    key: str
+    key: str          # Masked display key (prefix + '...')
+    name: str
+    application_id: uuid.UUID
+    is_active: bool
+
+
+class ApiKeyCreated(BaseModel):
+    """Returned once at creation – contains the full plaintext key."""
+    id: uuid.UUID
+    key: str          # Full plaintext – shown only at creation time
     name: str
     application_id: uuid.UUID
     is_active: bool
@@ -314,9 +324,12 @@ async def create_application(
     await session.refresh(application)
 
     # Auto-generate API key
-    new_key = secrets.token_urlsafe(32)
+    plaintext_key = f"sk-{secrets.token_urlsafe(32)}"
     api_key_obj = ApiKey(
-        key=f"sk-{new_key}", name=f"{app_in.name} Key", application_id=application.id
+        key=security.hash_api_key(plaintext_key),
+        key_prefix=security.mask_api_key(plaintext_key),
+        name=f"{app_in.name} Key",
+        application_id=application.id,
     )
     session.add(api_key_obj)
     await session.commit()
@@ -326,7 +339,7 @@ async def create_application(
         name=application.name,
         project_id=application.project_id,
         rubric_prompt=application.rubric_prompt,
-        api_key=api_key_obj.key,
+        api_key=plaintext_key,  # Shown once – not stored in plaintext
         last_trace_at=None,
     )
 
@@ -375,7 +388,11 @@ async def read_applications(
             name=app.name,
             project_id=app.project_id,
             rubric_prompt=app.rubric_prompt,
-            api_key=app.api_keys[0].key if app.api_keys else None,
+            api_key=(
+                app.api_keys[0].key_prefix
+                if app.api_keys and app.api_keys[0].key_prefix
+                else ("sk-***..." if app.api_keys else None)
+            ),
             last_trace_at=last_trace_map.get(app.name),
         )
         for app in applications
@@ -432,7 +449,11 @@ async def read_application(
         name=application.name,
         project_id=application.project_id,
         rubric_prompt=application.rubric_prompt,
-        api_key=application.api_keys[0].key if application.api_keys else None,
+        api_key=(
+            application.api_keys[0].key_prefix
+            if application.api_keys and application.api_keys[0].key_prefix
+            else ("sk-***..." if application.api_keys else None)
+        ),
         last_trace_at=last_trace_at,
     )
 
@@ -503,7 +524,11 @@ async def update_application(
         name=app_reloaded.name,
         project_id=app_reloaded.project_id,
         rubric_prompt=app_reloaded.rubric_prompt,
-        api_key=app_reloaded.api_keys[0].key if app_reloaded.api_keys else None,
+        api_key=(
+            app_reloaded.api_keys[0].key_prefix
+            if app_reloaded.api_keys and app_reloaded.api_keys[0].key_prefix
+            else ("sk-***..." if app_reloaded.api_keys else None)
+        ),
         last_trace_at=last_trace_at,
     )
 
@@ -556,7 +581,7 @@ async def delete_application(
     return {"status": "deleted"}
 
 
-@router.post("/api-keys", response_model=ApiKeyRead)
+@router.post("/api-keys", response_model=ApiKeyCreated)
 async def create_api_key(
     key_in: ApiKeyCreate,
     current_user: User = Depends(deps.get_current_user),
@@ -564,6 +589,7 @@ async def create_api_key(
 ) -> Any:
     """
     Create new API key for an application.
+    The full plaintext key is returned once in this response and never stored.
     """
     # Verify user has access to application (via project -> org)
     application = await session.get(Application, key_in.application_id)
@@ -581,14 +607,23 @@ async def create_api_key(
             status_code=403, detail="Not a member of the application's organization"
         )
 
-    new_key = secrets.token_urlsafe(32)
+    plaintext_key = f"sk-{secrets.token_urlsafe(32)}"
     api_key_obj = ApiKey(
-        key=f"sk-{new_key}", name=key_in.name, application_id=key_in.application_id
+        key=security.hash_api_key(plaintext_key),
+        key_prefix=security.mask_api_key(plaintext_key),
+        name=key_in.name,
+        application_id=key_in.application_id,
     )
     session.add(api_key_obj)
     await session.commit()
     await session.refresh(api_key_obj)
-    return api_key_obj
+    return ApiKeyCreated(
+        id=api_key_obj.id,
+        key=plaintext_key,  # Full key returned once – not stored in plaintext
+        name=api_key_obj.name,
+        application_id=api_key_obj.application_id,
+        is_active=api_key_obj.is_active,
+    )
 
 
 @router.get("/api-keys", response_model=List[ApiKeyRead])
@@ -598,6 +633,7 @@ async def read_api_keys(
 ) -> Any:
     """
     Retrieve API keys for applications accessible to the current user.
+    The 'key' field shows only the masked prefix – the full key is never re-exposed.
     """
     # Join ApiKey -> Application -> Project -> Organization -> OrganizationUserLink
     stmt = (
@@ -610,4 +646,13 @@ async def read_api_keys(
     )
     result = await session.execute(stmt)
     keys = result.scalars().all()
-    return keys
+    return [
+        ApiKeyRead(
+            id=k.id,
+            key=k.key_prefix if k.key_prefix else "sk-***...",
+            name=k.name,
+            application_id=k.application_id,
+            is_active=k.is_active,
+        )
+        for k in keys
+    ]

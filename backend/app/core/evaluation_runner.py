@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core.database import engine
+from app.core.security import decrypt_value, hash_api_key
 from app.models.evaluation_rule import EvaluationRule
 from app.models.evaluation_result import EvaluationResult
 from app.models.all_models import ApiKey, Application
@@ -15,7 +16,117 @@ from observix.context import observability_context
 from observix import init_observability
 from opentelemetry import trace, context as otel_context
 
+import json
+
 logger = logging.getLogger(__name__)
+
+def extract_clean_param(val: str, param_type: str) -> str:
+    if not val:
+        return ""
+    if not isinstance(val, str):
+        val = str(val)
+        
+    val_trimmed = val.strip()
+    if not (val_trimmed.startswith("{") or val_trimmed.startswith("[")):
+        return val
+        
+    try:
+        data = json.loads(val_trimmed)
+    except:
+        try:
+            # Try python-like dict replacement
+            json_str = val_trimmed.replace("'", '"').replace("True", "true").replace("False", "false").replace("None", "null")
+            data = json.loads(json_str)
+        except:
+            return val
+            
+    def extract_from_messages(msgs):
+        if not isinstance(msgs, list):
+            return ""
+        for m in reversed(msgs):
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or m.get("type") or "").lower()
+            content = m.get("content") or m.get("text") or m.get("message")
+            if content:
+                if param_type == "input" and ("user" in role or "human" in role):
+                    return str(content)
+                elif param_type == "output" and ("ai" in role or "assistant" in role or "model" in role or "output" in role):
+                    return str(content)
+        for m in reversed(msgs):
+            if isinstance(m, dict):
+                content = m.get("content") or m.get("text") or m.get("message")
+                if content:
+                    return str(content)
+        return ""
+
+    if isinstance(data, dict):
+        keys = ["input", "query", "question", "prompt"] if param_type == "input" else ["output", "response", "completion", "result", "text"]
+        for k in keys:
+            if k in data and data[k]:
+                if isinstance(data[k], str):
+                    return data[k]
+                elif isinstance(data[k], list):
+                    res = extract_from_messages(data[k])
+                    if res: return res
+                    
+        if "messages" in data and isinstance(data["messages"], list):
+            res = extract_from_messages(data["messages"])
+            if res: return res
+            
+        if "args" in data and isinstance(data["args"], list) and data["args"]:
+            first_arg = data["args"][0]
+            if isinstance(first_arg, str):
+                return first_arg
+            elif isinstance(first_arg, list):
+                res = extract_from_messages(first_arg)
+                if res: return res
+                
+        if "kwargs" in data and isinstance(data["kwargs"], dict):
+            kwargs_data = data["kwargs"]
+            for k in ["input", "query", "question", "prompt"] if param_type == "input" else ["output", "response", "completion", "result", "text"]:
+                if k in kwargs_data and kwargs_data[k]:
+                    if isinstance(kwargs_data[k], str):
+                        return kwargs_data[k]
+                    elif isinstance(kwargs_data[k], list):
+                        res = extract_from_messages(kwargs_data[k])
+                        if res: return res
+            if "messages" in kwargs_data and isinstance(kwargs_data["messages"], list):
+                res = extract_from_messages(kwargs_data["messages"])
+                if res: return res
+                
+        if param_type == "output" and "choices" in data and isinstance(data["choices"], list) and data["choices"]:
+            first_choice = data["choices"][0]
+            if isinstance(first_choice, dict):
+                msg = first_choice.get("message")
+                if isinstance(msg, dict) and msg.get("content"):
+                    return str(msg["content"])
+                    
+    elif isinstance(data, list):
+        res = extract_from_messages(data)
+        if res: return res
+        
+    return val
+
+
+async def fetch_retrieval_contexts(trace_id: str) -> list:
+    if not trace_id:
+        return []
+    from app.core.clickhouse import get_clickhouse_client
+    try:
+        ch_client = get_clickhouse_client()
+        query = f"""
+            SELECT output_text 
+            FROM observations 
+            WHERE trace_id = '{trace_id}'
+              AND (type = 'retrieval' OR name LIKE '%retriev%' OR name LIKE '%search%')
+        """
+        rows = ch_client.query(query).result_rows
+        return [row[0] for row in rows if row[0]]
+    except Exception as ex:
+        logger.error(f"Failed to fetch retrieval contexts from ClickHouse: {ex}")
+        return []
+
 
 async def run_triggered_evaluation(rule_id: int, trace_data: dict):
     """
@@ -44,14 +155,38 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                 return
 
             inputs = rule.inputs or {}
+            target_trace_id = trace_data.get("trace_id")
             
             # Prepare Inputs
             # Prioritize trace_data, then rule inputs
-            query = trace_data.get("input") or inputs.get("input") or inputs.get("query")
-            context = trace_data.get("context") or inputs.get("context")
-            output = trace_data.get("output") or inputs.get("output") or inputs.get("response")    
+            raw_query = trace_data.get("input") or inputs.get("input") or inputs.get("query")
+            query = extract_clean_param(raw_query, "input")
+            
+            # Automatically fetch context from ClickHouse retrieval observations if available
+            retrieved_contexts = []
+            if target_trace_id:
+                retrieved_contexts = await fetch_retrieval_contexts(target_trace_id)
+                
+            if retrieved_contexts:
+                context = retrieved_contexts
+            else:
+                context = trace_data.get("context") or inputs.get("context")
+                
+            resolved_app_name = trace_data.get("application_name")
+            if not resolved_app_name and target_trace_id:
+                try:
+                    from app.core.clickhouse import get_clickhouse_client
+                    ch_client = get_clickhouse_client()
+                    ch_res = ch_client.query(f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1").result_rows
+                    if ch_res and ch_res[0][0]:
+                        resolved_app_name = str(ch_res[0][0])
+                except Exception as ex:
+                    logger.error(f"Failed to query trace application_name in runner: {ex}")
+
+            raw_output = trace_data.get("output") or inputs.get("output") or inputs.get("response")    
+            output = extract_clean_param(raw_output, "output")
+            
             expected = trace_data.get("expected") or inputs.get("expected")
-            target_trace_id = trace_data.get("trace_id")
 
             for metric_id in metric_ids:
                 # Create Initial Evaluation Result (PENDING/RUNNING)
@@ -63,7 +198,7 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                     context=context if isinstance(context, list) else [str(context)] if context else [],
                     expected_output=str(expected) if expected else None,
                     status="RUNNING",
-                    application_name=trace_data.get("application_name") or inputs.get("application_name")
+                    application_name=resolved_app_name or inputs.get("application_name")
                 )
                 session.add(eval_result)
                 await session.commit()
@@ -81,8 +216,20 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
 
                     # Fallback to Stored Provider if keys not in inputs
                     if not api_key:
+                         provider_id = inputs.get("provider_id")
                          app_id = rule.application_id
-                         if app_id:
+                         provider_obj = None
+                         
+                         # If provider_id is specified, fetch exact provider
+                         if provider_id:
+                             try:
+                                 provider_obj = await session.get(LLMProvider, provider_id)
+                             except Exception as e:
+                                 logger.error(f"Failed to fetch provider {provider_id}: {e}")
+                                 provider_obj = None
+                         
+                         # Fallback: search by provider type if no exact match
+                         if not provider_obj and app_id:
                              app_res = await session.get(Application, app_id)
                              if app_res:
                                  # Find Provider for Project
@@ -90,20 +237,18 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                                      LLMProvider.project_id == app_res.project_id,
                                      LLMProvider.provider == provider
                                  )
-                                 # If multiple, maybe pick first or exact model match? 
-                                 # For now, simplistic: match provider
                                  prov_res = await session.execute(stmt)
                                  provider_obj = prov_res.scalars().first()
-                                 
-                                 if provider_obj:
-                                     api_key = provider_obj.api_key
-                                     if not model: model = provider_obj.model_name
-                                     if not azure_endpoint: azure_endpoint = provider_obj.base_url
-                                     if not api_version: api_version = provider_obj.api_version
-                                     if not deployment_name: deployment_name = provider_obj.deployment_name
+                         
+                         if provider_obj:
+                             api_key = decrypt_value(provider_obj.api_key)
+                             if not model: model = provider_obj.model_name
+                             if not azure_endpoint: azure_endpoint = provider_obj.base_url
+                             if not api_version: api_version = provider_obj.api_version
+                             if not deployment_name: deployment_name = provider_obj.deployment_name
 
                     if not model:
-                        model = "gpt-4o"
+                        model = deployment_name
 
                     # Observability Config
                     observe = inputs.get("observe", False)

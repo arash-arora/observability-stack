@@ -8,9 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from opentelemetry import trace
 from app.core.database import get_session
 from app.core.schema import MetricInfo, EvaluationRequest, EvaluationResponse
+from app.core.security import (
+    hash_api_key,
+    decrypt_value,
+    create_internal_ingest_token,
+    resolve_ingest_key_hash,
+)
 from app.api.v1.endpoints.data.metric_data import STATIC_METRICS_REGISTRY
 from observix.context import observability_context
 from observix import init_observability
+from app.models.llm_provider import LLMProvider
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -19,6 +26,7 @@ logger = logging.getLogger(__name__)
 from sqlmodel import select, func, desc
 from app.models.metric import Metric
 from app.models.evaluation_result import EvaluationResult
+from app.models.all_models import Application, ApiKey, Project, OrganizationUserLink
 from pydantic import BaseModel
 from datetime import datetime
 import uuid
@@ -181,7 +189,9 @@ async def delete_metric(
 
 @router.post("/run", response_model=EvaluationResponse)
 async def run_evaluation(
-    request: EvaluationRequest, db: AsyncSession = Depends(get_session)
+    request: EvaluationRequest,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Run an evaluation on-demand using the SDK.
@@ -196,12 +206,88 @@ async def run_evaluation(
     api_version = inputs.get("api_version")
     deployment_name = inputs.get("deployment_name")
 
+    # If a registered provider is referenced, resolve credentials server-side.
+    # This avoids relying on masked API keys from frontend provider list responses.
+    provider_id = inputs.get("provider_id")
+    if provider_id:
+        provider_obj = None
+        try:
+            provider_obj = await db.get(LLMProvider, provider_id)
+        except Exception:
+            provider_obj = None
+
+        if not provider_obj:
+            raise HTTPException(status_code=400, detail="Invalid provider_id")
+
+        provider = provider_obj.provider
+        azure_endpoint = provider_obj.base_url
+        api_version = provider_obj.api_version
+        deployment_name = provider_obj.deployment_name
+
+        if provider == "azure":
+            model = provider_obj.deployment_name or provider_obj.model_name
+        else:
+            model = provider_obj.model_name
+
+        try:
+            api_key = decrypt_value(provider_obj.api_key)
+        except Exception:
+            # Backward compatibility for any rows not yet encrypted.
+            api_key = provider_obj.api_key
+
     # Observability Configuration
     logger.info(f"RUN_EVALUATION INPUTS: {inputs}")
     observe = inputs.get("observe", False)
     logger.info(f"RUN_EVALUATION OBSERVE FLAG: {observe}")
     user_api_key = inputs.get("user_api_key")
     host = inputs.get("host") or "http://localhost:8000"
+
+    # For trace/node evaluations, auto-resolve the ingest key from app context
+    # if frontend doesn't provide one explicitly.
+    trace_input = inputs.get("trace")
+    if observe and not user_api_key:
+        app_name = inputs.get("application_name")
+
+        if not app_name and isinstance(trace_input, dict):
+            app_name = trace_input.get("application_name")
+            if not app_name:
+                spans = trace_input.get("spans") if isinstance(trace_input.get("spans"), list) else []
+                observations = (
+                    trace_input.get("observations")
+                    if isinstance(trace_input.get("observations"), list)
+                    else []
+                )
+                if spans:
+                    app_name = spans[0].get("application_name")
+                if not app_name and observations:
+                    app_name = observations[0].get("application_name")
+
+        if app_name:
+            app_stmt = (
+                select(Application)
+                .join(Project, Application.project_id == Project.id)
+                .join(
+                    OrganizationUserLink,
+                    OrganizationUserLink.organization_id == Project.organization_id,
+                )
+                .where(
+                    Application.name == app_name,
+                    OrganizationUserLink.user_id == current_user.id,
+                )
+            )
+            app_res = await db.execute(app_stmt)
+            app_obj = app_res.scalars().first()
+
+            if app_obj:
+                key_stmt = (
+                    select(ApiKey)
+                    .where(ApiKey.application_id == app_obj.id, ApiKey.is_active == True)
+                    .order_by(desc(ApiKey.created_at))
+                )
+                key_res = await db.execute(key_stmt)
+                key_obj = key_res.scalars().first()
+                if key_obj:
+                    user_api_key = create_internal_ingest_token(key_obj.key)
 
     context_api_key = user_api_key if observe else None
     context_host = host if observe and user_api_key else None
@@ -282,8 +368,6 @@ async def run_evaluation(
 
                 trace_id = None
 
-                trace_input = inputs.get("trace")
-
                 # Fetch Application Rubrics (Application Context)
                 rubric_prompt = None
 
@@ -291,14 +375,15 @@ async def run_evaluation(
                 # Priority 1: user_api_key (Observix API Key) - Most reliable
                 api_key_obj = None
                 if user_api_key:
-                    from app.models.all_models import ApiKey
                     from sqlalchemy.orm import selectinload as sql_selectinload
 
-                    # Query ApiKey -> Application
+                    key_hash = resolve_ingest_key_hash(user_api_key)
+
+                    # Query ApiKey by resolved hash -> Application
                     stmt = (
                         select(ApiKey)
                         .options(sql_selectinload(ApiKey.application))
-                        .where(ApiKey.key == user_api_key)
+                        .where(ApiKey.key == key_hash)
                     )
                     ak_result = await db.execute(stmt)
                     api_key_obj = ak_result.scalars().first()
@@ -312,8 +397,6 @@ async def run_evaluation(
 
                 # Priority 2: application_id in inputs (if API key not provided or failed)
                 if not rubric_prompt and inputs.get("application_id"):
-                    from app.models.all_models import Application
-
                     app_id_val = inputs.get("application_id")
 
                     # Validate usage permissions/auth if strictly needed,
@@ -324,7 +407,7 @@ async def run_evaluation(
 
                 async def _execute_eval():
                     # Forward any non-standard inputs directly to Evaluator as kwargs
-                    mapped_keys = {"input", "query", "output", "response", "context", "expected", "trace", "provider", "model", "api_key", "azure_endpoint", "api_version", "deployment_name", "observe", "user_api_key", "host", "custom_prompt"}
+                    mapped_keys = {"input", "query", "output", "response", "context", "expected", "trace", "provider", "provider_id", "model", "api_key", "azure_endpoint", "api_version", "deployment_name", "observe", "user_api_key", "host", "custom_prompt"}
                     extra_kwargs = {k: v for k, v in inputs.items() if k not in mapped_keys}
                     
                     if metric_prompt:
@@ -384,8 +467,21 @@ async def run_evaluation(
                 persist_result = inputs.get("persist_result", True)
                 if persist_result and observe:
                     try:
+                        target_trace_id = request.trace_id or inputs.get("trace_id") or (inputs.get("trace") if isinstance(inputs.get("trace"), str) else inputs.get("trace", {}).get("trace_id") if isinstance(inputs.get("trace"), dict) else None)
+                        
+                        resolved_app_name = None
+                        if target_trace_id:
+                            try:
+                                from app.core.clickhouse import get_clickhouse_client
+                                ch_client = get_clickhouse_client()
+                                ch_res = ch_client.query(f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1").result_rows
+                                if ch_res and ch_res[0][0]:
+                                    resolved_app_name = str(ch_res[0][0])
+                            except Exception as ex:
+                                logger.error(f"Failed to query trace application_name: {ex}")
+                        
                         eval_result = EvaluationResult(
-                            trace_id=trace_id,
+                            trace_id=target_trace_id or trace_id,
                             metric_id=request.metric_id,
                             input=str(query) if query else None,
                             output=str(output) if output else None,
@@ -400,7 +496,7 @@ async def run_evaluation(
                             passed=result.passed,
                             status="COMPLETED",
                             metadata_json=result.metadata,
-                            application_name=inputs.get("application_name")
+                            application_name=resolved_app_name or inputs.get("application_name")
                             or (
                                 api_key_obj.application.name
                                 if api_key_obj and api_key_obj.application

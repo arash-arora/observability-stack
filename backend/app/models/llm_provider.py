@@ -11,7 +11,7 @@ class LLMProvider(SQLModel, table=True):
     provider: str  # openai, azure, langchain
     model_name: str  # e.g. gpt-4o
 
-    # Credentials (Stored as plaintext for this demo/research app)
+    # Credentials (stored encrypted with Fernet symmetric encryption – decrypt before use)
     api_key: str
     base_url: Optional[str] = None
     api_version: Optional[str] = None
