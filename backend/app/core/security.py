@@ -7,7 +7,7 @@ import jwt
 from cryptography.fernet import Fernet
 
 ALGORITHM = "HS256"
-SECRET_KEY = "CHANGE_THIS_TO_A_SECURE_SECRET_KEY" # In prod, use env var based settings
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "CHANGE_THIS_TO_A_SECURE_SECRET_KEY")
 INTERNAL_INGEST_TOKEN_PREFIX = "intk_"
 
 # ---------------------------------------------------------------------------

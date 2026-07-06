@@ -139,8 +139,8 @@ export default function MetricsPage() {
 
   // Calculate summary counts
   const totalMetrics = metrics.length;
-  const customMetrics = metrics.filter(m => m.type === 'custom').length;
-  const sdkMetrics = metrics.filter(m => m.type !== 'custom').length;
+  const customMetrics = metrics.filter(m => m.type === "custom").length;
+  const sdkMetrics = metrics.filter(m => m.tags.includes("preset")).length;
 
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
