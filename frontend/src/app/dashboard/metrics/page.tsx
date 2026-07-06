@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   FlaskConical,
   Beaker,
+  Sparkles,
   Edit2,
   Trash2
 } from "lucide-react";
@@ -136,6 +137,11 @@ export default function MetricsPage() {
     return matchesSearch && matchesSource;
   });
 
+  // Calculate summary counts
+  const totalMetrics = metrics.length;
+  const customMetrics = metrics.filter(m => m.type === 'custom').length;
+  const sdkMetrics = metrics.filter(m => m.type !== 'custom').length;
+
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation();
     if (confirm(`Are you sure you want to delete the metric "${name}"?`)) {
@@ -167,245 +173,189 @@ export default function MetricsPage() {
         )}
       </PageHeader>
 
-      <div className="flex gap-8">
-        {/* Sidebar Filters */}
-        <div className="w-64 space-y-8 shrink-0">
-          <div className="space-y-3">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Source
-            </h3>
-            <div className="flex flex-col gap-1">
-              <Button
-                variant={selectedSource === "all" ? "secondary" : "ghost"}
-                className="justify-start w-full text-left"
-                onClick={() => setSelectedSource("all")}
-              >
-                All Metrics
-              </Button>
-              <Button
-                variant={selectedSource === "preset" ? "secondary" : "ghost"}
-                className="justify-start w-full text-left"
-                onClick={() => setSelectedSource("preset")}
-              >
-                SDK Metrics
-              </Button>
-              <Button
-                variant={selectedSource === "custom" ? "secondary" : "ghost"}
-                className="justify-start w-full text-left"
-                onClick={() => setSelectedSource("custom")}
-              >
-                Custom Metrics
-              </Button>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
+        {/* Total Metrics */}
+        <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_12px_36px_rgba(0,0,0,0.04)] transition-all duration-300">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-xl bg-[#0071e3]/10">
+              <FlaskConical size={20} className="text-[#0071e3]" />
             </div>
+            <h3 className="text-[11px] font-bold text-[#6e6e73] uppercase tracking-widest">Total Metrics</h3>
           </div>
-
-          <div className="space-y-3">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Tags
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {[
-                "preset",
-                "custom",
-                "rag",
-                "safety",
-                "agents",
-                "tools"
-              ].map((tag) => (
-                <Badge
-                  key={tag}
-                  variant="outline"
-                  className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          </div>
+          <div className="text-3xl font-semibold tracking-tight text-[#1d1d1f]">{totalMetrics}</div>
+          <div className="text-xs text-[#6e6e73] mt-2">All available metrics</div>
         </div>
 
-        {/* Main Content */}
-        <div className="flex-1 space-y-4 min-w-0">
-          {/* Search Bar */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name or tag..."
-              className="pl-9 bg-background/50 backdrop-blur-sm"
-              value={searchQuery}
-              onChange={(e: any) => setSearchQuery(e.target.value)}
-            />
+        {/* Custom Metrics */}
+        <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_12px_36px_rgba(0,0,0,0.04)] transition-all duration-300">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-xl bg-emerald-500/10">
+              <Beaker size={20} className="text-emerald-600" />
+            </div>
+            <h3 className="text-[11px] font-bold text-[#6e6e73] uppercase tracking-widest">Custom Metrics</h3>
           </div>
-
-          {/* Metrics Tables */}
-          {fetchError && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {fetchError}
-            </div>
-          )}
-
-          {filteredMetrics.filter(m => m.type === 'custom').length > 0 && (
-            <div className="mb-8">
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <FlaskConical size={18} className="text-primary" />
-                My Custom Metrics
-                <Badge variant="secondary" className="ml-2 font-normal">{filteredMetrics.filter(m => m.type === 'custom').length}</Badge>
-              </h2>
-              <div className="rounded-md border bg-card shadow-sm overflow-hidden">
-                <div className="w-full overflow-auto">
-                  <table className="w-full caption-bottom text-sm text-left">
-                    <thead className="bg-muted/50">
-                      <tr className="border-b transition-colors">
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-[400px]">Metric Details</th>
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Type</th>
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Required Inputs</th>
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-[150px]">Tags</th>
-                        <th className="h-10 px-4 text-right align-middle font-medium text-muted-foreground w-[100px]">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="[&_tr:last-child]:border-0 bg-card">
-                      {filteredMetrics.filter(m => m.type === 'custom').map((metric) => (
-                        <tr
-                          key={metric.id}
-                          className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
-                          onClick={() => router.push(`/dashboard/metrics/${metric.id}`)}
-                        >
-                          <td className="p-4 align-top">
-                            <div className="flex flex-col gap-1">
-                              <span className="font-medium text-sm text-foreground">{metric.name}</span>
-                              <span className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{metric.description}</span>
-                            </div>
-                          </td>
-                          <td className="p-4 align-top">
-                            <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-primary/10 text-primary hover:bg-primary/20">
-                              {metric.type}
-                            </div>
-                          </td>
-                          <td className="p-4 align-top">
-                            <div className="flex flex-wrap gap-1.5">
-                              {metric.inputs.map((input) => (
-                                <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
-                                  {input}
-                                </code>
-                              ))}
-                              {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
-                            </div>
-                          </td>
-                          <td className="p-4 align-top">
-                            <div className="flex gap-1.5 flex-wrap">
-                              {metric.tags.slice(0, 3).map((tag) => (
-                                <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0 h-5 font-normal border border-border">{tag}</Badge>
-                              ))}
-                              {metric.tags.length > 3 && (
-                                <span className="text-xs text-muted-foreground self-center ml-1">+{metric.tags.length - 3}</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-4 align-middle text-right">
-                            <div className="flex items-center justify-end gap-2 text-muted-foreground">
-                              <button
-                                className="p-1.5 cursor-pointer hover:bg-muted hover:text-foreground rounded transition-colors"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  router.push(`/dashboard/metrics/${metric.id}/edit`);
-                                }}
-                                title="Edit Metric"
-                              >
-                                <Edit2 size={16} />
-                              </button>
-                              <button
-                                className="p-1.5 cursor-pointer hover:bg-destructive/10 text-destructive rounded transition-colors"
-                                onClick={(e) => handleDelete(e, metric.id, metric.name)}
-                                title="Delete Metric"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {filteredMetrics.filter(m => m.type !== 'custom').length > 0 && (
-            <div>
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <Beaker size={18} className="text-muted-foreground" />
-                Metrics
-                <Badge variant="secondary" className="ml-2 font-normal">{filteredMetrics.filter(m => m.type !== 'custom').length}</Badge>
-              </h2>
-              <div className="rounded-md border bg-card shadow-sm overflow-hidden">
-                <div className="w-full overflow-auto">
-                  <table className="w-full caption-bottom text-sm text-left">
-                    <thead className="bg-muted/50">
-                      <tr className="border-b transition-colors">
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-[400px]">Metric Details</th>
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Type</th>
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground">Required Inputs</th>
-                        <th className="h-10 px-4 text-left align-middle font-medium text-muted-foreground w-[150px]">Tags</th>
-                        <th className="h-10 px-4 text-right align-middle font-medium text-muted-foreground w-[100px]">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="[&_tr:last-child]:border-0 bg-card">
-                      {filteredMetrics.filter(m => m.type !== 'custom').map((metric) => (
-                        <tr
-                          key={metric.id}
-                          className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
-                          onClick={() => router.push(`/dashboard/metrics/${metric.id}`)}
-                        >
-                          <td className="p-4 align-top">
-                            <div className="flex flex-col gap-1">
-                              <span className="font-medium text-sm text-foreground">{metric.name}</span>
-                              <span className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{metric.description}</span>
-                            </div>
-                          </td>
-                          <td className="p-4 align-top">
-                            <div className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
-                              {metric.type}
-                            </div>
-                          </td>
-                          <td className="p-4 align-top">
-                            <div className="flex flex-wrap gap-1.5">
-                              {metric.inputs.map((input) => (
-                                <code key={input} className="relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs font-semibold text-muted-foreground">
-                                  {input}
-                                </code>
-                              ))}
-                              {metric.inputs.length === 0 && <span className="text-muted-foreground text-xs">-</span>}
-                            </div>
-                          </td>
-                          <td className="p-4 align-top">
-                            <div className="flex gap-1.5 flex-wrap">
-                              {metric.tags.slice(0, 3).map((tag) => (
-                                <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0 h-5 font-normal border border-border">{tag}</Badge>
-                              ))}
-                              {metric.tags.length > 3 && (
-                                <span className="text-xs text-muted-foreground self-center ml-1">+{metric.tags.length - 3}</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-4 align-middle text-right text-muted-foreground">
-                            -
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {filteredMetrics.length === 0 && (
-            <div className="p-12 text-center text-muted-foreground text-sm">
-              No metrics found matching your filters.
-            </div>
-          )}
+          <div className="text-3xl font-semibold tracking-tight text-[#1d1d1f]">{customMetrics}</div>
+          <div className="text-xs text-[#6e6e73] mt-2">User-defined evaluations</div>
         </div>
+
+        {/* SDK Metrics */}
+        <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] hover:shadow-[0_12px_36px_rgba(0,0,0,0.04)] transition-all duration-300">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-xl bg-amber-500/10">
+              <Sparkles size={20} className="text-amber-600" />
+            </div>
+            <h3 className="text-[11px] font-bold text-[#6e6e73] uppercase tracking-widest">SDK Metrics</h3>
+          </div>
+          <div className="text-3xl font-semibold tracking-tight text-[#1d1d1f]">{sdkMetrics}</div>
+          <div className="text-xs text-[#6e6e73] mt-2">Pre-built evaluations</div>
+        </div>
+      </div>
+
+      {/* Horizontal Filter Bar */}
+      <div className="flex items-center gap-4 bg-white/70 backdrop-blur-xl border border-black/[0.04] rounded-2xl p-4 shadow-sm">
+        {/* Search */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name or tag..."
+            className="pl-9 bg-white border-black/[0.08]"
+            value={searchQuery}
+            onChange={(e: any) => setSearchQuery(e.target.value)}
+          />
+        </div>
+
+        {/* Type Pills */}
+        <div className="flex items-center gap-2 border-l border-black/[0.08] pl-4">
+          <span className="text-xs font-semibold text-[#6e6e73] uppercase tracking-wider">Type:</span>
+          <button
+            onClick={() => setSelectedSource("all")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
+              selectedSource === "all"
+                ? "bg-[#0071e3] text-white shadow-sm"
+                : "bg-white text-[#6e6e73] hover:bg-[#0071e3]/10 border border-black/[0.08]"
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setSelectedSource("preset")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
+              selectedSource === "preset"
+                ? "bg-[#0071e3] text-white shadow-sm"
+                : "bg-white text-[#6e6e73] hover:bg-[#0071e3]/10 border border-black/[0.08]"
+            }`}
+          >
+            SDK Metrics
+          </button>
+          <button
+            onClick={() => setSelectedSource("custom")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
+              selectedSource === "custom"
+                ? "bg-[#0071e3] text-white shadow-sm"
+                : "bg-white text-[#6e6e73] hover:bg-[#0071e3]/10 border border-black/[0.08]"
+            }`}
+          >
+            Custom Metrics
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="space-y-4">
+
+        {/* Error Message */}
+        {fetchError && (
+          <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {fetchError}
+          </div>
+        )}
+
+        {/* Unified Metrics Table */}
+        {filteredMetrics.length > 0 ? (
+          <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.02)] overflow-hidden">
+            <div className="w-full overflow-auto">
+              <table className="w-full caption-bottom text-sm text-left">
+                <thead className="bg-black/[0.02]">
+                  <tr className="border-b border-black/[0.04]">
+                    <th className="h-10 px-4 text-left align-middle font-semibold text-[#6e6e73] text-[11px] uppercase tracking-wider w-[500px]">Metric Details</th>
+                    <th className="h-10 px-4 text-left align-middle font-semibold text-[#6e6e73] text-[11px] uppercase tracking-wider">Type</th>
+                    <th className="h-10 px-4 text-left align-middle font-semibold text-[#6e6e73] text-[11px] uppercase tracking-wider">Required Inputs</th>
+                    <th className="h-10 px-4 text-right align-middle font-semibold text-[#6e6e73] text-[11px] uppercase tracking-wider w-[100px]">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="[&_tr:last-child]:border-0 bg-white/50">
+                  {filteredMetrics.map((metric) => (
+                    <tr
+                      key={metric.id}
+                      className="border-b border-black/[0.04] transition-colors hover:bg-black/[0.02] cursor-pointer"
+                      onClick={() => router.push(`/dashboard/metrics/${metric.id}`)}
+                    >
+                      <td className="p-4 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-sm text-[#1d1d1f]">{metric.name}</span>
+                            {metric.tags.includes("preset") && (
+                              <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-medium bg-amber-100 text-amber-700 border-amber-200">SDK</Badge>
+                            )}
+                            {metric.type === 'custom' && (
+                              <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-medium bg-emerald-100 text-emerald-700 border-emerald-200">Custom</Badge>
+                            )}
+                          </div>
+                          <span className="text-xs text-[#6e6e73] line-clamp-2 leading-relaxed">{metric.description}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 align-top">
+                        <div className="inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-medium bg-[#0071e3]/10 text-[#0071e3]">
+                          {metric.type}
+                        </div>
+                      </td>
+                      <td className="p-4 align-top">
+                        <div className="flex flex-wrap gap-1.5">
+                          {metric.inputs.map((input) => (
+                            <code key={input} className="relative rounded bg-black/[0.05] px-2 py-0.5 font-mono text-[10px] font-semibold text-[#1d1d1f]">
+                              {input}
+                            </code>
+                          ))}
+                          {metric.inputs.length === 0 && <span className="text-[#6e6e73] text-xs">-</span>}
+                        </div>
+                      </td>
+                      <td className="p-4 align-middle text-right">
+                        {metric.type === 'custom' ? (
+                          <div className="flex items-center justify-end gap-2 text-[#6e6e73]">
+                            <button
+                              className="p-1.5 cursor-pointer hover:bg-[#0071e3]/10 hover:text-[#0071e3] rounded transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/dashboard/metrics/${metric.id}/edit`);
+                              }}
+                              title="Edit Metric"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              className="p-1.5 cursor-pointer hover:bg-red-50 text-red-600 rounded transition-colors"
+                              onClick={(e) => handleDelete(e, metric.id, metric.name)}
+                              title="Delete Metric"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[#6e6e73] text-xs">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="p-12 text-center text-[#6e6e73] text-sm font-medium">
+            No metrics found matching your filters.
+          </div>
+        )}
       </div>
     </div>
   );

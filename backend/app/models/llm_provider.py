@@ -1,7 +1,8 @@
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime
 import uuid
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field, Column
+from sqlalchemy import JSON
 
 
 class LLMProvider(SQLModel, table=True):
@@ -15,6 +16,9 @@ class LLMProvider(SQLModel, table=True):
     base_url: Optional[str] = None
     api_version: Optional[str] = None
     deployment_name: Optional[str] = None
+
+    # Provider-specific configuration (for cloud providers like Bedrock, Vertex AI, HuggingFace)
+    provider_config: Optional[Dict] = Field(default=None, sa_column=Column(JSON))
 
     project_id: uuid.UUID = Field(index=True)
     user_id: Optional[uuid.UUID] = Field(default=None, index=True)

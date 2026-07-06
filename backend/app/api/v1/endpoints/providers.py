@@ -30,7 +30,7 @@ class CreateProviderRequest(BaseModel):
     base_url: Optional[str] = None
     api_version: Optional[str] = None
     deployment_name: Optional[str] = None
-    deployment_name: Optional[str] = None
+    provider_config: Optional[Dict] = None
     project_id: uuid.UUID
     is_public: bool = False
 
@@ -43,6 +43,7 @@ class UpdateProviderRequest(BaseModel):
     base_url: Optional[str] = None
     api_version: Optional[str] = None
     deployment_name: Optional[str] = None
+    provider_config: Optional[Dict] = None
     is_public: Optional[bool] = None
 
 
@@ -201,6 +202,70 @@ async def test_provider(
 
             response = await chat.ainvoke([HumanMessage(content=request.input_text)])
             return {"output": response.content}
+
+        elif provider_config.provider == "huggingface":
+            from huggingface_hub import InferenceClient
+
+            config_data = provider_config.provider_config or {}
+            client = InferenceClient(
+                model=config_data.get('inference_endpoint') or provider_config.model_name,
+                token=provider_config.api_key
+            )
+
+            response = client.chat_completion(
+                messages=[{"role": "user", "content": request.input_text}],
+                max_tokens=1024
+            )
+            return {"output": response.choices[0].message.content}
+
+        elif provider_config.provider == "bedrock":
+            import boto3
+            import json
+
+            config_data = provider_config.provider_config or {}
+
+            bedrock = boto3.client(
+                service_name='bedrock-runtime',
+                region_name=config_data.get('aws_region'),
+                aws_access_key_id=config_data.get('aws_access_key_id'),
+                aws_secret_access_key=config_data.get('aws_secret_access_key'),
+                aws_session_token=config_data.get('aws_session_token')
+            )
+
+            # Format body based on model provider (e.g., Anthropic Claude via Bedrock)
+            body = json.dumps({
+                "messages": [{"role": "user", "content": request.input_text}],
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1024
+            })
+
+            response = bedrock.invoke_model(
+                modelId=provider_config.model_name,
+                body=body
+            )
+
+            response_body = json.loads(response['body'].read())
+            return {"output": response_body['content'][0]['text']}
+
+        elif provider_config.provider == "vertexai":
+            from google.cloud import aiplatform
+            from google.oauth2 import service_account
+            from vertexai.preview.generative_models import GenerativeModel
+            import json
+
+            config_data = provider_config.provider_config or {}
+            credentials_json = json.loads(config_data.get('gcp_credentials', '{}'))
+            credentials = service_account.Credentials.from_service_account_info(credentials_json)
+
+            aiplatform.init(
+                project=config_data.get('gcp_project_id'),
+                location=config_data.get('gcp_location'),
+                credentials=credentials
+            )
+
+            model = GenerativeModel(provider_config.model_name)
+            response = model.generate_content(request.input_text)
+            return {"output": response.text}
 
         else:
             raise HTTPException(

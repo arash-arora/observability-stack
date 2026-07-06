@@ -53,6 +53,19 @@ export default function ModelRegistry() {
   const [apiVersion, setApiVersion] = useState("");
   const [deploymentName, setDeploymentName] = useState("");
 
+  // AWS Bedrock specific
+  const [awsRegion, setAwsRegion] = useState("us-east-1");
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
+
+  // GCP Vertex AI specific
+  const [gcpProjectId, setGcpProjectId] = useState("");
+  const [gcpLocation, setGcpLocation] = useState("us-central1");
+  const [gcpCredentials, setGcpCredentials] = useState("");
+
+  // HuggingFace specific
+  const [hfInferenceEndpoint, setHfInferenceEndpoint] = useState("");
+
   const fetchProviders = async () => {
     if (!selectedProject) return;
     try {
@@ -83,11 +96,27 @@ export default function ModelRegistry() {
           project_id: selectedProject.id,
           is_public: isPublic
       };
-      
+
       if (providerType === "azure") {
           payload.base_url = azureEndpoint;
           payload.api_version = apiVersion;
           payload.deployment_name = deploymentName;
+      } else if (providerType === "bedrock") {
+          payload.provider_config = {
+              aws_region: awsRegion,
+              aws_access_key_id: awsAccessKeyId,
+              aws_secret_access_key: awsSecretAccessKey
+          };
+      } else if (providerType === "vertexai") {
+          payload.provider_config = {
+              gcp_project_id: gcpProjectId,
+              gcp_location: gcpLocation,
+              gcp_credentials: gcpCredentials
+          };
+      } else if (providerType === "huggingface") {
+          payload.provider_config = {
+              inference_endpoint: hfInferenceEndpoint
+          };
       }
       
       if (editingId) {
@@ -111,15 +140,28 @@ export default function ModelRegistry() {
       setName(provider.name);
       setProviderType(provider.provider);
       setModelName(provider.model_name || "");
-      setApiKey(provider.api_key); // Note: API key might be masked in future, but for now it's plaintext
+      setApiKey(provider.api_key);
       setIsPublic(provider.is_public);
-      
+
       if (provider.provider === "azure") {
           setAzureEndpoint(provider.base_url || "");
           setApiVersion(provider.api_version || "");
           setDeploymentName(provider.deployment_name || "");
+      } else if (provider.provider === "bedrock") {
+          const config = provider.provider_config || {};
+          setAwsRegion(config.aws_region || "us-east-1");
+          setAwsAccessKeyId(config.aws_access_key_id || "");
+          setAwsSecretAccessKey(config.aws_secret_access_key || "");
+      } else if (provider.provider === "vertexai") {
+          const config = provider.provider_config || {};
+          setGcpProjectId(config.gcp_project_id || "");
+          setGcpLocation(config.gcp_location || "us-central1");
+          setGcpCredentials(config.gcp_credentials || "");
+      } else if (provider.provider === "huggingface") {
+          const config = provider.provider_config || {};
+          setHfInferenceEndpoint(config.inference_endpoint || "");
       }
-      
+
       setIsDialogOpen(true);
   };
 
@@ -142,6 +184,13 @@ export default function ModelRegistry() {
       setAzureEndpoint("");
       setApiVersion("");
       setDeploymentName("");
+      setAwsRegion("us-east-1");
+      setAwsAccessKeyId("");
+      setAwsSecretAccessKey("");
+      setGcpProjectId("");
+      setGcpLocation("us-central1");
+      setGcpCredentials("");
+      setHfInferenceEndpoint("");
   };
 
   return (
@@ -237,6 +286,9 @@ export default function ModelRegistry() {
                         <SelectItem value="openai">OpenAI</SelectItem>
                         <SelectItem value="azure">Azure OpenAI</SelectItem>
                         <SelectItem value="langchain">LangChain (Groq)</SelectItem>
+                        <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                        <SelectItem value="vertexai">GCP Vertex AI</SelectItem>
+                        <SelectItem value="huggingface">HuggingFace</SelectItem>
                     </SelectContent>
                 </Select>
             </div>
@@ -292,6 +344,115 @@ export default function ModelRegistry() {
                             placeholder="my-gpt-4-deployment" 
                             value={deploymentName}
                             onChange={(e) => setDeploymentName(e.target.value)}
+                        />
+                    </div>
+                </>
+            )}
+
+            {providerType === "bedrock" && (
+                <>
+                    <div className="space-y-2">
+                        <Label>Model ID</Label>
+                        <Input
+                            placeholder="anthropic.claude-3-sonnet-20240229-v1:0"
+                            value={modelName}
+                            onChange={(e) => setModelName(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>AWS Region</Label>
+                        <Select value={awsRegion} onValueChange={setAwsRegion}>
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="us-east-1">US East (N. Virginia)</SelectItem>
+                                <SelectItem value="us-west-2">US West (Oregon)</SelectItem>
+                                <SelectItem value="eu-west-1">Europe (Ireland)</SelectItem>
+                                <SelectItem value="ap-southeast-1">Asia Pacific (Singapore)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>AWS Access Key ID</Label>
+                        <Input
+                            placeholder="AKIA..."
+                            value={awsAccessKeyId}
+                            onChange={(e) => setAwsAccessKeyId(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>AWS Secret Access Key</Label>
+                        <Input
+                            type="password"
+                            placeholder="..."
+                            value={awsSecretAccessKey}
+                            onChange={(e) => setAwsSecretAccessKey(e.target.value)}
+                        />
+                    </div>
+                </>
+            )}
+
+            {providerType === "vertexai" && (
+                <>
+                    <div className="space-y-2">
+                        <Label>Model Name</Label>
+                        <Input
+                            placeholder="gemini-pro"
+                            value={modelName}
+                            onChange={(e) => setModelName(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>GCP Project ID</Label>
+                        <Input
+                            placeholder="my-project-123456"
+                            value={gcpProjectId}
+                            onChange={(e) => setGcpProjectId(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>GCP Location</Label>
+                        <Select value={gcpLocation} onValueChange={setGcpLocation}>
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="us-central1">us-central1</SelectItem>
+                                <SelectItem value="us-east1">us-east1</SelectItem>
+                                <SelectItem value="europe-west1">europe-west1</SelectItem>
+                                <SelectItem value="asia-southeast1">asia-southeast1</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Service Account JSON</Label>
+                        <textarea
+                            placeholder='{"type": "service_account", "project_id": "...", ...}'
+                            value={gcpCredentials}
+                            onChange={(e) => setGcpCredentials(e.target.value)}
+                            className="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                        />
+                    </div>
+                </>
+            )}
+
+            {providerType === "huggingface" && (
+                <>
+                    <div className="space-y-2">
+                        <Label>Model Name</Label>
+                        <Input
+                            placeholder="meta-llama/Llama-2-7b-chat-hf"
+                            value={modelName}
+                            onChange={(e) => setModelName(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Inference Endpoint (Optional)</Label>
+                        <Input
+                            placeholder="https://api-inference.huggingface.co/models/..."
+                            value={hfInferenceEndpoint}
+                            onChange={(e) => setHfInferenceEndpoint(e.target.value)}
                         />
                     </div>
                 </>

@@ -398,9 +398,14 @@ async def get_dashboard_stats(
     """
     client = get_clickhouse_client()
 
-    # Defaults to last 7 days if not provided
-    # For now we query everything for simplicity in demo
+    # Build WHERE clause with time filtering
     where_clause = f"project_id = '{project_id}'"
+
+    # Apply time filtering if provided
+    if from_ts is not None:
+        where_clause += f" AND toUnixTimestamp(start_time) >= {from_ts}"
+    if to_ts is not None:
+        where_clause += f" AND toUnixTimestamp(start_time) <= {to_ts}"
 
     # 1. Total Traces
     # 1. Total Traces & Tokens over Time
@@ -473,13 +478,39 @@ async def get_dashboard_stats(
     GROUP BY name
     """
 
+    # Latency Time Series - Traces (for new LatencyChart component)
+    trace_lat_series_query = f"""
+    SELECT
+        toStartOfHour(start_time) as time,
+        quantile(0.50)(duration_ms) as p50,
+        quantile(0.90)(duration_ms) as p90,
+        quantile(0.99)(duration_ms) as p99
+    FROM traces
+    WHERE {where_clause} AND parent_span_id IS NULL
+    GROUP BY time
+    ORDER BY time ASC
+    """
+
+    # Latency Time Series - Generations (for new LatencyChart component)
+    gen_lat_series_query = f"""
+    SELECT
+        toStartOfHour(start_time) as time,
+        quantile(0.50)(dateDiff('millisecond', start_time, end_time)) as p50,
+        quantile(0.90)(dateDiff('millisecond', start_time, end_time)) as p90,
+        quantile(0.99)(dateDiff('millisecond', start_time, end_time)) as p99
+    FROM observations
+    WHERE {where_clause} AND model IS NOT NULL AND model != ''
+    GROUP BY time
+    ORDER BY time ASC
+    """
+
     # Traces (Time Series) - Apps
     # We want requests over time grouped by application
     # This might be heavy if many apps. Let's do top 5 apps or just simple aggregation.
     # For stacked bar, we need time buckets and counts per app.
     # ClickHouse can do: group by time, application_name
     app_series_query = f"""
-    SELECT 
+    SELECT
         toStartOfHour(start_time) as time,
         if(application_name = '' OR application_name IS NULL, 'Unknown', application_name) as app,
         count() as count
@@ -612,6 +643,8 @@ async def get_dashboard_stats(
         gen_lat_res = client.query(gen_lat_query)
 
         # New Queries Execution
+        trace_lat_series_res = client.query(trace_lat_series_query)
+        gen_lat_series_res = client.query(gen_lat_series_query)
         app_series_res = client.query(app_series_query)
         apps_res = client.query(apps_query)
         app_cost_res = client.query(app_cost_query)
@@ -780,6 +813,27 @@ async def get_dashboard_stats(
         trace_latency = process_latencies(trace_lat_res.result_rows)
         generation_latency = process_latencies(gen_lat_res.result_rows)
 
+        # Process Latency Time Series
+        trace_latency_series = []
+        for row in trace_lat_series_res.result_rows:
+            time_bucket = row[0]
+            trace_latency_series.append({
+                "time": time_bucket.strftime("%I:%M %p"),
+                "p50": round(row[1], 2),
+                "p90": round(row[2], 2),
+                "p99": round(row[3], 2),
+            })
+
+        generation_latency_series = []
+        for row in gen_lat_series_res.result_rows:
+            time_bucket = row[0]
+            generation_latency_series.append({
+                "time": time_bucket.strftime("%I:%M %p"),
+                "p50": round(row[1], 2),
+                "p90": round(row[2], 2),
+                "p99": round(row[3], 2),
+            })
+
         # --- Evaluation Trend (Last 30 days) ---
         eval_trend = []
         try:
@@ -816,6 +870,8 @@ async def get_dashboard_stats(
             "scores_stats": scores_stats,
             "trace_latency": trace_latency,
             "generation_latency": generation_latency,
+            "trace_latency_series": trace_latency_series,
+            "generation_latency_series": generation_latency_series,
             "eval_trend": eval_trend,
             "apps_metrics": apps_metrics,
             "app_series": app_series,

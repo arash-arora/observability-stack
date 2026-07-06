@@ -33,6 +33,8 @@ async def init_db():
         # Backward-compatible schema patch for older deployments where `metric.user_id`
         # does not exist yet but is now required by the ORM model.
         await conn.execute(text("ALTER TABLE metric ADD COLUMN IF NOT EXISTS user_id UUID"))
+        # Add provider_config column for cloud provider support
+        await conn.execute(text("ALTER TABLE llmprovider ADD COLUMN IF NOT EXISTS provider_config JSON"))
 
     # Seed roles
     async with async_session_factory() as session:
