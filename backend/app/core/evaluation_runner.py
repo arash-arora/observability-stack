@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core.database import engine
+from app.core.security import decrypt_value, hash_api_key
 from app.models.evaluation_rule import EvaluationRule
 from app.models.evaluation_result import EvaluationResult
 from app.models.all_models import ApiKey, Application
@@ -215,8 +216,20 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
 
                     # Fallback to Stored Provider if keys not in inputs
                     if not api_key:
+                         provider_id = inputs.get("provider_id")
                          app_id = rule.application_id
-                         if app_id:
+                         provider_obj = None
+                         
+                         # If provider_id is specified, fetch exact provider
+                         if provider_id:
+                             try:
+                                 provider_obj = await session.get(LLMProvider, provider_id)
+                             except Exception as e:
+                                 logger.error(f"Failed to fetch provider {provider_id}: {e}")
+                                 provider_obj = None
+                         
+                         # Fallback: search by provider type if no exact match
+                         if not provider_obj and app_id:
                              app_res = await session.get(Application, app_id)
                              if app_res:
                                  # Find Provider for Project
@@ -224,20 +237,18 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                                      LLMProvider.project_id == app_res.project_id,
                                      LLMProvider.provider == provider
                                  )
-                                 # If multiple, maybe pick first or exact model match? 
-                                 # For now, simplistic: match provider
                                  prov_res = await session.execute(stmt)
                                  provider_obj = prov_res.scalars().first()
-                                 
-                                 if provider_obj:
-                                     api_key = provider_obj.api_key
-                                     if not model: model = provider_obj.model_name
-                                     if not azure_endpoint: azure_endpoint = provider_obj.base_url
-                                     if not api_version: api_version = provider_obj.api_version
-                                     if not deployment_name: deployment_name = provider_obj.deployment_name
+                         
+                         if provider_obj:
+                             api_key = decrypt_value(provider_obj.api_key)
+                             if not model: model = provider_obj.model_name
+                             if not azure_endpoint: azure_endpoint = provider_obj.base_url
+                             if not api_version: api_version = provider_obj.api_version
+                             if not deployment_name: deployment_name = provider_obj.deployment_name
 
                     if not model:
-                        model = "gpt-4o"
+                        model = deployment_name
 
                     # Observability Config
                     observe = inputs.get("observe", False)

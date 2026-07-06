@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { EvaluationsCharts } from "./EvaluationsCharts";
+import { useDashboard } from "@/context/DashboardContext";
 import { Loader2, Activity, CheckCircle, ShieldAlert, Award, Percent, ChevronRight, BarChart3, HelpCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,25 +11,59 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 
 export default function EvaluationsOverview() {
+  const { selectedProject } = useDashboard();
   const [stats, setStats] = useState<any>(null);
+  const [applications, setApplications] = useState<string[]>([]);
   const [selectedApp, setSelectedApp] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [filtering, setFiltering] = useState(false);
 
   useEffect(() => {
+    const fetchApplications = async () => {
+      if (!selectedProject) {
+        setApplications([]);
+        return;
+      }
+
+      try {
+        const res = await api.get("/management/applications");
+        const appNames = res.data
+          .filter((app: any) => app.project_id === selectedProject.id)
+          .map((app: any) => app.name)
+          .sort((a: string, b: string) => a.localeCompare(b));
+        setApplications(appNames);
+      } catch (e) {
+        console.error("Failed to fetch applications for evaluation filter", e);
+        setApplications([]);
+      }
+    };
+
+    fetchApplications();
+  }, [selectedProject]);
+
+  useEffect(() => {
     const fetchStats = async () => {
+      if (!selectedProject) {
+        setStats(null);
+        setLoading(false);
+        setFiltering(false);
+        return;
+      }
+
       try {
         if (loading) {
           setLoading(true);
         } else {
           setFiltering(true);
         }
-        
-        const url = selectedApp !== "all" 
-          ? `/analytics/evaluation-stats?application_name=${encodeURIComponent(selectedApp)}`
-          : "/analytics/evaluation-stats";
-          
-        const res = await api.get(url);
+
+        const params: any = { project_id: selectedProject.id };
+        if (selectedApp !== "all") {
+          params.application_name = selectedApp;
+        }
+
+        const url = "/analytics/evaluation-stats";
+        const res = await api.get(url, { params });
         setStats(res.data);
       } catch (e) {
         console.error("Failed to fetch evaluation stats", e);
@@ -38,7 +73,13 @@ export default function EvaluationsOverview() {
       }
     };
     fetchStats();
-  }, [selectedApp]);
+  }, [selectedApp, selectedProject]);
+
+  useEffect(() => {
+    if (selectedApp !== "all" && !applications.includes(selectedApp)) {
+      setSelectedApp("all");
+    }
+  }, [applications, selectedApp]);
 
   if (loading) {
     return (
@@ -88,9 +129,9 @@ export default function EvaluationsOverview() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Applications</SelectItem>
-              {stats.app_summary?.map((app: any) => (
-                <SelectItem key={app.application_name} value={app.application_name}>
-                  {app.application_name}
+              {applications.map((appName) => (
+                <SelectItem key={appName} value={appName}>
+                  {appName}
                 </SelectItem>
               ))}
             </SelectContent>

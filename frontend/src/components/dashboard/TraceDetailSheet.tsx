@@ -381,7 +381,10 @@ export default function TraceDetailSheet({
                 input: "",
                 output: "",
                 context: "",
-                application_name: "", // Extract?
+            application_name:
+              data?.spans?.find((s: any) => s?.application_name)?.application_name ||
+              data?.observations?.find((o: any) => o?.application_name)?.application_name ||
+              "",
                 trace: data,
                 workflow_details: extractWorkflowDetails(data),
                 isTraceEvaluation: true

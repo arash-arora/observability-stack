@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useDashboard } from "@/context/DashboardContext";
 import { format } from "date-fns";
@@ -63,10 +63,11 @@ interface LLMProvider {
     name: string;
     provider: string;
     model_name: string;
+    deployment_name?: string;
 }
 
 export default function AutoEvalView() {
-  const { selectedOrg } = useDashboard();
+  const { selectedOrg, selectedProject } = useDashboard();
   const [rules, setRules] = useState<Rule[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
@@ -82,11 +83,18 @@ export default function AutoEvalView() {
   const [newApp, setNewApp] = useState("");
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
-  const [configType, setConfigType] = useState<"registered" | "custom">("custom");
+  const [configType, setConfigType] = useState<"registered" | "custom">("registered");
   const [customProvider, setCustomProvider] = useState("openai");
   const [customApiKey, setCustomApiKey] = useState("");
   const [customModelName, setCustomModelName] = useState("gpt-4o");
   const [formError, setFormError] = useState("");
+
+  const filteredApplications = useMemo(() => {
+    if (!selectedProject) {
+      return applications;
+    }
+    return applications.filter((app) => app.project_id === selectedProject.id);
+  }, [applications, selectedProject]);
 
   const fetchData = async () => {
     setIdxLoading(true);
@@ -132,6 +140,12 @@ export default function AutoEvalView() {
   }, [newApp, applications]);
 
   useEffect(() => {
+    if (newApp && !filteredApplications.some((app) => app.id === newApp)) {
+      setNewApp("");
+    }
+  }, [newApp, filteredApplications]);
+
+  useEffect(() => {
       if (providers.length > 0) {
           setSelectedProviderId(providers[0].id);
       } else {
@@ -161,6 +175,7 @@ export default function AutoEvalView() {
           }
           finalInputs.provider = provider.provider;
           finalInputs.model = provider.model_name;
+          finalInputs.provider_id = provider.id;
       }
 
       if (!newName || !newApp || selectedMetrics.length === 0) {
@@ -249,7 +264,7 @@ export default function AutoEvalView() {
                         <SelectValue placeholder="Select Application" />
                     </SelectTrigger>
                     <SelectContent>
-                        {applications.map((app) => (
+                      {filteredApplications.map((app) => (
                         <SelectItem key={app.id} value={app.id}>{app.name}</SelectItem>
                         ))}
                     </SelectContent>
@@ -368,7 +383,7 @@ export default function AutoEvalView() {
                                 <SelectContent>
                                     {providers.map((p) => (
                                         <SelectItem key={p.id} value={p.id}>
-                                            {p.name} ({p.provider} - {p.model_name})
+                                            {p.name} ({p.provider} - {p.model_name || p.deployment_name})
                                         </SelectItem>
                                     ))}
                                 </SelectContent>

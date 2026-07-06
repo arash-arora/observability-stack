@@ -90,6 +90,7 @@ export default function EvaluationModal({
     trace_id?: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+    const isTraceScopedEvaluation = Boolean(initialData?.trace);
 
   // Load initial data when modal opens
   useEffect(() => {
@@ -121,8 +122,8 @@ export default function EvaluationModal({
       setResult(null);
       setError(null);
       
-      // Reset observe to default
-      setObserve(defaultObserve);
+    // For node/trace scoped runs, tracing is always enabled automatically.
+    setObserve(isTraceScopedEvaluation ? true : defaultObserve);
       
       // Default metric logic
       if (initialData.isTraceEvaluation) {
@@ -155,33 +156,6 @@ export default function EvaluationModal({
     }
   }, [isOpen, initialData, defaultObserve, selectedProject]);
 
-  const [apiKeys, setApiKeys] = useState<{key: string; name: string}[]>([]);
-
-  // Auto-fetch API Keys
-  useEffect(() => {
-      const fetchKeys = async () => {
-          try {
-              const res = await api.get("/management/api-keys"); 
-              if (res.data && Array.isArray(res.data)) {
-                  setApiKeys(res.data);
-                  // If observing and no key set, set first active one
-                  if (observe && !traceApiKey && res.data.length > 0) {
-                       const activeKey = res.data.find((k: any) => k.is_active);
-                       if (activeKey) {
-                           setTraceApiKey(activeKey.key);
-                       }
-                  }
-              }
-          } catch (e) {
-              console.error("Failed to fetch API keys", e);
-          }
-      };
-      
-      if (observe) {
-          fetchKeys();
-      }
-  }, [observe]); 
-
   const handleRunEvaluation = async () => {
     setLoading(true);
     setResult(null);
@@ -191,6 +165,7 @@ export default function EvaluationModal({
       // Parse context back to array if needed by backend
       const contextList = context.split("\n\n").filter(c => c.trim().length > 0);
 
+            const shouldObserve = isTraceScopedEvaluation ? true : observe;
       const inputs: any = {
           input: input,
           output: output,
@@ -198,12 +173,16 @@ export default function EvaluationModal({
           expected: expectedOutput,
           persist_result: true,
           application_name: initialData.application_name,
-          
-          // Observability Params
-          observe: observe,
-          host: traceHost,
-          user_api_key: traceApiKey
+
+                    // For node/trace evaluations, tracing is auto-enabled.
+                    observe: shouldObserve,
       };
+
+            // Manual tracing params are only used outside trace-scoped evaluations.
+            if (!isTraceScopedEvaluation && shouldObserve) {
+                inputs.host = traceHost;
+                inputs.user_api_key = traceApiKey;
+            }
 
       if (traceData.trim()) {
            try {
@@ -233,8 +212,8 @@ export default function EvaluationModal({
       if (configMode === 'registered' && selectedProviderId) {
           const selectedProvider = providers.find(p => p.id === selectedProviderId);
           if (selectedProvider) {
+              inputs.provider_id = selectedProvider.id;
               inputs.provider = selectedProvider.provider;
-              inputs.api_key = selectedProvider.api_key;
               
               if (selectedProvider.provider === 'azure') {
                    inputs.azure_endpoint = selectedProvider.base_url;
@@ -524,46 +503,40 @@ export default function EvaluationModal({
              </div>
              
              {/* Trace Configuration */}
-             <div className="space-y-4 p-4 rounded-lg border bg-muted/10">
-                <div className="flex items-center justify-between border-b pb-2">
-                    <h3 className="font-semibold text-sm">Tracing</h3>
-                    <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            checked={observe} 
-                            onChange={(e) => setObserve(e.target.checked)}
-                            className="rounded border-border"
-                        /> Trace this evaluation
-                    </label>
+             {isTraceScopedEvaluation ? (
+                <div className="space-y-2 p-4 rounded-lg border bg-muted/10">
+                  <h3 className="font-semibold text-sm">Tracing</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Tracing is enabled automatically for node/trace evaluations and is attached to this trace context.
+                  </p>
                 </div>
-                
-                {observe && (
-                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <div className="space-y-1">
-                            <Label className="text-xs">Observix Host</Label>
-                            <Input 
-                                value={traceHost}
-                                onChange={(e) => setTraceHost(e.target.value)}
-                                className="bg-background h-8 text-xs"
-                                placeholder="http://localhost:8000"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">Observix API Key (Ingest)</Label>
-                            {apiKeys.length > 0 ? (
-                                <Select value={traceApiKey} onValueChange={setTraceApiKey}>
-                                    <SelectTrigger className="h-8 text-xs">
-                                        <SelectValue placeholder="Select API Key" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {apiKeys.map((k) => (
-                                            <SelectItem key={k.key} value={k.key}>
-                                                {k.name} ({k.key.slice(0, 8)}...)
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            ) : (
+             ) : (
+                <div className="space-y-4 p-4 rounded-lg border bg-muted/10">
+                    <div className="flex items-center justify-between border-b pb-2">
+                        <h3 className="font-semibold text-sm">Tracing</h3>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={observe} 
+                                onChange={(e) => setObserve(e.target.checked)}
+                                className="rounded border-border"
+                            /> Trace this evaluation
+                        </label>
+                    </div>
+                    
+                    {observe && (
+                        <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                            <div className="space-y-1">
+                                <Label className="text-xs">Observix Host</Label>
+                                <Input 
+                                    value={traceHost}
+                                    onChange={(e) => setTraceHost(e.target.value)}
+                                    className="bg-background h-8 text-xs"
+                                    placeholder="http://localhost:8000"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs">Observix API Key (Ingest)</Label>
                                 <Input 
                                     type="password"
                                     value={traceApiKey}
@@ -571,11 +544,11 @@ export default function EvaluationModal({
                                     className="bg-background h-8 text-xs"
                                     placeholder="sk-observix-..."
                                 />
-                            )}
+                            </div>
                         </div>
-                    </div>
-                )}
-             </div>
+                    )}
+                 </div>
+             )}
 
              {/* Results Section */}
              {error && (

@@ -221,8 +221,8 @@ export function MetricRun({ metric }: MetricRunProps) {
       if (configMode === 'registered' && selectedProviderId) {
           const selectedProvider = providers.find(p => p.id === selectedProviderId);
           if (selectedProvider) {
+              inputs.provider_id = selectedProvider.id;
               inputs.provider = selectedProvider.provider;
-              inputs.api_key = selectedProvider.api_key;
               
               if (selectedProvider.provider === 'azure') {
                    inputs.azure_endpoint = selectedProvider.base_url;

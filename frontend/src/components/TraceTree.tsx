@@ -97,7 +97,7 @@ function formatMarkdown(text: string) {
 }
 
 // Helper to extract nested chat list recursively
-function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boolean): ChatMessage[] {
+function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boolean, outputFinalOnly?: boolean): ChatMessage[] {
   if (!val) return [];
 
   // 1. If string, check if JSON
@@ -106,7 +106,7 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
         const parsed = JSON.parse(trimmed);
-        return parseMessages(parsed, forceInputMapping, hideSystem);
+        return parseMessages(parsed, forceInputMapping, hideSystem, outputFinalOnly);
       } catch {
         // Fallback
       }
@@ -116,9 +116,27 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
 
   // 2. If array, process elements recursively and flatten
   if (Array.isArray(val)) {
+    if (outputFinalOnly) {
+      for (let i = val.length - 1; i >= 0; i--) {
+        const item = val[i];
+        const single = parseSingleMessage(item, forceInputMapping);
+        if (!single) continue;
+        if (single.role === 'system' && hideSystem) continue;
+        if (single.role === 'ai' && single.content && single.content.trim() !== '') {
+          return [single];
+        }
+      }
+
+      for (let i = val.length - 1; i >= 0; i--) {
+        const fallback = parseMessages(val[i], forceInputMapping, hideSystem, outputFinalOnly);
+        if (fallback.length > 0) return [fallback[fallback.length - 1]];
+      }
+      return [];
+    }
+
     const flat: ChatMessage[] = [];
     val.forEach(item => {
-      const parsed = parseMessages(item, forceInputMapping, hideSystem);
+      const parsed = parseMessages(item, forceInputMapping, hideSystem, outputFinalOnly);
       flat.push(...parsed);
     });
     return flat;
@@ -135,25 +153,25 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
     }
 
     if (val.messages && Array.isArray(val.messages)) {
-      return parseMessages(val.messages, forceInputMapping, hideSystem);
+      return parseMessages(val.messages, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.args && Array.isArray(val.args)) {
-      return parseMessages(val.args, forceInputMapping, hideSystem);
+      return parseMessages(val.args, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.kwargs?.messages && Array.isArray(val.kwargs.messages)) {
-      return parseMessages(val.kwargs.messages, forceInputMapping, hideSystem);
+      return parseMessages(val.kwargs.messages, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.kwargs?.prompt) {
-      return parseMessages(val.kwargs.prompt, forceInputMapping, hideSystem);
+      return parseMessages(val.kwargs.prompt, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.prompt) {
-      return parseMessages(val.prompt, forceInputMapping, hideSystem);
+      return parseMessages(val.prompt, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.input) {
-      return parseMessages(val.input, forceInputMapping, hideSystem);
+      return parseMessages(val.input, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.output) {
-      return parseMessages(val.output, forceInputMapping, hideSystem);
+      return parseMessages(val.output, forceInputMapping, hideSystem, outputFinalOnly);
     }
   }
 
@@ -246,11 +264,35 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
   // Selected Node State
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
+  const summarizeMetric = (metric: any) => ({
+    id: metric?.id,
+    name: metric?.name,
+    type: metric?.type,
+    tags: metric?.tags,
+    inputs: metric?.inputs,
+  });
+
   useEffect(() => {
-      api.get('/evaluations/metrics').then(res => setMetrics(res.data)).catch(console.error);
+      api.get('/evaluations/metrics')
+        .then(res => {
+          const payload = Array.isArray(res.data) ? res.data : [];
+          console.log('[TraceTree] /evaluations/metrics response', {
+            total: payload.length,
+            metrics: payload.map(summarizeMetric),
+          });
+          setMetrics(payload);
+        })
+        .catch((error) => {
+          console.error('[TraceTree] failed to fetch /evaluations/metrics', error);
+        });
   }, []);
 
   const openEvalModal = (target: Node | 'trace') => {
+      console.log('[TraceTree] openEvalModal', {
+        targetType: target === 'trace' ? 'trace' : 'node',
+        targetId: target === 'trace' ? 'trace' : target.id,
+        targetName: target === 'trace' ? 'Trace' : target.name,
+      });
       setEvalTarget(target);
       setSelectedMetricId("");
       setEvalInputs({});
@@ -258,7 +300,59 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
       setEvalModalOpen(true);
   };
 
-  const selectedMetric = metrics.find(m => m.id === selectedMetricId);
+  const evalTargetKind = useMemo<'none' | 'trace' | 'node'>(() => {
+    if (evalTarget === null) return 'none';
+    return evalTarget === 'trace' ? 'trace' : 'node';
+  }, [evalTarget]);
+
+  const normalizeMetricType = (metric: any): string => {
+    return String(metric?.type ?? '').trim().toLowerCase();
+  };
+
+  const isAgentMetric = (metric: any): boolean => {
+    const metricType = normalizeMetricType(metric);
+    return metricType === 'agents' || metricType === 'agent' || metricType.includes('agent');
+  };
+
+  const filteredEvalMetrics = useMemo(() => {
+    if (evalTargetKind === 'trace') {
+      // Trace evaluation: show only agentic metrics.
+      return metrics.filter((metric: any) => isAgentMetric(metric));
+    }
+
+    if (evalTargetKind === 'node') {
+      // Node evaluation: show only non-agentic metrics.
+      return metrics.filter((metric: any) => !isAgentMetric(metric));
+    }
+
+    return [];
+  }, [metrics, evalTargetKind]);
+
+  useEffect(() => {
+    if (!evalModalOpen) return;
+    console.log('[TraceTree] modal filter state', {
+      evalTargetKind,
+      selectedMetricId,
+      rawMetricsCount: metrics.length,
+      rawMetricTypes: metrics.map((m: any) => ({
+        id: m?.id,
+        name: m?.name,
+        type: String(m?.type ?? ''),
+      })),
+      filteredCount: filteredEvalMetrics.length,
+      filteredMetrics: filteredEvalMetrics.map((m: any) => summarizeMetric(m)),
+    });
+  }, [evalModalOpen, evalTargetKind, selectedMetricId, metrics, filteredEvalMetrics]);
+
+  const selectedMetric = filteredEvalMetrics.find(m => m.id === selectedMetricId);
+
+    useEffect(() => {
+      if (!selectedMetricId) return;
+      const stillAvailable = filteredEvalMetrics.some((m: any) => m.id === selectedMetricId);
+      if (!stillAvailable) {
+        setSelectedMetricId("");
+      }
+    }, [filteredEvalMetrics, selectedMetricId]);
 
   // Auto-fill inputs if evaluating a specific node
   useEffect(() => {
@@ -577,7 +671,7 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
                               <SelectValue placeholder="Select a metric to evaluate..." />
                           </SelectTrigger>
                           <SelectContent>
-                              {metrics.map(m => (
+                              {filteredEvalMetrics.map(m => (
                                   <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
                               ))}
                           </SelectContent>
@@ -915,20 +1009,80 @@ function NodeDetailView({
   // For agent nodes: input comes from first child, output from last child
   const isAgentNode = node.type?.toLowerCase() === 'agent';
 
+  const hasMeaningfulPayload = (value: any): boolean => {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed !== '' && trimmed !== '{}' && trimmed !== '{"args":[],"kwargs":{}}';
+    }
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+  };
+
+  const extractFinalAssistantMessage = (raw: any): any => {
+    const parsed = safeParseJSON(raw);
+    if (!parsed || typeof parsed !== 'object') return raw;
+
+    const messages = Array.isArray((parsed as any).messages) ? (parsed as any).messages : null;
+    if (!messages || messages.length === 0) return raw;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || typeof msg !== 'object') continue;
+      const role = String((msg as any).role || (msg as any).type || '').toLowerCase();
+      const content = (msg as any).content;
+      const isAssistant = role.includes('ai') || role.includes('assistant') || role.includes('model') || role.includes('output');
+      if (isAssistant && content !== undefined && content !== null && String(content).trim() !== '') {
+        return content;
+      }
+    }
+
+    // Fallback: return the last message content if no assistant role was found.
+    const last = messages[messages.length - 1];
+    if (last && typeof last === 'object' && (last as any).content !== undefined && (last as any).content !== null) {
+      return (last as any).content;
+    }
+
+    return raw;
+  };
+
+  const normalizeTerminalOutput = (raw: any): any => {
+    const parsed = safeParseJSON(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return raw;
+    }
+
+    const msgTail = extractFinalAssistantMessage(parsed);
+    if (msgTail !== parsed) {
+      return msgTail;
+    }
+
+    // Prefer concise terminal fields when present.
+    if (typeof (parsed as any).report === 'string' && (parsed as any).report.trim() !== '') {
+      return (parsed as any).report;
+    }
+    if (typeof (parsed as any).answer === 'string' && (parsed as any).answer.trim() !== '') {
+      return (parsed as any).answer;
+    }
+    if (typeof (parsed as any).output === 'string' && (parsed as any).output.trim() !== '') {
+      return (parsed as any).output;
+    }
+
+    return raw;
+  };
+
   // Find first child input (skip self — look directly at children in order)
   const getFirstChildInput = (n: Node): any => {
     if (n.children && n.children.length > 0) {
       for (const child of n.children) {
-        const hasInput = child.input && 
-                         child.input !== '{}' && 
-                         child.input !== '{"args":[],"kwargs":{}}' &&
-                         !(typeof child.input === 'object' && Object.keys(child.input).length === 0);
-        if (hasInput) {
-          return child.input;
-        }
         // Walk deeper into this child's subtree
         const subInput = getFirstChildInput(child);
         if (subInput) return subInput;
+
+        if (hasMeaningfulPayload(child.input)) {
+          return child.input;
+        }
       }
     }
     return null;
@@ -939,15 +1093,13 @@ function NodeDetailView({
     if (n.children && n.children.length > 0) {
       for (let i = n.children.length - 1; i >= 0; i--) {
         const child = n.children[i];
-        const hasOutput = child.output && 
-                          child.output !== '{}' && 
-                          !(typeof child.output === 'object' && Object.keys(child.output).length === 0);
-        if (hasOutput) {
-          return child.output;
-        }
         // Walk deeper into this child's subtree
         const res = getLastChildOutput(child);
         if (res) return res;
+
+        if (hasMeaningfulPayload(child.output)) {
+          return child.output;
+        }
       }
     }
     return null;
@@ -964,8 +1116,19 @@ function NodeDetailView({
   }, [node, isRootNode, isAgentNode, shouldOverride]);
 
   const displayOutput = useMemo(() => {
-    if (shouldOverride) return getLastChildOutput(node) ?? node.output;
-    return node.output;
+    let resolvedOutput: any;
+    if (shouldOverride) {
+      const childOutput = getLastChildOutput(node);
+      if (hasMeaningfulPayload(childOutput)) {
+        resolvedOutput = childOutput;
+      } else {
+        resolvedOutput = node.output;
+      }
+    } else {
+      resolvedOutput = node.output;
+    }
+
+    return normalizeTerminalOutput(resolvedOutput);
   }, [node, isRootNode, isAgentNode, shouldOverride]);
 
   const contentFormatSelector = (
@@ -1032,7 +1195,7 @@ function NodeDetailView({
     }
 
     // Markdown / Role-based prompt bubbles
-    const chatMsgs = parseMessages(content, isInput, hideSystem);
+    const chatMsgs = parseMessages(content, isInput, hideSystem, !isInput);
     const hasChatMessages = chatMsgs.length > 0 && chatMsgs.some(m => m.role === 'system' || m.role === 'user' || m.role === 'ai');
 
     if (format === 'markdown' && !hasChatMessages) {

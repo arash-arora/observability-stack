@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.clickhouse import get_clickhouse_client
 from app.core.database import get_session
 from app.api.deps import get_current_user
-from app.models.all_models import User
+from app.models.all_models import Application, OrganizationUserLink, Project, User
 from app.models.evaluation_result import EvaluationResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case
@@ -334,8 +334,6 @@ async def get_trace_details(
         spans_res = client.query(spans_query)
         obs_res = client.query(obs_query)
 
-        contexts = {}
-
         spans = []
         for row in spans_res.result_rows:
             spans.append(
@@ -380,6 +378,102 @@ async def get_trace_details(
                     "is_observation": True,
                 }
             )
+
+        # Condense observation payloads:
+        # - input: first child-chain input
+        # - output: last child-chain output
+        # Leaves keep their own input/output.
+        obs_by_id = {obs["id"]: obs for obs in observations}
+        children_by_parent = {obs_id: [] for obs_id in obs_by_id.keys()}
+
+        for obs in observations:
+            parent_id = obs.get("parent_observation_id")
+            if parent_id and parent_id in children_by_parent:
+                children_by_parent[parent_id].append(obs["id"])
+
+        input_cache = {}
+        output_cache = {}
+
+        def safe_json_parse(value):
+            if not isinstance(value, str):
+                return value
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+
+        def extract_user_inputs(value):
+            parsed = safe_json_parse(value)
+            collected = []
+
+            def walk(node):
+                if node is None:
+                    return
+
+                if isinstance(node, str):
+                    maybe = safe_json_parse(node)
+                    if maybe is not node:
+                        walk(maybe)
+                    return
+
+                if isinstance(node, list):
+                    for item in node:
+                        walk(item)
+                    return
+
+                if isinstance(node, dict):
+                    role = str(node.get("role") or node.get("type") or "").lower()
+                    content = node.get("content")
+                    if ("user" in role or "human" in role) and content is not None:
+                        if isinstance(content, str) and content.strip():
+                            collected.append(content.strip())
+                        elif not isinstance(content, (dict, list)):
+                            collected.append(str(content))
+
+                    # Walk common wrapper keys used in observation payloads.
+                    for key in ("messages", "args", "kwargs", "prompt", "input"):
+                        if key in node:
+                            walk(node[key])
+
+            walk(parsed)
+            return collected
+
+        def first_child_chain_input(obs_id: str):
+            if obs_id in input_cache:
+                return input_cache[obs_id]
+
+            children = children_by_parent.get(obs_id, [])
+            if children:
+                value = first_child_chain_input(children[0])
+            else:
+                value = obs_by_id[obs_id].get("input")
+
+            input_cache[obs_id] = value
+            return value
+
+        def last_child_chain_output(obs_id: str):
+            if obs_id in output_cache:
+                return output_cache[obs_id]
+
+            children = children_by_parent.get(obs_id, [])
+            if children:
+                value = last_child_chain_output(children[-1])
+            else:
+                value = obs_by_id[obs_id].get("output")
+
+            output_cache[obs_id] = value
+            return value
+
+        for obs in observations:
+            obs_id = obs["id"]
+            obs["input"] = first_child_chain_input(obs_id)
+            obs["output"] = last_child_chain_output(obs_id)
+
+            # Root observations should expose only user prompts in input.
+            if obs.get("parent_observation_id") is None:
+                user_inputs = extract_user_inputs(obs.get("input"))
+                if user_inputs:
+                    obs["input"] = "\n\n".join(user_inputs)
 
         return {"spans": spans, "observations": observations}
     except Exception as e:
@@ -850,6 +944,7 @@ async def get_dashboard_stats(
 @router.get("/evaluation-stats")
 async def get_evaluation_stats(
     application_name: Optional[str] = None,
+    project_id: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -860,8 +955,43 @@ async def get_evaluation_stats(
     try:
         from sqlalchemy import and_
 
-        # 0. Base Filters
-        base_filter = [EvaluationResult.score != None]
+        # 0. Base filters scoped by project membership (if project provided)
+        scope_filter = [EvaluationResult.score != None]
+
+        if project_id:
+            access_stmt = (
+                select(Project.id)
+                .join(
+                    OrganizationUserLink,
+                    OrganizationUserLink.organization_id == Project.organization_id,
+                )
+                .where(
+                    Project.id == project_id,
+                    OrganizationUserLink.user_id == current_user.id,
+                )
+            )
+            access_res = await session.execute(access_stmt)
+            if access_res.scalar_one_or_none() is None:
+                raise HTTPException(status_code=403, detail="Not authorized for project")
+
+            app_names_stmt = select(Application.name).where(Application.project_id == project_id)
+            app_names_res = await session.execute(app_names_stmt)
+            app_names = [row[0] for row in app_names_res.all() if row[0]]
+
+            if not app_names:
+                return {
+                    "pass_fail": [],
+                    "avg_scores": [],
+                    "score_trend": [],
+                    "score_distribution": [],
+                    "app_summary": [],
+                    "metric_insights": [],
+                    "total_runs": 0,
+                }
+
+            scope_filter.append(EvaluationResult.application_name.in_(app_names))
+
+        base_filter = list(scope_filter)
         if application_name:
             base_filter.append(EvaluationResult.application_name == application_name)
 
@@ -960,7 +1090,7 @@ async def get_evaluation_stats(
                 func.avg(EvaluationResult.score).label("avg_score"),
                 func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label("passed_runs")
             )
-            .where(EvaluationResult.score != None)
+            .where(*scope_filter)
             .group_by("app_name")
         )
         app_res = await session.execute(app_stmt)
