@@ -54,6 +54,7 @@ interface Node {
   is_obs?: boolean;
   total_cost?: number;
   application_name?: string;
+  events?: any[];
 }
 
 export default function TraceDetailSheet({
@@ -100,6 +101,20 @@ export default function TraceDetailSheet({
 
     // 1. Create Nodes for all Spans
     spans.forEach((span) => {
+      let spanError = undefined;
+      if (span.status_code === "ERROR") {
+        if (span.status_message) {
+          spanError = span.status_message;
+        }
+        const exceptionEvent = span.events?.find((e: any) => e.name === "exception");
+        if (exceptionEvent && exceptionEvent.attributes) {
+          const type = exceptionEvent.attributes["exception.type"] || "Error";
+          const msg = exceptionEvent.attributes["exception.message"] || "";
+          const stack = exceptionEvent.attributes["exception.stacktrace"] || "";
+          spanError = stack || `${type}: ${msg}`;
+        }
+      }
+
       nodeMap.set(span.span_id, {
         id: span.span_id,
         name: span.name,
@@ -109,6 +124,8 @@ export default function TraceDetailSheet({
         duration_ms: span.duration_ms,
         status: span.status_code,
         attributes: span.attributes,
+        events: span.events || [],
+        error: spanError,
         children: [],
         application_name: span.application_name
       });
@@ -160,6 +177,28 @@ export default function TraceDetailSheet({
             // Propagate application_name if span has it and obs doesn't (or overwrite?)
             if (span.application_name) {
                 obsNode.application_name = span.application_name;
+            }
+            if (span.status_code) {
+                obsNode.status = span.status_code;
+            }
+            
+            // Extract and set observation error, preferring full stacktrace from span events
+            let extractedError = undefined;
+            const exceptionEvent = span.events?.find((e: any) => e.name === "exception");
+            if (exceptionEvent && exceptionEvent.attributes) {
+                const type = exceptionEvent.attributes["exception.type"] || "Error";
+                const msg = exceptionEvent.attributes["exception.message"] || "";
+                const stack = exceptionEvent.attributes["exception.stacktrace"] || "";
+                extractedError = stack || `${type}: ${msg}`;
+            }
+            if (!extractedError && span.status_message) {
+                extractedError = span.status_message;
+            }
+            if (!extractedError) {
+                extractedError = obsNode.error;
+            }
+            if (extractedError) {
+                obsNode.error = extractedError;
             }
         }
       }
@@ -851,7 +890,7 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
         // Fallback
       }
     }
-    return [{ role: forceInputMapping ? 'user' : 'user', content: val }];
+    return [{ role: forceInputMapping ? 'user' : 'ai', content: val }];
   }
 
   // 2. If array, process elements recursively and flatten
@@ -1023,17 +1062,16 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
   const hasNoInput = !node.input || (typeof node.input === 'object' && Object.keys(node.input).length === 0) || node.input === '{"args":[],"kwargs":{}}' || node.input === '{}';
   const hasNoOutput = !node.output || (typeof node.output === 'object' && Object.keys(node.output).length === 0) || node.output === '{}';
   const hasChildren = node.children && node.children.length > 0;
-  const shouldOverride = isAgentNode || isRootNode || (hasNoInput && hasNoOutput && hasChildren);
 
   const displayInput = useMemo(() => {
-    if (shouldOverride) return getFirstChildInput(node) ?? node.input;
+    if (hasNoInput && hasChildren) return getFirstChildInput(node) ?? node.input;
     return node.input;
-  }, [node, isRootNode, isAgentNode, shouldOverride]);
+  }, [node, hasNoInput, hasChildren]);
 
   const displayOutput = useMemo(() => {
-    if (shouldOverride) return getLastChildOutput(node) ?? node.output;
+    if (hasNoOutput && hasChildren) return getLastChildOutput(node) ?? node.output;
     return node.output;
-  }, [node, isRootNode, isAgentNode, shouldOverride]);
+  }, [node, hasNoOutput, hasChildren]);
 
   // Helper to stringify data for the modal
   const prepareData = (val: any) => {

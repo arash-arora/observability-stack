@@ -21,6 +21,184 @@ interface EvaluationResult {
   metadata_json?: any;
 }
 
+function parseCleanParam(val: string, paramType: 'input' | 'output'): string {
+  if (!val) return "N/A";
+  
+  const valTrimmed = val.trim();
+  if (!valTrimmed.startsWith("{") && !valTrimmed.startsWith("[")) {
+    return val;
+  }
+  
+  let data: any;
+  try {
+    data = JSON.parse(valTrimmed);
+  } catch {
+    try {
+      const jsonStr = valTrimmed
+        .replace(/'/g, '"')
+        .replace(/\bTrue\b/g, 'true')
+        .replace(/\bFalse\b/g, 'false')
+        .replace(/\bNone\b/g, 'null');
+      data = JSON.parse(jsonStr);
+    } catch {
+      return val;
+    }
+  }
+
+  const extractFromMessages = (msgs: any[]): string => {
+    if (!Array.isArray(msgs)) return "";
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (typeof m !== 'object' || m === null) continue;
+      const role = String(m.role || m.type || "").toLowerCase();
+      const content = m.content || m.text || m.message;
+      if (content) {
+        if (paramType === 'input' && (role.includes("user") || role.includes("human"))) {
+          return String(content);
+        } else if (paramType === 'output' && (role.includes("ai") || role.includes("assistant") || role.includes("model") || role.includes("output"))) {
+          return String(content);
+        }
+      }
+    }
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (typeof m === 'object' && m !== null) {
+        const content = m.content || m.text || m.message;
+        if (content) return String(content);
+      }
+    }
+    return "";
+  };
+
+  let extracted = val;
+
+  if (typeof data === 'object' && data !== null) {
+    if (Array.isArray(data)) {
+      const res = extractFromMessages(data);
+      if (res) extracted = res;
+    } else {
+      let found = false;
+      const keys = paramType === 'input' ? ["input", "query", "question", "prompt"] : ["output", "response", "completion", "result", "text"];
+      for (const k of keys) {
+        if (data[k]) {
+          if (typeof data[k] === 'string') {
+            extracted = data[k];
+            found = true;
+            break;
+          }
+          if (Array.isArray(data[k])) {
+            const res = extractFromMessages(data[k]);
+            if (res) {
+              extracted = res;
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!found && Array.isArray(data.messages)) {
+        const res = extractFromMessages(data.messages);
+        if (res) {
+          extracted = res;
+          found = true;
+        }
+      }
+
+      if (!found && Array.isArray(data.args) && data.args.length > 0) {
+        const firstArg = data.args[0];
+        if (typeof firstArg === 'string') {
+          extracted = firstArg;
+          found = true;
+        } else if (Array.isArray(firstArg)) {
+          const res = extractFromMessages(firstArg);
+          if (res) {
+            extracted = res;
+            found = true;
+          }
+        }
+        if (!found) {
+          for (const arg of data.args) {
+            if (Array.isArray(arg)) {
+               const res = extractFromMessages(arg);
+               if (res) {
+                 extracted = res;
+                 found = true;
+                 break;
+               }
+            }
+          }
+        }
+      }
+
+      if (!found && data.kwargs && typeof data.kwargs === 'object') {
+        const kwargs = data.kwargs;
+        for (const k of keys) {
+          if (kwargs[k]) {
+            if (typeof kwargs[k] === 'string') {
+              extracted = kwargs[k];
+              found = true;
+              break;
+            }
+            if (Array.isArray(kwargs[k])) {
+              const res = extractFromMessages(kwargs[k]);
+              if (res) {
+                extracted = res;
+                found = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!found && Array.isArray(kwargs.messages)) {
+          const res = extractFromMessages(kwargs.messages);
+          if (res) {
+            extracted = res;
+            found = true;
+          }
+        }
+      }
+
+      if (!found && paramType === 'output' && Array.isArray(data.choices) && data.choices.length > 0) {
+        const firstChoice = data.choices[0];
+        if (firstChoice && typeof firstChoice === 'object') {
+          const msg = firstChoice.message;
+          if (msg && typeof msg === 'object' && msg.content) {
+            extracted = String(msg.content);
+            found = true;
+          }
+        }
+      }
+      
+      if (!found && data.content && typeof data.content === 'string') {
+        extracted = data.content;
+      }
+    }
+  }
+
+  if (extracted && typeof extracted === 'string') {
+     const trimmed = extracted.trim();
+     if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+           const nested = JSON.parse(trimmed);
+           if (nested && typeof nested === 'object') {
+              if (nested.reason && typeof nested.reason === 'string') {
+                 return nested.reason;
+              }
+              if (nested.output && typeof nested.output === 'string') {
+                 return nested.output;
+              }
+              if (nested.response && typeof nested.response === 'string') {
+                 return nested.response;
+              }
+           }
+        } catch {}
+     }
+  }
+
+  return extracted;
+}
+
 interface EvaluationDetailViewProps {
   result: EvaluationResult;
   onRerun: () => void;
@@ -103,7 +281,7 @@ export default function EvaluationDetailView({
             <div className="col-span-2">
                 <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Input</h3>
                 <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
-                    {result.input || "N/A"}
+                    {parseCleanParam(result.input, 'input')}
                 </pre>
             </div>
 
@@ -111,7 +289,7 @@ export default function EvaluationDetailView({
             <div className="col-span-2">
                 <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Output</h3>
                 <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
-                    {result.output || "N/A"}
+                    {parseCleanParam(result.output, 'output')}
                 </pre>
             </div>
 

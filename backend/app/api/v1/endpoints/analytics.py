@@ -8,6 +8,7 @@ from app.models.evaluation_result import EvaluationResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -349,7 +350,7 @@ async def get_trace_details(
                     "status_code": row[7],
                     "status_message": row[8],
                     "attributes": row[9],
-                    # "events": row[10], # JSON string, maybe parse if needed
+                    "events": json.loads(row[10]) if row[10] else [],
                     "duration_ms": row[12],
                     "application_name": row[13],
                     "type": "span",  # UI helper
@@ -848,6 +849,7 @@ async def get_dashboard_stats(
 
 @router.get("/evaluation-stats")
 async def get_evaluation_stats(
+    application_name: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -856,11 +858,17 @@ async def get_evaluation_stats(
     Excludes RUNNING/FAILED evaluations without scores.
     """
     try:
+        from sqlalchemy import and_
+
+        # 0. Base Filters
+        base_filter = [EvaluationResult.score != None]
+        if application_name:
+            base_filter.append(EvaluationResult.application_name == application_name)
+
         # 1. Pass/Fail Ratio
-        # Filter where status='COMPLETED' or passed is not null
         pf_stmt = (
             select(EvaluationResult.passed, func.count())
-            .where(EvaluationResult.score != None)
+            .where(*base_filter)
             .group_by(EvaluationResult.passed)
         )
 
@@ -874,7 +882,7 @@ async def get_evaluation_stats(
         # 2. Avg Score by Metric
         metric_stmt = (
             select(EvaluationResult.metric_id, func.avg(EvaluationResult.score))
-            .where(EvaluationResult.score != None)
+            .where(*base_filter)
             .group_by(EvaluationResult.metric_id)
         )
 
@@ -893,7 +901,7 @@ async def get_evaluation_stats(
                     ),
                     func.avg(EvaluationResult.score),
                 )
-                .where(EvaluationResult.score != None)
+                .where(*base_filter)
                 .group_by("day")
                 .order_by("day")
             )
@@ -907,7 +915,7 @@ async def get_evaluation_stats(
             # Fallback
             trend_stmt = (
                 select(EvaluationResult.created_at, EvaluationResult.score)
-                .where(EvaluationResult.score != None)
+                .where(*base_filter)
                 .order_by(EvaluationResult.created_at)
             )
             trend_res = await session.execute(trend_stmt)
@@ -925,20 +933,101 @@ async def get_evaluation_stats(
             ]
             score_trend.sort(key=lambda x: x["date"])
 
+        # 4. Score Distribution
+        score_dist_stmt = (
+            select(
+                func.sum(case((EvaluationResult.score >= 0.8, 1), else_=0)).label("excellent"),
+                func.sum(case((and_(EvaluationResult.score >= 0.6, EvaluationResult.score < 0.8), 1), else_=0)).label("good"),
+                func.sum(case((and_(EvaluationResult.score >= 0.4, EvaluationResult.score < 0.6), 1), else_=0)).label("fair"),
+                func.sum(case((EvaluationResult.score < 0.4, 1), else_=0)).label("poor")
+            )
+            .where(*base_filter)
+        )
+        score_dist_res = await session.execute(score_dist_stmt)
+        dist_row = score_dist_res.one()
+        score_distribution = [
+            {"range": "Excellent (0.8-1.0)", "count": int(dist_row.excellent or 0)},
+            {"range": "Good (0.6-0.8)", "count": int(dist_row.good or 0)},
+            {"range": "Fair (0.4-0.6)", "count": int(dist_row.fair or 0)},
+            {"range": "Poor (<0.4)", "count": int(dist_row.poor or 0)},
+        ]
+
+        # 5. Application Summary (Always global, unfiltered by selected app)
+        app_stmt = (
+            select(
+                func.coalesce(EvaluationResult.application_name, "Unknown").label("app_name"),
+                func.count(EvaluationResult.id).label("total_runs"),
+                func.avg(EvaluationResult.score).label("avg_score"),
+                func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label("passed_runs")
+            )
+            .where(EvaluationResult.score != None)
+            .group_by("app_name")
+        )
+        app_res = await session.execute(app_stmt)
+        app_summary = []
+        for row in app_res.all():
+            app_name = row[0]
+            total_runs = row[1] or 0
+            avg_score = round(row[2], 2) if row[2] is not None else 0.0
+            passed_runs = row[3] or 0
+            pass_rate = round(passed_runs / total_runs * 100, 1) if total_runs > 0 else 0.0
+            app_summary.append({
+                "application_name": app_name,
+                "total_runs": total_runs,
+                "passed_runs": passed_runs,
+                "pass_rate": pass_rate,
+                "avg_score": avg_score
+            })
+
+        # 6. Detailed Metric Insights
+        metric_insights_stmt = (
+            select(
+                EvaluationResult.metric_id,
+                func.count(EvaluationResult.id).label("total_runs"),
+                func.avg(EvaluationResult.score).label("avg_score"),
+                func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label("passed_runs")
+            )
+            .where(*base_filter)
+            .group_by(EvaluationResult.metric_id)
+        )
+        metric_insights_res = await session.execute(metric_insights_stmt)
+        metric_insights = []
+        for row in metric_insights_res.all():
+            m_id = row[0]
+            m_total = row[1] or 0
+            m_avg = round(row[2], 2) if row[2] is not None else 0.0
+            m_passed = row[3] or 0
+            m_rate = round(m_passed / m_total * 100, 1) if m_total > 0 else 0.0
+            metric_insights.append({
+                "metric": m_id,
+                "total_runs": m_total,
+                "passed_runs": m_passed,
+                "pass_rate": m_rate,
+                "avg_score": m_avg
+            })
+
         return {
             "pass_fail": pass_fail_data,
             "avg_scores": avg_scores,
             "score_trend": score_trend,
+            "score_distribution": score_distribution,
+            "app_summary": app_summary,
+            "metric_insights": metric_insights,
             "total_runs": await session.scalar(
-                select(func.count()).select_from(EvaluationResult)
+                select(func.count()).select_from(EvaluationResult).where(*base_filter)
             ),
         }
     except Exception as e:
         print(f"Eval Stats Error: {e}")
-        return {"pass_fail": [], "avg_scores": [], "score_trend": []}
-    except Exception as e:
-        print(f"Eval Stats Error: {e}")
-        return {}
+        return {
+            "pass_fail": [],
+            "avg_scores": [],
+            "score_trend": [],
+            "score_distribution": [],
+            "app_summary": [],
+            "metric_insights": [],
+            "total_runs": 0,
+        }
 
 
 @router.get("/applications/{app_name}/stats")

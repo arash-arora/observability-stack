@@ -384,8 +384,21 @@ async def run_evaluation(
                 persist_result = inputs.get("persist_result", True)
                 if persist_result and observe:
                     try:
+                        target_trace_id = request.trace_id or inputs.get("trace_id") or (inputs.get("trace") if isinstance(inputs.get("trace"), str) else inputs.get("trace", {}).get("trace_id") if isinstance(inputs.get("trace"), dict) else None)
+                        
+                        resolved_app_name = None
+                        if target_trace_id:
+                            try:
+                                from app.core.clickhouse import get_clickhouse_client
+                                ch_client = get_clickhouse_client()
+                                ch_res = ch_client.query(f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1").result_rows
+                                if ch_res and ch_res[0][0]:
+                                    resolved_app_name = str(ch_res[0][0])
+                            except Exception as ex:
+                                logger.error(f"Failed to query trace application_name: {ex}")
+                        
                         eval_result = EvaluationResult(
-                            trace_id=trace_id,
+                            trace_id=target_trace_id or trace_id,
                             metric_id=request.metric_id,
                             input=str(query) if query else None,
                             output=str(output) if output else None,
@@ -400,7 +413,7 @@ async def run_evaluation(
                             passed=result.passed,
                             status="COMPLETED",
                             metadata_json=result.metadata,
-                            application_name=inputs.get("application_name")
+                            application_name=resolved_app_name or inputs.get("application_name")
                             or (
                                 api_key_obj.application.name
                                 if api_key_obj and api_key_obj.application
