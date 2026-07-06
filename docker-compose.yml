@@ -32,6 +32,7 @@ services:
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: clickhouse
       CORS_ORIGINS: http://10.17.34.14:8011,http://localhost:8011,http://localhost:3000
+      ENCRYPTION_KEY: GVyBpkOHezdXyBGM3bOoLy2r3pi7YasmLZwUSAyBha0=
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: always
