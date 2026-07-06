@@ -46,7 +46,10 @@ export function LatencyChart({ data, title }: LatencyChartProps) {
                 fontSize: '11px',
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.04)'
               }}
-              formatter={(value: number) => [`${value.toFixed(2)} ms`, '']}
+              formatter={(value) => {
+                const numeric = typeof value === 'number' ? value : Number(value ?? 0);
+                return [`${numeric.toFixed(2)} ms`, ''];
+              }}
             />
             <Legend
               wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
