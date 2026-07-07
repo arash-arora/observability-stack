@@ -713,3 +713,260 @@ async def get_evaluation_stats(db: AsyncSession = Depends(get_session)):
         "avg_score": avg_score,
         "breakdown": breakdown_list,
     }
+
+
+# ===== BATCH EVALUATION ENDPOINTS =====
+
+from app.models.batch_evaluation import BatchEvaluation
+from pydantic import BaseModel
+from datetime import datetime, timezone
+import random
+
+
+class BatchEvalCreateRequest(BaseModel):
+    application_id: str
+    from_date: Optional[datetime] = None
+    to_date: Optional[datetime] = None
+    use_all_traces: bool = False  # If True, ignore date range and use all available traces
+    metric_ids: str  # comma-separated
+    traces_to_eval: int
+    is_percentage: bool = False
+    percentage_value: Optional[float] = None
+    provider: str
+    model_name: str
+    api_key: Optional[str] = None
+    provider_id: Optional[uuid.UUID] = None
+    base_url: Optional[str] = None
+    api_version: Optional[str] = None
+    deployment_name: Optional[str] = None
+
+
+class BatchEvalResponse(BaseModel):
+    id: uuid.UUID
+    application_id: str
+    status: str
+    total_traces: int
+    traces_to_eval: int
+    evaluated_traces: int
+    successful_evaluations: int
+    failed_evaluations: int
+    avg_score: Optional[float]
+    created_at: datetime
+    completed_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/batch", response_model=List[BatchEvalResponse])
+async def list_batch_evaluations(
+    application_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """List all batch evaluations for an application"""
+    stmt = select(BatchEvaluation).where(
+        BatchEvaluation.application_id == application_id,
+        BatchEvaluation.user_id == current_user.id
+    ).order_by(desc(BatchEvaluation.created_at))
+    result = await db.execute(stmt)
+    batch_evals = result.scalars().all()
+    return batch_evals
+
+
+@router.get("/batch/{batch_id}", response_model=BatchEvalResponse)
+async def get_batch_evaluation(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a specific batch evaluation"""
+    batch_eval = await db.get(BatchEvaluation, batch_id)
+    if not batch_eval:
+        raise HTTPException(status_code=404, detail="Batch evaluation not found")
+
+    if batch_eval.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this batch evaluation")
+
+    return batch_eval
+
+
+@router.get("/batch-traces-count")
+async def get_traces_count(
+    application_id: str,
+    from_date: datetime,
+    to_date: datetime,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Get count of traces in a date range for an application"""
+    try:
+        from app.core.clickhouse import get_clickhouse_client
+
+        client = get_clickhouse_client()
+
+        # Convert to string format for ClickHouse
+        from_timestamp = int(from_date.timestamp() * 1000)
+        to_timestamp = int(to_date.timestamp() * 1000)
+
+        query = f"""
+        SELECT COUNT(*) as count
+        FROM traces
+        WHERE application_name = '{application_id}'
+        AND start_time >= {from_timestamp}000000
+        AND start_time <= {to_timestamp}000000
+        """
+
+        result = client.query(query)
+        count = result.result_rows[0][0] if result.result_rows else 0
+
+        return {"total_traces": count}
+    except Exception as e:
+        logger.error(f"Failed to get traces count: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get traces count: {str(e)}")
+
+
+@router.post("/batch", response_model=BatchEvalResponse)
+async def create_batch_evaluation(
+    request: BatchEvalCreateRequest,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Create and run a batch evaluation"""
+    try:
+        from app.core.clickhouse import get_clickhouse_client
+
+        # Resolve provider configuration
+        provider = request.provider
+        model_name = request.model_name
+        api_key = request.api_key
+        base_url = request.base_url
+        api_version = request.api_version
+        deployment_name = request.deployment_name
+
+        if request.provider_id:
+            provider_obj = await db.get(LLMProvider, request.provider_id)
+            if not provider_obj:
+                raise HTTPException(status_code=400, detail="Invalid provider_id")
+
+            provider = provider_obj.provider
+            model_name = provider_obj.model_name
+            base_url = provider_obj.base_url
+            api_version = provider_obj.api_version
+            deployment_name = provider_obj.deployment_name
+
+            try:
+                api_key = decrypt_value(provider_obj.api_key)
+            except Exception:
+                api_key = provider_obj.api_key
+
+        # Get trace IDs from ClickHouse
+        client = get_clickhouse_client()
+
+        if request.use_all_traces:
+            query = f"""
+            SELECT DISTINCT trace_id
+            FROM traces
+            WHERE application_name = '{request.application_id}'
+            LIMIT 10000
+            """
+        else:
+            from_timestamp = int(request.from_date.timestamp() * 1000)
+            to_timestamp = int(request.to_date.timestamp() * 1000)
+
+            query = f"""
+            SELECT DISTINCT trace_id
+            FROM traces
+            WHERE application_name = '{request.application_id}'
+            AND start_time >= {from_timestamp}000000
+            AND start_time <= {to_timestamp}000000
+            LIMIT 10000
+            """
+
+        result = client.query(query)
+        all_trace_ids = [row[0] for row in result.result_rows]
+        total_traces = len(all_trace_ids)
+
+        # Calculate how many traces to evaluate
+        if request.is_percentage and request.percentage_value:
+            traces_to_eval = max(1, int(total_traces * (request.percentage_value / 100)))
+        else:
+            traces_to_eval = min(request.traces_to_eval, total_traces)
+
+        # Randomly select traces
+        selected_trace_ids = random.sample(all_trace_ids, min(traces_to_eval, len(all_trace_ids)))
+
+        # Convert timezone-aware datetimes to naive for storage
+        from_date_naive = None
+        to_date_naive = None
+        if request.from_date:
+            from_date_naive = request.from_date.replace(tzinfo=None) if request.from_date.tzinfo else request.from_date
+        if request.to_date:
+            to_date_naive = request.to_date.replace(tzinfo=None) if request.to_date.tzinfo else request.to_date
+
+        # Create batch evaluation record
+        batch_eval = BatchEvaluation(
+            application_id=request.application_id,
+            project_id=current_user.id,  # TODO: get actual project_id from context
+            user_id=current_user.id,
+            from_date=from_date_naive,
+            to_date=to_date_naive,
+            metric_ids=request.metric_ids,
+            total_traces=total_traces,
+            traces_to_eval=traces_to_eval,
+            is_percentage=request.is_percentage,
+            percentage_value=request.percentage_value if request.is_percentage else None,
+            provider=provider,
+            model_name=model_name,
+            provider_id=request.provider_id,
+            status="RUNNING",
+            started_at=datetime.now(timezone.utc),
+            selected_trace_ids=selected_trace_ids,
+        )
+
+        db.add(batch_eval)
+        await db.commit()
+        await db.refresh(batch_eval)
+
+        # TODO: Run evaluation in background task
+        # For now, return the batch evaluation object
+
+        return batch_eval
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create batch evaluation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create batch evaluation: {str(e)}")
+
+
+@router.post("/batch/{batch_id}/rerun", response_model=BatchEvalResponse)
+async def rerun_batch_evaluation(
+    batch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Rerun a batch evaluation"""
+    batch_eval = await db.get(BatchEvaluation, batch_id)
+    if not batch_eval:
+        raise HTTPException(status_code=404, detail="Batch evaluation not found")
+
+    if batch_eval.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to rerun this batch evaluation")
+
+    # Reset the batch evaluation
+    batch_eval.status = "RUNNING"
+    batch_eval.started_at = datetime.now(timezone.utc)
+    batch_eval.evaluated_traces = 0
+    batch_eval.successful_evaluations = 0
+    batch_eval.failed_evaluations = 0
+    batch_eval.avg_score = None
+    batch_eval.completed_at = None
+
+    db.add(batch_eval)
+    await db.commit()
+    await db.refresh(batch_eval)
+
+    # TODO: Run evaluation in background task
+
+    return batch_eval

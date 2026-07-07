@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -32,7 +31,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus, Play, MoreHorizontal } from "lucide-react";
+import { Trash2, Plus, Play } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Rule {
   id: number;
@@ -442,74 +442,83 @@ export default function AutoEvalView() {
         )}
       </div>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Rule Name</TableHead>
-              <TableHead>Application</TableHead>
-              <TableHead>Metric</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rules.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium">{r.name}</TableCell>
-                <TableCell>{getAppName(r.application_id)}</TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {r.metric_ids.split(",").map(mId => (
-                      <Badge key={mId} variant="outline">{mId}</Badge>
-                    ))}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Badge 
-                    variant={r.active ? "default" : "secondary"}
-                    className={r.active ? "bg-green-500 hover:bg-green-600" : ""}
-                    onClick={() => handleToggle(r)}
-                  >
-                    {r.active ? "Active" : "Paused"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-muted-foreground text-sm">
-                  {format(new Date(r.created_at), "MMM d, HH:mm")}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-2">
-                    <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        title={r.active ? "Pause" : "Resume"}
-                        onClick={() => handleToggle(r)}
-                    >
-                        {r.active ? <span className="text-xs">⏸</span> : <Play className="h-4 w-4" />}
-                    </Button>
-                    <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                        onClick={() => handleDelete(r.id)}
-                    >
-                        <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {!idxLoading && rules.length === 0 && (
+      <Tabs defaultValue="rules" className="w-full">
+        <TabsList className="grid w-full grid-cols-1">
+          <TabsTrigger value="rules">Auto-Eval Rules</TabsTrigger>
+        </TabsList>
+
+        {/* Auto-Eval Rules Tab */}
+        <TabsContent value="rules" className="space-y-4">
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        No auto-eval rules found. Create one to start evaluating new traces automatically.
-                    </TableCell>
+                  <TableHead>Rule Name</TableHead>
+                  <TableHead>Application</TableHead>
+                  <TableHead>Metric</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              </TableHeader>
+              <TableBody>
+                {rules.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell>{getAppName(r.application_id)}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {r.metric_ids.split(",").map(mId => (
+                          <Badge key={mId} variant="outline">{mId}</Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={r.active ? "default" : "secondary"}
+                        className={r.active ? "bg-green-500 hover:bg-green-600" : ""}
+                        onClick={() => handleToggle(r)}
+                      >
+                        {r.active ? "Active" : "Paused"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {format(new Date(r.created_at), "MMM d, HH:mm")}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            title={r.active ? "Pause" : "Resume"}
+                            onClick={() => handleToggle(r)}
+                        >
+                            {r.active ? <span className="text-xs">⏸</span> : <Play className="h-4 w-4" />}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                            onClick={() => handleDelete(r.id)}
+                        >
+                            <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!idxLoading && rules.length === 0 && (
+                    <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                            No auto-eval rules found. Create one to start evaluating new traces automatically.
+                        </TableCell>
+                    </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
