@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AI Observability",
-  description: "Observability for the rest of us",
+  title: "AI Reliability Suite",
+  description: "Reliability monitoring for AI applications",
 };
 
 export default function RootLayout({

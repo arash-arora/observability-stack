@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
 import Link from 'next/link';
+import Image from 'next/image';
 import { cn } from '@/lib/utils';
 
 export default function LoginPage() {
@@ -47,23 +48,18 @@ export default function LoginPage() {
       <div className="w-full max-w-[420px]">
         {/* Logo Section */}
         <div className="mb-8 flex flex-col items-center text-center">
-            {/* Elegant minimalistic circular gradient logo */}
-            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-500 via-indigo-500 to-purple-600 shadow-[0_8px_30px_rgba(99,102,241,0.15)] ring-1 ring-white/10">
-                <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-7 w-7 text-white"
-                >
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
+            <div className="mb-6">
+                <Image
+                    src="/logo.png"
+                    alt="AI Reliability Suite"
+                    width={200}
+                    height={84}
+                    priority
+                    className="h-auto w-auto max-w-xs"
+                />
             </div>
             <h1 className="text-[26px] font-semibold tracking-tight text-[#1d1d1f]">
-                Sign in to AI Observability
+                Sign in to AI Reliability Suite
             </h1>
             <p className="mt-2 text-[14px] text-[#6e6e73]">
                 Enter your details to access your dashboard.
@@ -119,7 +115,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-8 text-center text-xs text-[#6e6e73]">
-            New to AI Observability?{' '}
+            New to AI Reliability Suite?{' '}
             <Link href="/signup" className="font-semibold text-[#0071e3] hover:underline">
                 Create an account
             </Link>

@@ -209,7 +209,9 @@ class AlertRunner:
     def generate_fingerprint(self, rule: AlertRule) -> str:
         """Generate unique fingerprint for deduplication"""
         key = f"{rule.id}:{rule.application_id or 'all'}"
-        return hashlib.md5(key.encode()).hexdigest()
+        # Not a security context: this hash is only a dedup key for alerts.
+        # usedforsecurity=False documents intent and satisfies static analysis.
+        return hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()
 
     async def should_notify(self, alert: Alert, rule: AlertRule) -> bool:
         """Check cooldown period"""

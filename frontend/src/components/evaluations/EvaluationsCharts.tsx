@@ -73,10 +73,10 @@ export function EvaluationsCharts({ data }: EvaluationsChartsProps) {
         </Card>
       </div>
 
-      {/* Second Row: Quality Trend (2/3 width) and Score Distribution (1/3 width) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Quality Trend - Full Width */}
+      <div className="grid grid-cols-1 gap-6">
          {/* 3. Score Trend */}
-         <Card className="col-span-1 lg:col-span-2">
+         <Card>
             <CardHeader>
               <CardTitle className="text-sm font-medium">Quality Trend</CardTitle>
               <CardDescription>Average evaluation score over time</CardDescription>
@@ -95,7 +95,7 @@ export function EvaluationsCharts({ data }: EvaluationsChartsProps) {
           </Card>
 
           {/* 4. Score Quality Distribution */}
-          <Card>
+          {/* <Card>
             <CardHeader>
               <CardTitle className="text-sm font-medium">Score Distribution</CardTitle>
               <CardDescription>Number of evaluations per score range</CardDescription>
@@ -122,7 +122,7 @@ export function EvaluationsCharts({ data }: EvaluationsChartsProps) {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Card> */}
       </div>
     </div>
   );

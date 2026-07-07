@@ -529,12 +529,31 @@ async def run_evaluation(
 
 @router.get("/runs", response_model=List[TraceEvaluationSummary])
 async def list_evaluation_runs(
-    limit: int = 50, offset: int = 0, db: AsyncSession = Depends(get_session)
+    limit: int = 50,
+    offset: int = 0,
+    time_range: str = "24h",
+    application_name: Optional[str] = None,
+    db: AsyncSession = Depends(get_session)
 ):
     """
-    List evaluation runs grouped by trace_id.
+    List evaluation runs grouped by trace_id with optional filters.
+    time_range: "24h", "7d", "30d", "all"
+    application_name: optional filter by application name
     """
-    # Group by trace_id
+    from datetime import timedelta, datetime as dt
+
+    # Calculate time filter
+    now = dt.utcnow()
+    if time_range == "24h":
+        time_filter = now - timedelta(hours=24)
+    elif time_range == "7d":
+        time_filter = now - timedelta(days=7)
+    elif time_range == "30d":
+        time_filter = now - timedelta(days=30)
+    else:  # "all"
+        time_filter = None
+
+    # Build query with filters
     stmt = (
         select(
             EvaluationResult.trace_id,
@@ -545,6 +564,19 @@ async def list_evaluation_runs(
             func.bool_and(EvaluationResult.passed).label("all_passed"),
             func.array_agg(EvaluationResult.status).label("statuses"),
         )
+    )
+
+    # Add time filter
+    if time_filter:
+        stmt = stmt.where(EvaluationResult.created_at >= time_filter)
+
+    # Add application name filter
+    if application_name:
+        stmt = stmt.where(EvaluationResult.application_name == application_name)
+
+    # Complete the query
+    stmt = (
+        stmt
         .group_by(EvaluationResult.trace_id)
         .order_by(desc("created_at"))
         .offset(offset)

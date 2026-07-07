@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { format } from "date-fns";
+import { useDashboard } from "@/context/DashboardContext";
 import {
   Table,
   TableBody,
@@ -13,7 +14,14 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, RefreshCw, Activity } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ExternalLink, RefreshCw, Activity, X } from "lucide-react";
 import EvaluationModal from "@/components/dashboard/EvaluationModal";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,13 +38,35 @@ interface TraceEvaluationSummary {
 
 export default function EvaluationsList() {
   const router = useRouter();
+  const { selectedProject } = useDashboard();
   const [runs, setRuns] = useState<TraceEvaluationSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [timeRange, setTimeRange] = useState("24h");
+  const [selectedApp, setSelectedApp] = useState("");
+  const [applications, setApplications] = useState<Array<{ id: string; name: string }>>([]);
 
-  const fetchRuns = async () => {
+  const fetchApplications = async () => {
+    try {
+      const res = await api.get("/management/applications");
+      // Filter applications by selected project (if one is selected)
+      const filtered = selectedProject
+        ? res.data.filter((app: any) => app.project_id === selectedProject.id)
+        : res.data;
+      setApplications(filtered);
+    } catch (e) {
+      console.error("Failed to fetch applications", e);
+    }
+  };
+
+  const fetchRuns = async (time: string = timeRange, app: string = selectedApp) => {
     setLoading(true);
     try {
-      const res = await api.get("/evaluations/runs");
+      const params = new URLSearchParams();
+      params.append("time_range", time);
+      if (app) {
+        params.append("application_name", app);
+      }
+      const res = await api.get(`/evaluations/runs?${params.toString()}`);
       setRuns(res.data);
     } catch (e) {
       console.error("Failed to fetch runs", e);
@@ -46,18 +76,62 @@ export default function EvaluationsList() {
   };
 
   useEffect(() => {
-    fetchRuns();
+    fetchApplications();
+    // Reset selected app when project changes
+    setSelectedApp("");
+  }, [selectedProject]);
+
+  useEffect(() => {
+    fetchRuns(timeRange, selectedApp);
+  }, [timeRange, selectedApp]);
+
+  useEffect(() => {
     // Poll for running methods
-    const interval = setInterval(fetchRuns, 5000);
+    const interval = setInterval(() => {
+      fetchRuns(timeRange, selectedApp);
+    }, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [timeRange, selectedApp]);
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-          <Button variant="outline" size="sm" onClick={fetchRuns}>
-              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-          </Button>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-[#6e6e73]">Time Range:</label>
+            <Select value={timeRange} onValueChange={setTimeRange}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="24h">Last 24 hours</SelectItem>
+                <SelectItem value="7d">Last 7 days</SelectItem>
+                <SelectItem value="30d">Last 30 days</SelectItem>
+                <SelectItem value="all">All time</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-[#6e6e73]">Application:</label>
+            <Select value={selectedApp} onValueChange={setSelectedApp}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="All applications" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All applications</SelectItem>
+                {applications.map((app) => (
+                  <SelectItem key={app.id} value={app.name}>
+                    {app.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => fetchRuns(timeRange, selectedApp)}>
+          <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+        </Button>
       </div>
       
       <div className="rounded-md border">

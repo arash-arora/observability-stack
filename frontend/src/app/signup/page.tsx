@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import api from '@/lib/api';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
@@ -38,25 +39,18 @@ export default function SignupPage() {
       <div className="w-full max-w-[420px]">
         {/* Logo Section */}
         <div className="mb-8 flex flex-col items-center text-center">
-             <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-500 via-indigo-500 to-purple-600 shadow-[0_8px_30px_rgba(99,102,241,0.15)] ring-1 ring-white/10">
-                <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-7 w-7 text-white"
-                >
-                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="8.5" cy="7" r="4" />
-                    <line x1="20" y1="8" x2="20" y2="14" />
-                    <line x1="23" y1="11" x2="17" y2="11" />
-                </svg>
+            <div className="mb-6">
+                <Image
+                    src="/logo.png"
+                    alt="AI Reliability Suite"
+                    width={200}
+                    height={84}
+                    priority
+                    className="h-auto w-auto max-w-xs"
+                />
             </div>
             <h1 className="text-[26px] font-semibold tracking-tight text-[#1d1d1f]">
-                Join the Stack
+                Join AI Reliability Suite
             </h1>
             <p className="mt-2 text-[14px] text-[#6e6e73]">
                 Create a new developer account.

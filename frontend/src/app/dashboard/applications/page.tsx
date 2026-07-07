@@ -243,69 +243,6 @@ export default function ApplicationsPage() {
         </Table>
       </div>
 
-      {/* Embedded SDK Reference Guide Card */}
-      <div className="rounded-3xl border border-black/[0.04] bg-white/70 backdrop-blur-xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.02)] space-y-6">
-        <div>
-          <h3 className="text-xs font-bold text-[#1d1d1f] uppercase tracking-wider flex items-center gap-2">
-            <Sparkles size={14} className="text-[#0071e3]" />
-            SDK Integration Guide
-          </h3>
-          <p className="text-[11px] text-[#6e6e73] mt-1">
-            Standard Python decorator setup to collect metrics and log execution traces automatically.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Step 1 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">1</span>
-              Add SDK Git Submodule
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal min-h-[46px] flex items-center">
-              git submodule add https://github.com/observix/observix-python.git
-            </pre>
-          </div>
-
-          {/* Step 2 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">2</span>
-              Import Observe Decorator
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal min-h-[46px] flex items-center">
-              from observix import observe
-            </pre>
-          </div>
-
-          {/* Step 3 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">3</span>
-              Decorate Python Functions
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3.5 rounded-xl overflow-x-auto select-all leading-normal min-h-[92px]">
-{`@observe(name="agent_workflow")
-def execute_agent(prompt: str):
-    # Logs nested tool calls automatically
-    return "workflow_response"`}
-            </pre>
-          </div>
-
-          {/* Step 4 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-black/[0.03] text-[10px] font-bold flex items-center justify-center">4</span>
-              Export Env Variables
-            </h4>
-            <pre className="text-[10px] font-mono bg-black/95 text-neutral-300 p-3.5 rounded-xl overflow-x-auto select-all leading-normal min-h-[92px] flex flex-col justify-center">
-{`export OBSERVIX_API_KEY="sk-••••••••••••••••"
-export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`}
-            </pre>
-          </div>
-        </div>
-      </div>
-
       <ApplicationModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -343,7 +280,6 @@ function GetStartedModal({
   if (!app) return null;
 
   const codeSnippets = {
-    submodule: `git submodule add https://github.com/observix/observix-python.git`,
     importCode: `from observix import observe`,
     decorator: `@observe(name="agent_workflow_span")
 def execute_agent_loop(query: str):
@@ -363,7 +299,7 @@ export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`
             Integrate Application
           </DialogTitle>
           <DialogDescription className="text-xs text-[#6e6e73] leading-relaxed mt-1">
-            Follow these 4 simple framework-agnostic steps to initialize telemetry tracing for <strong>{app.name}</strong>.
+            Follow these 3 simple framework-agnostic steps to initialize telemetry tracing for <strong>{app.name}</strong>.
           </DialogDescription>
         </DialogHeader>
 
@@ -381,25 +317,6 @@ export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`
           <div className="space-y-1.5">
             <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
               <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">1</span>
-              Add SDK Submodule
-            </h4>
-            <div className="relative">
-              <pre className="text-[10px] font-mono bg-black/90 text-neutral-300 p-3 rounded-xl overflow-x-auto select-all leading-normal">
-                {codeSnippets.submodule}
-              </pre>
-              <button
-                onClick={() => handleCopy(codeSnippets.submodule, "submodule")}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-neutral-300 cursor-pointer"
-              >
-                {copiedId === "submodule" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Step 2 */}
-          <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">2</span>
               Import Observix
             </h4>
             <div className="relative">
@@ -415,10 +332,10 @@ export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`
             </div>
           </div>
 
-          {/* Step 3 */}
+          {/* Step 2 */}
           <div className="space-y-1.5">
             <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">3</span>
+              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">2</span>
               Decorate Functions
             </h4>
             <div className="relative">
@@ -434,10 +351,10 @@ export OBSERVIX_BACKEND_URL="http://localhost:8000/api/v1"`
             </div>
           </div>
 
-          {/* Step 4 */}
+          {/* Step 3 */}
           <div className="space-y-1.5">
             <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-1.5">
-              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">4</span>
+              <span className="w-5 h-5 rounded-full bg-black/[0.04] text-[9px] font-mono font-bold inline-flex items-center justify-center">3</span>
               Set Environment Variables
             </h4>
             <div className="relative">

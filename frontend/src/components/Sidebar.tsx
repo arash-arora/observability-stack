@@ -1,6 +1,7 @@
 "use client";
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, Activity, Key, LogOut, LayoutList,
@@ -11,9 +12,7 @@ import { LayoutDashboard, Activity, Key, LogOut, LayoutList,
   Boxes,
   Shield,
   Building2,
-  Book,
   Bell,
-  TrendingUp,
 } from "lucide-react";
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
@@ -33,7 +32,6 @@ export default function Sidebar() {
     { href: '/dashboard/models', label: 'Model Hub', icon: Sparkles },
     { href: '/dashboard/metrics', label: 'Metrics Hub', icon: Beaker },
     { href: '/dashboard/alerts/active', label: 'Alerts', icon: Bell },
-    { href: '/dashboard/metrics/system', label: 'System Metrics', icon: TrendingUp },
     // Show Organizations only if superuser
     ...(user?.is_superuser ? [{ href: '/dashboard/organizations', label: 'Organizations', icon: Building2 }] : []),
     // Show Admin Pages only if superuser
@@ -50,21 +48,21 @@ export default function Sidebar() {
             isSidebarCollapsed ? "w-16" : "w-64"
         )}
     >
-      <div className={cn("flex flex-col items-center justify-center py-7 gap-1 px-4 border-b border-black/[0.04] bg-white/30", isSidebarCollapsed ? "px-0" : "")}>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/10">
-            <Activity size={16} />
-          </div>
-          {!isSidebarCollapsed && (
-            <h1 className="text-[15px] font-semibold tracking-tight text-[#1d1d1f] leading-none">
-              AI Observability
-            </h1>
-          )}
+      <div className={cn("flex flex-col items-center justify-center py-4 gap-2 px-3 border-b border-black/[0.04] bg-white/30", isSidebarCollapsed ? "px-0" : "")}>
+        <div className="w-[60%] flex items-center justify-center shrink-0">
+          <Image
+            src="/logo.png"
+            alt="AI Reliability Suite"
+            width={80}
+            height={80}
+            className="w-full h-full object-contain"
+            priority
+          />
         </div>
         {!isSidebarCollapsed && (
-          <div className="text-[9px] text-[#6e6e73] font-semibold tracking-wider uppercase mt-1.5 opacity-80">
-            Reliability Platform
-          </div>
+          <h1 className="text-[18px] font-semibold tracking-tight text-[#1d1d1f] leading-tight text-center">
+            AI Reliability Suite
+          </h1>
         )}
       </div>
       
@@ -99,18 +97,6 @@ export default function Sidebar() {
       </div>
       
       <div className="p-4 border-t border-black/[0.04] relative bg-white/20">
-        <Link 
-            href="/documentation.pdf"
-            target="_blank"
-            className={cn(
-                "flex items-center gap-3 px-3 py-2.5 mb-3 text-[13px] font-semibold text-[#6e6e73] hover:bg-black/[0.02] hover:text-[#1d1d1f] rounded-xl transition-all duration-200",
-                isSidebarCollapsed && "justify-center"
-            )}
-            title={isSidebarCollapsed ? "Documentation" : undefined}
-        >
-            <Book size={16} className="opacity-70 shrink-0" />
-            {!isSidebarCollapsed && <span className="truncate">Documentation</span>}
-        </Link>
         {showUserMenu && (
              <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)}></div>

@@ -7,7 +7,19 @@ import jwt
 from cryptography.fernet import Fernet
 
 ALGORITHM = "HS256"
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "CHANGE_THIS_TO_A_SECURE_SECRET_KEY")
+
+# The JWT signing key must be provided via the environment. There is deliberately
+# no insecure default: falling back to a hard-coded value would let anyone forge
+# tokens. Fail fast at import time so a misconfigured deployment never starts.
+_INSECURE_DEFAULTS = {"", "CHANGE_THIS_TO_A_SECURE_SECRET_KEY"}
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
+if SECRET_KEY in _INSECURE_DEFAULTS:
+    raise RuntimeError(
+        "JWT_SECRET_KEY environment variable is not set (or still uses the placeholder). "
+        "Set it to a strong random secret, e.g.: "
+        "python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+    )
+
 INTERNAL_INGEST_TOKEN_PREFIX = "intk_"
 
 # ---------------------------------------------------------------------------
