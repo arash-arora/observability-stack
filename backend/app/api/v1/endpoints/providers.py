@@ -179,6 +179,23 @@ async def delete_provider(
     return {"status": "success"}
 
 
+@router.get("/supported-for-custom-config")
+async def get_supported_providers():
+    """
+    Get the list of LLM providers supported for custom configuration.
+    Returns provider names and display labels.
+    """
+    return {
+        "providers": [
+            {"name": "OpenAI", "value": "openai"},
+            {"name": "Azure OpenAI", "value": "azure"},
+            {"name": "Langchain (Groq)", "value": "langchain"},
+            {"name": "Anthropic", "value": "anthropic"},
+            {"name": "Google", "value": "google"},
+        ]
+    }
+
+
 @router.post("/test")
 async def test_provider(
     request: TestProviderRequest,
@@ -203,7 +220,7 @@ async def test_provider(
         client = None
 
         if provider_config.provider == "openai":
-            from openai import AsyncOpenAI
+            from observix.llm.openai import AsyncOpenAI
 
             client = AsyncOpenAI(api_key=plaintext_api_key)
 
@@ -214,7 +231,7 @@ async def test_provider(
             return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "azure":
-            from openai import AsyncAzureOpenAI
+            from observix.llm.openai import AsyncAzureOpenAI
 
             client = AsyncAzureOpenAI(
                 api_key=plaintext_api_key,
@@ -241,12 +258,12 @@ async def test_provider(
             return {"output": response.content}
 
         elif provider_config.provider == "huggingface":
-            from huggingface_hub import InferenceClient
+            from observix.llm.huggingface import InferenceClient
 
             config_data = provider_config.provider_config or {}
             client = InferenceClient(
                 model=config_data.get('inference_endpoint') or provider_config.model_name,
-                token=provider_config.api_key
+                token=plaintext_api_key
             )
 
             response = client.chat_completion(
@@ -256,13 +273,12 @@ async def test_provider(
             return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "bedrock":
-            import boto3
+            from observix.llm.bedrock import BedrockClient
             import json
 
             config_data = provider_config.provider_config or {}
 
-            bedrock = boto3.client(
-                service_name='bedrock-runtime',
+            bedrock = BedrockClient(
                 region_name=config_data.get('aws_region'),
                 aws_access_key_id=config_data.get('aws_access_key_id'),
                 aws_secret_access_key=config_data.get('aws_secret_access_key'),
@@ -287,7 +303,7 @@ async def test_provider(
         elif provider_config.provider == "vertexai":
             from google.cloud import aiplatform
             from google.oauth2 import service_account
-            from vertexai.preview.generative_models import GenerativeModel
+            from observix.llm.vertexai import GenerativeModel
             import json
 
             config_data = provider_config.provider_config or {}
@@ -301,6 +317,26 @@ async def test_provider(
             )
 
             model = GenerativeModel(provider_config.model_name)
+            response = model.generate_content(request.input_text)
+            return {"output": response.text}
+
+        elif provider_config.provider == "anthropic":
+            from observix.llm.anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(api_key=plaintext_api_key)
+            response = await client.messages.create(
+                model=provider_config.model_name,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": request.input_text}],
+            )
+            return {"output": response.content[0].text}
+
+        elif provider_config.provider == "google":
+            from observix.llm.google import GenerativeModel
+            import google.generativeai as genai
+
+            genai.configure(api_key=plaintext_api_key)
+            model = GenerativeModel(model_name=provider_config.model_name)
             response = model.generate_content(request.input_text)
             return {"output": response.text}
 

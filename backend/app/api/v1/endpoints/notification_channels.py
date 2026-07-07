@@ -1,9 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
 from app.models.notification_channel import NotificationChannel
+from app.models.alert import Alert
+from app.models.alert_rule import AlertRule
 from app.core.database import get_session
+from app.services.notifications import NotificationService
 from sqlmodel import select
 from typing import List
+from datetime import datetime
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notification-channels", tags=["notifications"])
 
@@ -110,7 +117,55 @@ async def test_notification_channel(
     if not channel:
         raise HTTPException(status_code=404, detail="Notification channel not found")
 
-    # TODO: Implement test notification
-    # This would send a test alert to verify the channel is configured correctly
+    if not channel.enabled:
+        raise HTTPException(status_code=400, detail="Notification channel is disabled")
 
-    return {"status": "test_sent", "channel_id": channel_id}
+    # Validate channel configuration
+    if not channel.config:
+        raise HTTPException(status_code=400, detail="Notification channel has no configuration")
+
+    if not channel.config.get("webhook_url"):
+        raise HTTPException(status_code=400, detail="Notification channel is missing webhook URL")
+
+    try:
+        # Create a test alert
+        test_alert = Alert(
+            alert_rule_id=uuid.uuid4(),
+            state="TRIGGERED",
+            severity="HIGH",
+            metric_name="Test Metric",
+            metric_value=85.5,
+            threshold=80.0,
+            application_name="Test Application",
+            fingerprint=f"test_{channel_id}_{datetime.utcnow().timestamp()}",
+            context={}
+        )
+
+        # Create a test rule
+        test_rule = AlertRule(
+            id=uuid.uuid4(),
+            name="Test Alert",
+            description="Test notification",
+            project_id=channel.project_id,
+            metric_source="SYSTEM_PERFORMANCE",
+            metric_filter={},
+            threshold_type="STATIC",
+            threshold_config={},
+            condition="GREATER_THAN",
+            severity="HIGH",
+            aggregation_window="5m",
+            aggregation_function="AVG",
+            notification_config={}
+        )
+
+        # Send the test notification
+        notification_service = NotificationService()
+        await notification_service.send_to_channel(test_alert, test_rule, channel)
+
+        return {"status": "test_sent", "channel_id": channel_id, "message": "Test notification sent successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to send test notification to {channel_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to send test notification: {str(e)}")

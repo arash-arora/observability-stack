@@ -76,11 +76,12 @@ export default function EvaluationModal({
   const [traceHost, setTraceHost] = useState(process.env.NEXT_PUBLIC_OBSERVIX_TRACE_HOST || "http://localhost:8000");
   const [traceApiKey, setTraceApiKey] = useState("");
 
-  // Provider Selection State 
+  // Provider Selection State
   const { selectedProject } = useDashboard();
   const [configMode, setConfigMode] = useState<'registered' | 'custom'>('registered');
   const [providers, setProviders] = useState<any[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [customProviders, setCustomProviders] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
@@ -139,13 +140,17 @@ export default function EvaluationModal({
           // The check `if (initialData.isTraceEvaluation)` handles the mandatory switch.
       }
 
-      // Fetch providers
+      // Fetch registered providers and supported custom providers
       if (selectedProject) {
-          api.get(`/management/providers?project_id=${selectedProject.id}`)
-             .then(res => {
-                setProviders(res.data);
-                if (res.data.length > 0) {
-                    setSelectedProviderId(res.data[0].id);
+          Promise.all([
+              api.get(`/management/providers?project_id=${selectedProject.id}`),
+              api.get(`/management/providers/supported-for-custom-config`)
+          ])
+             .then(([registeredRes, customRes]) => {
+                setProviders(registeredRes.data);
+                setCustomProviders(customRes.data.providers);
+                if (registeredRes.data.length > 0) {
+                    setSelectedProviderId(registeredRes.data[0].id);
                     setConfigMode('registered');
                 } else {
                     setConfigMode('custom');
@@ -437,9 +442,9 @@ export default function EvaluationModal({
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="openai">OpenAI</SelectItem>
-                                    <SelectItem value="azure">Azure OpenAI</SelectItem>
-                                    <SelectItem value="langchain">Langchain</SelectItem>
+                                    {customProviders.map((p) => (
+                                        <SelectItem key={p.value} value={p.value}>{p.name}</SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>

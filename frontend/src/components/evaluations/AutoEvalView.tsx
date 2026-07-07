@@ -88,6 +88,7 @@ export default function AutoEvalView() {
   const [customApiKey, setCustomApiKey] = useState("");
   const [customModelName, setCustomModelName] = useState("gpt-4o");
   const [formError, setFormError] = useState("");
+  const [customProviders, setCustomProviders] = useState<any[]>([]);
 
   const filteredApplications = useMemo(() => {
     if (!selectedProject) {
@@ -99,14 +100,16 @@ export default function AutoEvalView() {
   const fetchData = async () => {
     setIdxLoading(true);
     try {
-      const [rulesRes, metricRes, appsRes] = await Promise.all([
+      const [rulesRes, metricRes, appsRes, customProvidersRes] = await Promise.all([
         api.get("/evaluations/rules"),
         api.get("/evaluations/metrics"),
-        api.get("/management/applications") // Assuming this endpoint exists, or projects/applications
+        api.get("/management/applications"),
+        api.get("/management/providers/supported-for-custom-config")
       ]);
       setRules(rulesRes.data);
       setMetrics(metricRes.data);
       setApplications(appsRes.data);
+      setCustomProviders(customProvidersRes.data.providers);
     } catch (e) {
       console.error("Failed to fetch data", e);
     } finally {
@@ -398,10 +401,9 @@ export default function AutoEvalView() {
                                         <SelectValue placeholder="Select Provider" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="openai">OpenAI</SelectItem>
-                                        <SelectItem value="groq">Groq</SelectItem>
-                                        <SelectItem value="anthropic">Anthropic</SelectItem>
-                                        <SelectItem value="google">Google</SelectItem>
+                                        {customProviders.map((p) => (
+                                            <SelectItem key={p.value} value={p.value}>{p.name}</SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </div>

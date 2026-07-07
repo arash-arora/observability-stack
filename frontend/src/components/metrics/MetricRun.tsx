@@ -92,14 +92,19 @@ export function MetricRun({ metric }: MetricRunProps) {
   const [configMode, setConfigMode] = useState<'registered' | 'custom'>('registered');
   const [providers, setProviders] = useState<any[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [customProviders, setCustomProviders] = useState<any[]>([]);
 
   useEffect(() => {
     if (selectedProject) {
-        api.get(`/management/providers?project_id=${selectedProject.id}`)
-           .then(res => {
-              setProviders(res.data);
-              if (res.data.length > 0) {
-                  setSelectedProviderId(res.data[0].id);
+        Promise.all([
+            api.get(`/management/providers?project_id=${selectedProject.id}`),
+            api.get(`/management/providers/supported-for-custom-config`)
+        ])
+           .then(([registeredRes, customRes]) => {
+              setProviders(registeredRes.data);
+              setCustomProviders(customRes.data.providers);
+              if (registeredRes.data.length > 0) {
+                  setSelectedProviderId(registeredRes.data[0].id);
                   setConfigMode('registered');
               } else {
                   setConfigMode('custom');
@@ -486,9 +491,9 @@ export function MetricRun({ metric }: MetricRunProps) {
                               value={evalProvider}
                               onChange={(e) => setEvalProvider(e.target.value)}
                           >
-                              <option value="openai">OpenAI</option>
-                              <option value="azure">Azure OpenAI</option>
-                              <option value="langchain">Langchain</option>
+                              {customProviders.map((p) => (
+                                  <option key={p.value} value={p.value}>{p.name}</option>
+                              ))}
                           </select>
                       </div>
                       
