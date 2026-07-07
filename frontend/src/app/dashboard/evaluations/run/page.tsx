@@ -6,40 +6,60 @@ import api from "@/lib/api";
 import { Loader2, ArrowLeft } from "lucide-react";
 import EvaluationDetailView from "@/components/evaluations/EvaluationDetailView";
 import EvaluationGroupView from "@/components/evaluations/EvaluationGroupView";
+import BatchEvalDetailView from "@/components/evaluations/BatchEvalDetailView";
 import EvaluationModal from "@/components/dashboard/EvaluationModal";
 import { Button } from "@/components/ui/button";
 
 export default function RunDetailPage() {
     const searchParams = useSearchParams();
     const router = useRouter();
+
     const evaluationId = searchParams.get("evaluation_id");
-    const traceId = searchParams.get("trace_id");
-    
-    const [result, setResult] = useState<any>(null); // Single result
-    const [results, setResults] = useState<any[]>([]); // Group results
-    const [traceDetails, setTraceDetails] = useState<any>(null); // Full trace data
+    const legacyTraceId = searchParams.get("trace_id");
+    const batchId = searchParams.get("batch_id");
+
+    // Determine mode:
+    // - batch_id  → group view: fetch all results for a batch
+    // - evaluation_id (UUID) → single result view
+    // - evaluation_id (non-UUID) or trace_id → group view: fetch all results for a trace
+    const isUUID = (s: string) =>
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+    const traceGroupId = !batchId
+        ? (legacyTraceId || (evaluationId && !isUUID(evaluationId) ? evaluationId : null))
+        : null;
+    const singleEvalId = !batchId && evaluationId && isUUID(evaluationId) ? evaluationId : null;
+
+    const [result, setResult] = useState<any>(null);
+    const [results, setResults] = useState<any[]>([]);
+    const [traceDetails, setTraceDetails] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [isRerunOpen, setIsRerunOpen] = useState(false);
-    const [rerunData, setRerunData] = useState<any>(null); // Data for rerun modal
+    const [rerunData, setRerunData] = useState<any>(null);
     const [error, setError] = useState<string | null>(null);
+    const [batchTitle, setBatchTitle] = useState<string | null>(null);
 
     const fetchData = async () => {
         setLoading(true);
         setError(null);
         try {
-            if (traceId) {
-                const resultsRes = await api.get(`/evaluations/results?trace_id=${traceId}`);
+            if (batchId) {
+                // Fetch all evaluation results for this batch
+                const res = await api.get(`/evaluations/results?batch_id=${batchId}&limit=500`);
+                setResults(res.data);
+                setBatchTitle(`Batch Evaluation — ${batchId.substring(0, 8)}...`);
+            } else if (traceGroupId) {
+                const resultsRes = await api.get(`/evaluations/results?trace_id=${traceGroupId}`);
                 setResults(resultsRes.data);
-                
-                // Fetch trace details for agent info
+
                 try {
-                    const traceRes = await api.get(`/analytics/traces/${traceId}`);
+                    const traceRes = await api.get(`/analytics/traces/${traceGroupId}`);
                     setTraceDetails(traceRes.data);
                 } catch (err) {
                     console.warn("Failed to fetch additional trace details", err);
                 }
-            } else if (evaluationId) {
-                const res = await api.get(`/evaluations/results/${evaluationId}`);
+            } else if (singleEvalId) {
+                const res = await api.get(`/evaluations/results/${singleEvalId}`);
                 setResult(res.data);
             }
         } catch (e) {
@@ -51,18 +71,18 @@ export default function RunDetailPage() {
     };
 
     useEffect(() => {
-        if (evaluationId || traceId) {
+        if (batchId || singleEvalId || traceGroupId) {
             fetchData();
         }
-    }, [evaluationId, traceId]);
+    }, [batchId, singleEvalId, traceGroupId]);
 
     const handleRerun = (data: any = result) => {
         setRerunData(data);
         setIsRerunOpen(true);
     };
 
-    if (!evaluationId && !traceId) {
-        return <div className="p-12 text-center text-muted-foreground">No evaluation or trace ID provided.</div>;
+    if (!batchId && !singleEvalId && !traceGroupId) {
+        return <div className="p-12 text-center text-muted-foreground">No evaluation ID provided.</div>;
     }
 
     if (loading) {
@@ -82,34 +102,39 @@ export default function RunDetailPage() {
             <Button variant="ghost" size="sm" onClick={() => router.back()} className="mb-2">
                 <ArrowLeft className="mr-2 h-4 w-4" /> Back
             </Button>
-            
-            {traceId ? (
-                 <EvaluationGroupView 
-                    results={results} 
+
+            {batchTitle && (
+                <h2 className="text-lg font-semibold text-foreground">{batchTitle}</h2>
+            )}
+
+            {batchId ? (
+                <BatchEvalDetailView results={results} batchTitle={batchTitle ?? undefined} />
+            ) : traceGroupId ? (
+                 <EvaluationGroupView
+                    results={results}
                     traceDetails={traceDetails}
-                    onRerun={handleRerun} 
+                    onRerun={handleRerun}
                  />
             ) : (
-                <EvaluationDetailView 
-                    result={result} 
-                    onRerun={() => handleRerun(result)} 
+                <EvaluationDetailView
+                    result={result}
+                    onRerun={() => handleRerun(result)}
                 />
             )}
 
-            {/* Rerun Modal */}
             {rerunData && (
                 <EvaluationModal
                     isOpen={isRerunOpen}
                     onClose={() => {
                         setIsRerunOpen(false);
-                        fetchData(); // Refresh details after rerun
+                        fetchData();
                     }}
                     initialData={{
                         input: rerunData.input,
                         output: rerunData.output,
                         context: rerunData.context,
                         trace: {
-                            trace_id: rerunData.trace_id || traceId
+                            trace_id: rerunData.trace_id || traceGroupId
                         }
                     }}
                 />
@@ -117,3 +142,5 @@ export default function RunDetailPage() {
         </div>
     );
 }
+
+

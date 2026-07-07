@@ -261,7 +261,7 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                     if context_api_key:
                         init_observability(url=context_host, api_key=context_api_key)
 
-                    with observability_context(api_key=context_api_key, host=context_host):
+                    with observability_context(api_key=context_api_key, host=context_host, evaluation_trace=True):
                         # 1. Instantiate Evaluator
                         try:
                             eval_module = importlib.import_module("observix.evaluation")
@@ -326,6 +326,8 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                         
                         # Add agent details to metadata
                         metadata = dict(result.metadata) if result.metadata else {}
+                        metadata["trigger_type"] = "auto_eval"
+                        metadata["rule_id"] = rule_id
                         if trace_data.get("observation_name"):
                             metadata["agent_name"] = trace_data.get("observation_name")
                         

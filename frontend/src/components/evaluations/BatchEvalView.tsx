@@ -31,7 +31,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, RotateCcw } from "lucide-react";
+import { Plus, RotateCcw, ExternalLink } from "lucide-react";
+import Link from "next/link";
 
 interface Metric {
   id: string;
@@ -153,7 +154,7 @@ export default function BatchEvalView() {
       const res = await api.get(
         `/evaluations/batch-traces-count?application_id=${appId}&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`
       );
-      setBatchTracesCount(res.data.count);
+      setBatchTracesCount(res.data.total_traces);
     } catch (e) {
       console.error("Failed to fetch traces count", e);
     } finally {
@@ -203,6 +204,11 @@ export default function BatchEvalView() {
 
       if (!newApp) {
         setBatchFormError("Please select an application");
+        return;
+      }
+
+      if (!useAllTraces && batchTracesCount === 0) {
+        setBatchFormError("No traces found for this application in the selected date range.");
         return;
       }
 
@@ -274,11 +280,33 @@ export default function BatchEvalView() {
   }, [selectedProject?.id]);
 
   useEffect(() => {
-    if (selectedProject?.id) {
+    if (filteredApplications.length > 0) {
+      const savedApp = localStorage.getItem("selectedBatchAppId");
+      const matchedApp = filteredApplications.find(a => a.id === savedApp);
+      if (matchedApp) {
+        setNewApp(matchedApp.id);
+        fetchBatchEvaluations(matchedApp.id);
+      } else {
+        const defaultApp = filteredApplications[0].id;
+        setNewApp(defaultApp);
+        fetchBatchEvaluations(defaultApp);
+        localStorage.setItem("selectedBatchAppId", defaultApp);
+      }
+    } else {
       setNewApp("");
       setBatchEvals([]);
     }
-  }, [selectedProject?.id]);
+  }, [filteredApplications]);
+
+  // Smart poll: only when a batch is running, refresh every 5s to show progress
+  useEffect(() => {
+    const hasRunning = batchEvals.some(be => be.status === "RUNNING");
+    if (!hasRunning || !newApp) return;
+    const interval = setInterval(() => {
+      fetchBatchEvaluations(newApp);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [batchEvals, newApp]);
 
   return (
     <div className="space-y-4">
@@ -303,6 +331,11 @@ export default function BatchEvalView() {
                   <Label>Application</Label>
                   <Select value={newApp} onValueChange={(val) => {
                     setNewApp(val);
+                    if (val) {
+                      localStorage.setItem("selectedBatchAppId", val);
+                    } else {
+                      localStorage.removeItem("selectedBatchAppId");
+                    }
                     if (!useAllTraces) {
                       fetchTracesCount(val, batchFromDate, batchToDate);
                     }
@@ -582,7 +615,17 @@ export default function BatchEvalView() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-sm">{be.total_traces}</TableCell>
-                <TableCell className="text-sm">{be.evaluated_traces}/{be.traces_to_eval}</TableCell>
+                <TableCell className="text-sm">
+                  <div>{be.evaluated_traces}/{be.traces_to_eval}</div>
+                  {be.status === "RUNNING" && be.traces_to_eval > 0 && (
+                    <div className="w-[80px] bg-muted rounded-full h-1 mt-1 overflow-hidden">
+                      <div 
+                        className="bg-yellow-500 h-1 rounded-full transition-all duration-300" 
+                        style={{ width: `${(be.evaluated_traces / be.traces_to_eval) * 100}%` }}
+                      />
+                    </div>
+                  )}
+                </TableCell>
                 <TableCell className="text-sm">
                   {be.evaluated_traces > 0 ? `${Math.round((be.successful_evaluations / be.evaluated_traces) * 100)}%` : "-"}
                 </TableCell>
@@ -590,14 +633,29 @@ export default function BatchEvalView() {
                   {typeof be.avg_score === 'number' ? be.avg_score.toFixed(2) : "-"}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRerunBatchEval(be.id)}
-                    title="Rerun evaluation"
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    {be.status === "COMPLETED" && (
+                      <Link href={`/dashboard/evaluations/run?batch_id=${be.id}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs text-blue-500 hover:text-blue-700 px-2"
+                          title="View evaluations for this batch"
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          View Evals
+                        </Button>
+                      </Link>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRerunBatchEval(be.id)}
+                      title="Rerun evaluation"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

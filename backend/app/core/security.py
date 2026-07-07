@@ -1,10 +1,16 @@
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Union
 import hashlib
 import os
 import bcrypt
 import jwt
 from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+
+# Load .env file from the backend directory
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 ALGORITHM = "HS256"
 

@@ -2,7 +2,7 @@ import inspect
 import logging
 import importlib
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opentelemetry import trace
@@ -41,6 +41,7 @@ class TraceEvaluationSummary(BaseModel):
     passed: bool
     score_avg: float
     evaluation_count: int
+    trigger_type: str = "sdk"
 
 
 # ... existing imports ...
@@ -296,7 +297,7 @@ async def run_evaluation(
     if context_api_key:
         init_observability(url=context_host, api_key=context_api_key)
 
-    with observability_context(api_key=context_api_key, host=context_host):
+    with observability_context(api_key=context_api_key, host=context_host, evaluation_trace=True):
         try:
             # 2. Instantiate Evaluator
             custom_prompt = inputs.get("custom_prompt")
@@ -563,6 +564,7 @@ async def list_evaluation_runs(
             func.avg(EvaluationResult.score).label("avg_score"),
             func.bool_and(EvaluationResult.passed).label("all_passed"),
             func.array_agg(EvaluationResult.status).label("statuses"),
+            func.json_agg(EvaluationResult.metadata_json).label("metadatas"),
         )
     )
 
@@ -599,6 +601,13 @@ async def list_evaluation_runs(
         elif "RUNNING" in statuses:
             status = "RUNNING"
 
+        metadatas = row[7] or []
+        trigger_type = "sdk"
+        for meta in metadatas:
+            if isinstance(meta, dict) and "trigger_type" in meta:
+                trigger_type = meta["trigger_type"]
+                break
+
         runs.append(
             TraceEvaluationSummary(
                 trace_id=trace_id,
@@ -608,6 +617,7 @@ async def list_evaluation_runs(
                 passed=row[5] if row[5] is not None else False,
                 score_avg=round(row[4], 2) if row[4] is not None else 0.0,
                 evaluation_count=row[3],
+                trigger_type=trigger_type,
             )
         )
 
@@ -620,11 +630,13 @@ async def list_evaluation_results(
     offset: int = 0,
     metric_id: str = None,
     trace_id: str = None,
+    batch_id: str = None,
     db: AsyncSession = Depends(get_session),
 ):
     """
-    List historical evaluation results.
+    List historical evaluation results. Optionally filter by metric_id, trace_id, or batch_id.
     """
+    from sqlalchemy import cast, String
     query = (
         select(EvaluationResult)
         .order_by(EvaluationResult.created_at.desc())
@@ -635,6 +647,12 @@ async def list_evaluation_results(
         query = query.where(EvaluationResult.metric_id == metric_id)
     if trace_id:
         query = query.where(EvaluationResult.trace_id == trace_id)
+    if batch_id:
+        # Filter where metadata_json->>'batch_id' == batch_id (PostgreSQL JSON operator)
+        from sqlalchemy import text
+        query = query.where(
+            text("metadata_json->>'batch_id' = :batch_id")
+        ).params(batch_id=batch_id)
 
     result = await db.execute(query)
     return result.scalars().all()
@@ -760,15 +778,21 @@ class BatchEvalResponse(BaseModel):
 
 @router.get("/batch", response_model=List[BatchEvalResponse])
 async def list_batch_evaluations(
-    application_id: str,
+    application_id: Optional[str] = None,
+    project_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """List all batch evaluations for an application"""
+    """List all batch evaluations for an application, project, or user"""
     stmt = select(BatchEvaluation).where(
-        BatchEvaluation.application_id == application_id,
         BatchEvaluation.user_id == current_user.id
-    ).order_by(desc(BatchEvaluation.created_at))
+    )
+    if application_id:
+        stmt = stmt.where(BatchEvaluation.application_id == application_id)
+    if project_id:
+        stmt = stmt.where(BatchEvaluation.project_id == project_id)
+        
+    stmt = stmt.order_by(desc(BatchEvaluation.created_at))
     result = await db.execute(stmt)
     batch_evals = result.scalars().all()
     return batch_evals
@@ -802,6 +826,12 @@ async def get_traces_count(
     """Get count of traces in a date range for an application"""
     try:
         from app.core.clickhouse import get_clickhouse_client
+        import uuid
+
+        app_obj = await db.get(Application, uuid.UUID(application_id))
+        if not app_obj:
+            raise HTTPException(status_code=400, detail="Invalid application_id")
+        app_name = app_obj.name
 
         client = get_clickhouse_client()
 
@@ -812,7 +842,7 @@ async def get_traces_count(
         query = f"""
         SELECT COUNT(*) as count
         FROM traces
-        WHERE application_name = '{application_id}'
+        WHERE application_name = '{app_name}'
         AND start_time >= {from_timestamp}000000
         AND start_time <= {to_timestamp}000000
         """
@@ -829,12 +859,21 @@ async def get_traces_count(
 @router.post("/batch", response_model=BatchEvalResponse)
 async def create_batch_evaluation(
     request: BatchEvalCreateRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Create and run a batch evaluation"""
     try:
         from app.core.clickhouse import get_clickhouse_client
+        import uuid
+
+        # Resolve Application details from DB
+        app_res = await db.get(Application, uuid.UUID(request.application_id))
+        if not app_res:
+            raise HTTPException(status_code=400, detail="Invalid application_id")
+        actual_project_id = app_res.project_id
+        app_name = app_res.name
 
         # Resolve provider configuration
         provider = request.provider
@@ -867,7 +906,8 @@ async def create_batch_evaluation(
             query = f"""
             SELECT DISTINCT trace_id
             FROM traces
-            WHERE application_name = '{request.application_id}'
+            WHERE application_name = '{app_name}'
+            AND attributes['evaluation_trace'] != 'true'
             LIMIT 10000
             """
         else:
@@ -877,15 +917,29 @@ async def create_batch_evaluation(
             query = f"""
             SELECT DISTINCT trace_id
             FROM traces
-            WHERE application_name = '{request.application_id}'
+            WHERE application_name = '{app_name}'
             AND start_time >= {from_timestamp}000000
             AND start_time <= {to_timestamp}000000
+            AND attributes['evaluation_trace'] != 'true'
             LIMIT 10000
             """
 
         result = client.query(query)
         all_trace_ids = [row[0] for row in result.result_rows]
+
+        # Exclude traces that are themselves evaluation runs (triggered by the evaluator LLM)
+        eval_stmt = select(EvaluationResult.trace_id).distinct()
+        eval_res = await db.execute(eval_stmt)
+        eval_trace_ids = set(str(r) for r in eval_res.scalars().all() if r)
+        all_trace_ids = [tid for tid in all_trace_ids if tid not in eval_trace_ids]
+
         total_traces = len(all_trace_ids)
+
+        if total_traces == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="The selected application has no traces to evaluate in the specified range."
+            )
 
         # Calculate how many traces to evaluate
         if request.is_percentage and request.percentage_value:
@@ -907,7 +961,7 @@ async def create_batch_evaluation(
         # Create batch evaluation record
         batch_eval = BatchEvaluation(
             application_id=request.application_id,
-            project_id=current_user.id,  # TODO: get actual project_id from context
+            project_id=actual_project_id,
             user_id=current_user.id,
             from_date=from_date_naive,
             to_date=to_date_naive,
@@ -920,7 +974,7 @@ async def create_batch_evaluation(
             model_name=model_name,
             provider_id=request.provider_id,
             status="RUNNING",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.utcnow(),
             selected_trace_ids=selected_trace_ids,
         )
 
@@ -928,8 +982,8 @@ async def create_batch_evaluation(
         await db.commit()
         await db.refresh(batch_eval)
 
-        # TODO: Run evaluation in background task
-        # For now, return the batch evaluation object
+        # Trigger batch evaluation runner in a background task
+        background_tasks.add_task(run_batch_evaluation_task, batch_eval.id)
 
         return batch_eval
 
@@ -943,6 +997,7 @@ async def create_batch_evaluation(
 @router.post("/batch/{batch_id}/rerun", response_model=BatchEvalResponse)
 async def rerun_batch_evaluation(
     batch_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -956,7 +1011,7 @@ async def rerun_batch_evaluation(
 
     # Reset the batch evaluation
     batch_eval.status = "RUNNING"
-    batch_eval.started_at = datetime.now(timezone.utc)
+    batch_eval.started_at = datetime.utcnow()
     batch_eval.evaluated_traces = 0
     batch_eval.successful_evaluations = 0
     batch_eval.failed_evaluations = 0
@@ -967,6 +1022,347 @@ async def rerun_batch_evaluation(
     await db.commit()
     await db.refresh(batch_eval)
 
-    # TODO: Run evaluation in background task
+    # Trigger batch evaluation runner in a background task
+    background_tasks.add_task(run_batch_evaluation_task, batch_eval.id)
 
     return batch_eval
+
+
+async def fetch_trace_data_from_clickhouse(trace_id: str) -> dict:
+    from app.core.clickhouse import get_clickhouse_client
+    client = get_clickhouse_client()
+    
+    # Query application_name from traces table
+    app_name = None
+    try:
+        t_query = f"SELECT application_name FROM traces WHERE trace_id = '{trace_id}' LIMIT 1"
+        t_rows = client.query(t_query).result_rows
+        if t_rows and t_rows[0][0]:
+            app_name = str(t_rows[0][0])
+    except Exception as ex:
+        logger.error(f"Failed to query trace application_name: {ex}")
+
+    # Query observations
+    query = f"""
+        SELECT input_text, output_text, metadata_json, type, name, parent_observation_id, error
+        FROM observations
+        WHERE trace_id = '{trace_id}'
+        ORDER BY start_time ASC
+    """
+    try:
+        rows = client.query(query).result_rows
+        if not rows:
+            return {
+                "trace_id": trace_id,
+                "application_name": app_name,
+            }
+
+        # Find best observation (prefer agent/chain/llm or parent-less)
+        best_row = None
+        for row in rows:
+            parent_id = row[5]
+            obs_type = row[3]
+            if not parent_id or obs_type in ["agent", "chain", "llm"]:
+                best_row = row
+                break
+        if not best_row:
+            best_row = rows[0]
+
+        import json
+        metadata = {}
+        if best_row[2]:
+            try:
+                metadata = json.loads(best_row[2])
+            except:
+                pass
+
+        return {
+            "input": best_row[0],
+            "output": best_row[1],
+            "context": metadata,
+            "trace_id": trace_id,
+            "observation_name": best_row[4],
+            "application_name": app_name,
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch trace data for batch eval: {e}")
+        return None
+
+
+async def run_batch_evaluation_task(batch_id: uuid.UUID):
+    logger.info(f"Starting background batch evaluation task: {batch_id}")
+    
+    from app.core.database import async_session_factory
+    from app.models.batch_evaluation import BatchEvaluation
+    from app.models.evaluation_result import EvaluationResult
+    from app.models.llm_provider import LLMProvider
+    from app.models.metric import Metric as DB_Metric
+    from app.models.all_models import Application
+    from app.core.security import decrypt_value
+    from app.core.evaluation_runner import fetch_retrieval_contexts
+    from sqlmodel import select
+    import importlib
+    import inspect
+    from datetime import datetime
+    import uuid as py_uuid
+    
+    async with async_session_factory() as db:
+        # Load the BatchEvaluation record
+        batch_eval = await db.get(BatchEvaluation, batch_id)
+        if not batch_eval:
+            logger.error(f"Batch evaluation {batch_id} not found in background task.")
+            return
+
+        try:
+            # Get selected trace IDs
+            trace_ids = batch_eval.selected_trace_ids or []
+            metric_ids = [m.strip() for m in (batch_eval.metric_ids or "").split(",") if m.strip()]
+            
+            if not trace_ids or not metric_ids:
+                batch_eval.status = "COMPLETED"
+                batch_eval.completed_at = datetime.utcnow()
+                db.add(batch_eval)
+                await db.commit()
+                return
+
+            total_traces_eval = len(trace_ids)
+            successful_evals = 0
+            failed_evals = 0
+            scores = []
+
+            # Resolve credentials & provider
+            provider = batch_eval.provider or "openai"
+            model = batch_eval.model_name
+            api_key = None
+            azure_endpoint = None
+            api_version = None
+            deployment_name = None
+
+            if batch_eval.provider_id:
+                provider_obj = await db.get(LLMProvider, batch_eval.provider_id)
+                if provider_obj:
+                    provider = provider_obj.provider
+                    model = provider_obj.model_name
+                    azure_endpoint = provider_obj.base_url
+                    api_version = provider_obj.api_version
+                    deployment_name = provider_obj.deployment_name
+                    try:
+                        api_key = decrypt_value(provider_obj.api_key)
+                    except Exception:
+                        api_key = provider_obj.api_key
+
+            # Get rubric prompt if set
+            rubric_prompt = None
+            if batch_eval.application_id:
+                try:
+                    app_obj = await db.get(Application, py_uuid.UUID(batch_eval.application_id))
+                    if app_obj:
+                        rubric_prompt = app_obj.rubric_prompt
+                except Exception as ex:
+                    logger.error(f"Failed to get rubric for batch eval: {ex}")
+
+            # Instantiate Evaluators
+            evaluators = {}
+            for m_id in metric_ids:
+                try:
+                    metric_stmt = select(DB_Metric).where(DB_Metric.id == m_id)
+                    metric_res = await db.execute(metric_stmt)
+                    metric_row = metric_res.scalars().first()
+                    metric_prompt = metric_row.prompt if metric_row else None
+                    
+                    llm_kwargs = {}
+                    if api_key:
+                        llm_kwargs["api_key"] = api_key
+                    if azure_endpoint:
+                        llm_kwargs["azure_endpoint"] = azure_endpoint
+                    if api_version:
+                        llm_kwargs["api_version"] = api_version
+                    if deployment_name:
+                        llm_kwargs["deployment_name"] = deployment_name
+
+                    if metric_prompt:
+                        from observix.evaluation.integrations.observix_eval import CustomEvaluator
+                        evaluators[m_id] = {
+                            "evaluator": CustomEvaluator(provider=provider, model=model, **llm_kwargs),
+                            "prompt": metric_prompt
+                        }
+                    else:
+                        eval_module = importlib.import_module("observix.evaluation")
+                        EvaluatorClass = getattr(eval_module, m_id, None)
+                        if EvaluatorClass:
+                            evaluators[m_id] = {
+                                "evaluator": EvaluatorClass(provider=provider, model=model, **llm_kwargs),
+                                "prompt": None
+                            }
+                except Exception as e:
+                    logger.error(f"Failed to initialize evaluator {m_id} for batch eval: {e}")
+
+            # Run evaluation on each trace
+            for trace_id in trace_ids:
+                trace_data = await fetch_trace_data_from_clickhouse(trace_id)
+                if not trace_data:
+                    logger.warning(f"Could not load trace data for trace_id {trace_id}, skipping.")
+                    continue
+
+                query = trace_data.get("input")
+                output = trace_data.get("output")
+                context = trace_data.get("context")
+                
+                # Fetch retrieval contexts if available
+                retrieved_contexts = await fetch_retrieval_contexts(trace_id)
+                if retrieved_contexts:
+                    context = retrieved_contexts
+
+                for m_id, eval_info in evaluators.items():
+                    evaluator = eval_info["evaluator"]
+                    metric_prompt = eval_info["prompt"]
+
+                    # Skip traces with no actual output (required by metrics like Hallucination)
+                    if not output or not str(output).strip():
+                        logger.warning(
+                            f"Skipping trace {trace_id} for metric {m_id}: no actual_output present."
+                        )
+                        continue
+
+                    # Create initial EvaluationResult
+                    eval_result = EvaluationResult(
+                        trace_id=trace_id,
+                        metric_id=m_id,
+                        input=str(query) if query else None,
+                        output=str(output) if output else None,
+                        context=context if isinstance(context, list) else [str(context)] if context else [],
+                        expected_output=None,
+                        status="RUNNING",
+                        metadata_json={"trigger_type": "batch_eval", "batch_id": str(batch_id)},
+                        application_name=trace_data.get("application_name") or batch_eval.application_id,
+                    )
+                    db.add(eval_result)
+                    await db.commit()
+                    await db.refresh(eval_result)
+
+                    last_error = None
+                    res = None
+                    for attempt in range(1, 4):  # Retry up to 3 times
+                        try:
+                            extra_kwargs = {}
+                            if metric_prompt:
+                                import re
+                                formatted_prompt = metric_prompt
+                                variables = set(re.findall(r'\{\{([^}]+)\}\}', metric_prompt))
+                                inputs_dict = {
+                                    "input": query,
+                                    "query": query,
+                                    "output": output,
+                                    "response": output,
+                                    "context": context,
+                                }
+                                for var in variables:
+                                    val = inputs_dict.get(var)
+                                    if val is None:
+                                        val = inputs_dict.get(var.lower(), "")
+                                    formatted_prompt = formatted_prompt.replace(f"{{{{{var}}}}}", str(val))
+                                
+                                single_vars = set(re.findall(r'(?<!\{)\{([^}]+)\}(?!\})', formatted_prompt))
+                                for var in single_vars:
+                                    if var in inputs_dict:
+                                        formatted_prompt = formatted_prompt.replace(f"{{{var}}}", str(inputs_dict[var]))
+                                extra_kwargs["custom_instructions"] = formatted_prompt
+
+                            # Execute evaluation — run in thread executor to avoid blocking the event loop
+                            import asyncio as _asyncio
+                            from opentelemetry import context as otel_context
+                            _loop = _asyncio.get_event_loop()
+                            _ctx = otel_context.get_current()
+
+                            def _run_eval():
+                                _token = otel_context.attach(_ctx)
+                                try:
+                                    with observability_context(api_key=None, host=None, evaluation_trace=True):
+                                        return evaluator.evaluate(
+                                            input_query=query,
+                                            output=output,
+                                            context=context if isinstance(context, list) else [str(context)] if context else [],
+                                            expected=None,
+                                            rubric=rubric_prompt,
+                                            **extra_kwargs
+                                        )
+                                finally:
+                                    otel_context.detach(_token)
+
+                            res = await _loop.run_in_executor(None, _run_eval)
+                            if inspect.iscoroutine(res):
+                                res = await res
+                            last_error = None
+                            break  # Success — stop retrying
+
+                        except Exception as ex:
+                            last_error = ex
+                            err_str = str(ex).lower()
+                            is_json_error = (
+                                "invalid json" in err_str
+                                or "json" in err_str
+                                or "jsondecodeerror" in err_str
+                                or "unexpected token" in err_str
+                                or "expecting value" in err_str
+                            )
+                            if is_json_error and attempt < 3:
+                                logger.warning(
+                                    f"Attempt {attempt}/3: Invalid JSON from evaluation LLM for trace {trace_id} metric {m_id}. Retrying..."
+                                )
+                                import asyncio
+                                await asyncio.sleep(1)
+                                continue
+                            else:
+                                break  # Non-JSON error or final attempt — stop
+
+                    if res is not None:
+                        # Update EvaluationResult
+                        eval_result.score = res.score
+                        eval_result.reason = res.reason
+                        eval_result.passed = res.passed
+                        eval_result.status = "COMPLETED"
+                        
+                        meta = dict(res.metadata) if res.metadata else {}
+                        meta["trigger_type"] = "batch_eval"
+                        meta["batch_id"] = str(batch_id)
+                        eval_result.metadata_json = meta
+                        
+                        db.add(eval_result)
+                        await db.commit()
+
+                        successful_evals += 1
+                        if res.score is not None:
+                            scores.append(res.score)
+                    else:
+                        ex = last_error
+                        logger.error(f"Error evaluating trace {trace_id} with metric {m_id} after retries: {ex}")
+                        eval_result.status = "FAILED"
+                        eval_result.reason = str(ex)
+                        eval_result.metadata_json = {"trigger_type": "batch_eval", "batch_id": str(batch_id)}
+                        db.add(eval_result)
+                        await db.commit()
+                        failed_evals += 1
+
+                # Update progress on BatchEvaluation periodically
+                batch_eval.evaluated_traces = successful_evals + failed_evals
+                batch_eval.successful_evaluations = successful_evals
+                batch_eval.failed_evaluations = failed_evals
+                if scores:
+                    batch_eval.avg_score = sum(scores) / len(scores)
+                db.add(batch_eval)
+                await db.commit()
+
+            # Finalize BatchEvaluation
+            batch_eval.status = "COMPLETED"
+            batch_eval.completed_at = datetime.utcnow()
+            db.add(batch_eval)
+            await db.commit()
+            logger.info(f"Batch evaluation {batch_id} completed successfully.")
+
+        except Exception as e:
+            logger.error(f"Batch evaluation {batch_id} failed in background task: {e}", exc_info=True)
+            batch_eval.status = "FAILED"
+            batch_eval.error_message = str(e)
+            batch_eval.completed_at = datetime.utcnow()
+            db.add(batch_eval)
+            await db.commit()

@@ -11,16 +11,19 @@ const resolveApiBaseUrl = () => {
     return `${normalizeBase(process.env.NEXT_PUBLIC_API_URL)}/api/v1`;
   }
 
+  const port = process.env.NEXT_PUBLIC_API_PORT || '8000';
+
   // Fallback for misconfigured NEXT_PUBLIC envs in containerized deployments.
   if (typeof window !== 'undefined') {
     const { protocol, hostname } = window.location;
-    return `${protocol}//${hostname}:8010/api/v1`;
+    return `${protocol}//${hostname}:${port}/api/v1`;
   }
 
   return '/api/v1';
 };
 
 const apiBaseUrl = resolveApiBaseUrl();
+console.log("[API] Resolved Base URL:", apiBaseUrl);
 
 const api = axios.create({
   baseURL: apiBaseUrl,
@@ -47,7 +50,7 @@ api.interceptors.response.use(
       localStorage.removeItem('token');
       // Optional: Redirect to login if on protected route
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-         window.location.href = '/login';
+        window.location.href = '/login';
       }
     }
     return Promise.reject(error);

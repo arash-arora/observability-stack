@@ -47,4 +47,6 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
 
+    # Run uvicorn server directly if main file is executed
     uvicorn.run(app, host="0.0.0.0", port=8002)
+

@@ -35,6 +35,9 @@ async def init_db():
         await conn.execute(text("ALTER TABLE metric ADD COLUMN IF NOT EXISTS user_id UUID"))
         # Add provider_config column for cloud provider support
         await conn.execute(text("ALTER TABLE llmprovider ADD COLUMN IF NOT EXISTS provider_config JSON"))
+        # Add key_prefix column for ApiKey display support
+        await conn.execute(text("ALTER TABLE apikey ADD COLUMN IF NOT EXISTS key_prefix VARCHAR DEFAULT ''"))
+
 
     # Seed roles
     async with async_session_factory() as session:
