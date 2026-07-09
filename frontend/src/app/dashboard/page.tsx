@@ -18,6 +18,8 @@ export default function DashboardPage() {
   const [dateRange, setDateRange] = useState<string>("7d");
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
+  const [applications, setApplications] = useState<string[]>([]);
+  const [selectedApp, setSelectedApp] = useState<string>("");
 
   useEffect(() => {
     if (selectedProject) {
@@ -25,11 +27,32 @@ export default function DashboardPage() {
     } else {
         setStats(null);
     }
-  }, [selectedProject, dateRange, customStart, customEnd]);
+  }, [selectedProject, dateRange, customStart, customEnd, selectedApp]);
+
+  useEffect(() => {
+    if (selectedProject) {
+        fetchApplications(selectedProject.id);
+        setSelectedApp("");
+    } else {
+        setApplications([]);
+    }
+  }, [selectedProject]);
+
+  const fetchApplications = async (projectId: string) => {
+    try {
+        const res = await api.get(`/analytics/traces/applications?project_id=${projectId}`);
+        setApplications(res.data || []);
+    } catch (e) {
+        console.error("Failed to fetch applications", e);
+    }
+  };
 
   const fetchStats = async (projectId: string) => {
       try {
           let url = `/analytics/dashboard?project_id=${projectId}`;
+          if (selectedApp) {
+              url += `&application_name=${encodeURIComponent(selectedApp)}`;
+          }
 
           // Calculate time range
           const now = Date.now() / 1000; // Convert to Unix timestamp
@@ -68,37 +91,57 @@ export default function DashboardPage() {
         infoTooltip="Comprehensive view of your application telemetry and performance metrics."
       />
 
-      {/* Time Filter */}
-      <div className="flex items-center gap-3 bg-white/70 backdrop-blur-xl border border-black/[0.04] rounded-2xl p-3 shadow-sm">
-        <span className="text-xs font-semibold text-[#6e6e73] uppercase tracking-wider">Time Range:</span>
-        <select
-          value={dateRange}
-          onChange={(e) => setDateRange(e.target.value)}
-          className="text-xs font-medium bg-white border border-black/[0.08] rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#0071e3] transition-all"
-        >
-          <option value="24h">Last 24 Hours</option>
-          <option value="3d">Last 3 Days</option>
-          <option value="7d">Last 7 Days</option>
-          <option value="custom">Custom Range</option>
-        </select>
+      {/* Filters (Time & Application) */}
+      <div className="flex flex-wrap items-center gap-4 bg-white/70 backdrop-blur-xl border border-black/[0.04] rounded-2xl p-3 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-[#6e6e73] uppercase tracking-wider select-none">Time Range:</span>
+          <select
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value)}
+            className="text-xs font-medium bg-white border border-black/[0.08] rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#0071e3] transition-all cursor-pointer"
+          >
+            <option value="24h">Last 24 Hours</option>
+            <option value="3d">Last 3 Days</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="custom">Custom Range</option>
+          </select>
+        </div>
 
         {dateRange === "custom" && (
-          <>
+          <div className="flex items-center gap-2">
             <input
               type="datetime-local"
               value={customStart}
               onChange={(e) => setCustomStart(e.target.value)}
               className="text-xs font-medium bg-white border border-black/[0.08] rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#0071e3] transition-all"
             />
-            <span className="text-[#6e6e73]">to</span>
+            <span className="text-[#6e6e73] text-xs">to</span>
             <input
               type="datetime-local"
               value={customEnd}
               onChange={(e) => setCustomEnd(e.target.value)}
               className="text-xs font-medium bg-white border border-black/[0.08] rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#0071e3] transition-all"
             />
-          </>
+          </div>
         )}
+
+        <div className="h-4 w-px bg-black/[0.08]" />
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-[#6e6e73] uppercase tracking-wider select-none">Application:</span>
+          <select
+            value={selectedApp}
+            onChange={(e) => setSelectedApp(e.target.value)}
+            className="text-xs font-medium bg-white border border-black/[0.08] rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#0071e3] transition-all cursor-pointer min-w-[140px]"
+          >
+            <option value="">All Applications</option>
+            {applications.map((app) => (
+              <option key={app} value={app}>
+                {app}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Content */}

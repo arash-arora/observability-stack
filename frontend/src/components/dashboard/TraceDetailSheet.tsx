@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronDown,
   Box,
+  ChevronLeft,
   Layers,
   Clock,
   Copy,
@@ -23,7 +24,8 @@ import {
   Sparkles,
   FileJson,
   FileText,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from "lucide-react";
 
 import api from "@/lib/api";
@@ -55,6 +57,46 @@ interface Node {
   total_cost?: number;
   application_name?: string;
   events?: any[];
+  attempts?: Node[];
+}
+
+function groupRetries(nodes: Node[]): Node[] {
+  const nameGroups = new Map<string, Node[]>();
+  nodes.forEach(node => {
+    if (node.children && node.children.length > 0) {
+      node.children = groupRetries(node.children);
+    }
+    
+    if (!nameGroups.has(node.name)) {
+      nameGroups.set(node.name, []);
+    }
+    nameGroups.get(node.name)!.push(node);
+  });
+
+  const result: Node[] = [];
+
+  nameGroups.forEach((group) => {
+    const hasRetry = group.some(n => {
+      const attempt = n.attributes?.attempt ? Number(n.attributes.attempt) : 1;
+      return n.attributes?.is_retry || attempt > 1;
+    });
+
+    if (hasRetry && group.length > 1) {
+      group.sort((a, b) => {
+        const aAttempt = a.attributes?.attempt ? Number(a.attributes.attempt) : 1;
+        const bAttempt = b.attributes?.attempt ? Number(b.attributes.attempt) : 1;
+        return aAttempt - bAttempt;
+      });
+
+      const primary = group[0];
+      primary.attempts = group;
+      result.push(primary);
+    } else {
+      result.push(...group);
+    }
+  });
+
+  return result.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 }
 
 export default function TraceDetailSheet({
@@ -150,6 +192,7 @@ export default function TraceDetailSheet({
         output: safeParseJSON(obs.output),
         model: obs.model,
         usage: safeParseJSON(obs.usage),
+        attributes: safeParseJSON(obs.metadata_json),
         children: [],
         is_obs: true,
         total_cost: obs.total_cost,
@@ -294,7 +337,7 @@ export default function TraceDetailSheet({
       nodes.forEach((n) => sortNodes(n.children));
     };
     sortNodes(roots);
-    return roots;
+    return groupRetries(roots);
   }, [data]);
 
   const traceDurationStats = useMemo(() => {
@@ -569,7 +612,11 @@ function TreeNode({
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
   const isSelected = node.id === selectedId;
-  const isError = node.error || node.status === "ERROR";
+  
+  const finalAttemptNode = node.attempts && node.attempts.length > 0
+    ? node.attempts[node.attempts.length - 1]
+    : node;
+  const isError = finalAttemptNode.error || finalAttemptNode.status === "ERROR";
 
   // Calculations for Gantt timeline
   const barStyle = useMemo(() => {
@@ -615,6 +662,15 @@ function TreeNode({
       });
     }
     
+    // Retry/attempt badge
+    if (node.attributes?.attempt && Number(node.attributes.attempt) > 1) {
+      badges.push({
+        icon: <RotateCcw size={10} className="text-amber-500" />,
+        text: `Attempt #${node.attributes.attempt}`,
+        isRetry: true
+      });
+    }
+
     // Model badge
     if (node.model) {
       badges.push({
@@ -1017,8 +1073,25 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
   const [outputCollapsed, setOutputCollapsed] = useState(false);
   const [isEvalOpen, setIsEvalOpen] = useState(false);
 
+  const [selectedAttemptIdx, setSelectedAttemptIdx] = useState(0);
+
+  useEffect(() => {
+    if (node.attempts && node.attempts.length > 0) {
+      setSelectedAttemptIdx(node.attempts.length - 1);
+    } else {
+      setSelectedAttemptIdx(0);
+    }
+  }, [node]);
+
+  const activeNode = useMemo(() => {
+    if (node.attempts && node.attempts.length > 0 && selectedAttemptIdx < node.attempts.length) {
+      return node.attempts[selectedAttemptIdx];
+    }
+    return node;
+  }, [node, selectedAttemptIdx]);
+
   // For agent nodes: input comes from first child, output from last child
-  const isAgentNode = node.type?.toLowerCase() === 'agent';
+  const isAgentNode = activeNode.type?.toLowerCase() === 'agent';
 
   // Find first child input (skip self — look directly at children in order)
   const getFirstChildInput = (n: Node): any => {
@@ -1059,22 +1132,22 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
   };
 
   const isRootNode = useMemo(() => {
-    return !traceData?.spans?.find((s: any) => s.span_id === node.id)?.parent_span_id;
-  }, [node, traceData]);
+    return !traceData?.spans?.find((s: any) => s.span_id === activeNode.id)?.parent_span_id;
+  }, [activeNode, traceData]);
 
-  const hasNoInput = !node.input || (typeof node.input === 'object' && Object.keys(node.input).length === 0) || node.input === '{"args":[],"kwargs":{}}' || node.input === '{}';
-  const hasNoOutput = !node.output || (typeof node.output === 'object' && Object.keys(node.output).length === 0) || node.output === '{}';
-  const hasChildren = node.children && node.children.length > 0;
+  const hasNoInput = !activeNode.input || (typeof activeNode.input === 'object' && Object.keys(activeNode.input).length === 0) || activeNode.input === '{"args":[],"kwargs":{}}' || activeNode.input === '{}';
+  const hasNoOutput = !activeNode.output || (typeof activeNode.output === 'object' && Object.keys(activeNode.output).length === 0) || activeNode.output === '{}';
+  const hasChildren = activeNode.children && activeNode.children.length > 0;
 
   const displayInput = useMemo(() => {
-    if (hasNoInput && hasChildren) return getFirstChildInput(node) ?? node.input;
-    return node.input;
-  }, [node, hasNoInput, hasChildren]);
+    if (hasNoInput && hasChildren) return getFirstChildInput(activeNode) ?? activeNode.input;
+    return activeNode.input;
+  }, [activeNode, hasNoInput, hasChildren]);
 
   const displayOutput = useMemo(() => {
-    if (hasNoOutput && hasChildren) return getLastChildOutput(node) ?? node.output;
-    return node.output;
-  }, [node, hasNoOutput, hasChildren]);
+    if (hasNoOutput && hasChildren) return getLastChildOutput(activeNode) ?? activeNode.output;
+    return activeNode.output;
+  }, [activeNode, hasNoOutput, hasChildren]);
 
   // Helper to stringify data for the modal
   const prepareData = (val: any) => {
@@ -1239,11 +1312,11 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
         initialData={{
             input: prepareData(displayInput),
             output: prepareData(displayOutput),
-            context: node.attributes?.context,
-            application_name: node.application_name,
+            context: activeNode.attributes?.context,
+            application_name: activeNode.application_name,
             trace: {
                 trace_id: traceData?.trace_id,
-                observations: [node]
+                observations: [activeNode]
             },
             workflow_details: extractWorkflowDetails(traceData)
         }}
@@ -1254,19 +1327,19 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
       <div className="flex justify-between items-start gap-4 border-b border-black/[0.04] pb-4 shrink-0">
         <div className="space-y-1.5 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-bold text-[#1d1d1f] font-mono truncate">{node.name}</h2>
-            {node.type?.toLowerCase() === 'agent' && (
+            <h2 className="text-sm font-bold text-[#1d1d1f] font-mono truncate">{activeNode.name}</h2>
+            {activeNode.type?.toLowerCase() === 'agent' && (
               <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 text-[10px] border border-purple-500/20 font-bold uppercase tracking-wide select-none">
                 <Bot size={10} /> Agent
               </span>
             )}
-            {node.type?.toLowerCase() === 'tool' && (
+            {activeNode.type?.toLowerCase() === 'tool' && (
               <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 text-[10px] border border-amber-500/20 font-bold uppercase tracking-wide select-none">
                 <Wrench size={10} /> Tool
               </span>
             )}
             <span className="px-1.5 py-0.5 bg-black/[0.03] text-[#6e6e73] text-[9px] font-mono border border-black/[0.04] rounded-md shrink-0 select-all">
-              ID: {node.id.slice(0, 8)}
+              ID: {activeNode.id.slice(0, 8)}
             </span>
           </div>
         </div>
@@ -1275,29 +1348,86 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
         </Button>
       </div>
 
+      {/* Attempt / Try switcher */}
+      {node.attempts && node.attempts.length > 1 && (
+        <div className="flex items-center gap-3 border-b border-black/[0.04] pb-4 shrink-0 select-none">
+          <span className="text-[11px] text-[#6e6e73] font-bold uppercase tracking-wider">
+            Attempts:
+          </span>
+          <div className="flex items-center gap-2 bg-neutral-100 p-1 rounded-xl border border-black/[0.03]">
+            <button
+              disabled={selectedAttemptIdx === 0}
+              onClick={() => setSelectedAttemptIdx(prev => prev - 1)}
+              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                selectedAttemptIdx === 0
+                  ? "opacity-40 cursor-not-allowed bg-transparent border-transparent text-[#6e6e73]"
+                  : "bg-white text-[#1d1d1f] border-black/[0.08] hover:bg-neutral-50 shadow-sm"
+              }`}
+              title="Previous Attempt"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            
+            <span className="text-xs font-mono font-bold text-[#1d1d1f] px-2 flex items-center gap-1.5">
+              <span>{selectedAttemptIdx + 1}</span>
+              <span className="text-[#6e6e73] font-normal">/</span>
+              <span>{node.attempts.length}</span>
+            </span>
+
+            <button
+              disabled={selectedAttemptIdx === node.attempts.length - 1}
+              onClick={() => setSelectedAttemptIdx(prev => prev + 1)}
+              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                selectedAttemptIdx === node.attempts.length - 1
+                  ? "opacity-40 cursor-not-allowed bg-transparent border-transparent text-[#6e6e73]"
+                  : "bg-white text-[#1d1d1f] border-black/[0.08] hover:bg-neutral-50 shadow-sm"
+              }`}
+              title="Next Attempt"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
+          {/* Status indication badge for the active attempt */}
+          {(() => {
+            const currentAttemptNode = node.attempts[selectedAttemptIdx];
+            const isError = currentAttemptNode.error || currentAttemptNode.status === 'ERROR';
+            return (
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-colors ${
+                isError 
+                  ? "bg-red-50 text-red-600 border-red-200/50" 
+                  : "bg-emerald-50 text-emerald-600 border-emerald-200/50"
+              }`}>
+                {isError ? "Failure ⚠️" : "Success"}
+              </span>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Node resource summary statistics parameters */}
       <div className="grid grid-cols-3 gap-4 p-4 border border-black/[0.04] rounded-2xl bg-neutral-50/50 shrink-0 select-all text-xs font-semibold text-[#1d1d1f]">
         <div className="space-y-1">
           <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Duration</span>
           <span className="font-mono">
-            {node.duration_ms !== undefined 
-              ? (node.duration_ms >= 1000 
-                 ? `${(node.duration_ms / 1000).toFixed(3)}s` 
-                 : `${node.duration_ms.toFixed(0)}ms`) 
+            {activeNode.duration_ms !== undefined 
+              ? (activeNode.duration_ms >= 1000 
+                 ? `${(activeNode.duration_ms / 1000).toFixed(3)}s` 
+                 : `${activeNode.duration_ms.toFixed(0)}ms`) 
               : "-"}
           </span>
         </div>
         <div className="space-y-1">
           <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Tokens</span>
-          <span className="font-mono">{node.usage?.total_tokens ?? 0}</span>
+          <span className="font-mono">{activeNode.usage?.total_tokens ?? 0}</span>
         </div>
         <div className="space-y-1">
           <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider block">Cost</span>
           <span className="font-mono text-emerald-600">
             {(() => {
-              const displayCost = (node.total_cost !== undefined && node.total_cost !== null && Number(node.total_cost) > 0)
-                ? Number(node.total_cost)
-                : ((node.usage?.total_tokens || 0) * 0.000002);
+              const displayCost = (activeNode.total_cost !== undefined && activeNode.total_cost !== null && Number(activeNode.total_cost) > 0)
+                ? Number(activeNode.total_cost)
+                : ((activeNode.usage?.total_tokens || 0) * 0.000002);
               return displayCost > 0 ? `$${displayCost.toFixed(5)}` : "$0.00000";
             })()}
           </span>
@@ -1344,13 +1474,39 @@ function NodeDetailView({ node, traceData }: { node: Node; traceData: any }) {
           {!outputCollapsed && renderContentBox(displayOutput, outputFormat, false)}
         </div>
 
+        {/* METADATA Section */}
+        {(() => {
+          if (!activeNode.attributes || typeof activeNode.attributes !== 'object') return null;
+          const ignoreKeys = ['observation_id', 'parent_observation_id', 'tools', 'candidate_agents', 'context', 'description', 'docstring', 'agent_name', 'tool_name'];
+          const filteredAttributes = Object.entries(activeNode.attributes).filter(([k]) => !ignoreKeys.includes(k));
+          if (filteredAttributes.length === 0) return null;
+          return (
+            <div className="space-y-2.5">
+              <div className="flex justify-between items-center border-t border-black/[0.04] pt-4 mt-2">
+                <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 select-none">
+                  <Cpu size={11} className="text-[#0071e3]" />
+                  Metadata & Attributes
+                </span>
+              </div>
+              <div className="p-4 bg-neutral-50/50 border border-black/[0.03] rounded-2xl text-[11px] font-mono divide-y divide-black/[0.03]">
+                {filteredAttributes.map(([key, value]) => (
+                  <div key={key} className="flex justify-between py-1.5 first:pt-0 last:pb-0">
+                    <span className="text-[#6e6e73] font-semibold">{key}</span>
+                    <span className="text-[#1d1d1f] font-medium max-w-[70%] break-all text-right">{String(value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Error notification alert if applicable */}
-        {node.error && (
+        {activeNode.error && (
           <div className="p-4 bg-red-50 border border-red-200/50 rounded-2xl text-xs font-mono text-red-600 flex items-start gap-2.5">
             <AlertCircle size={14} className="shrink-0 mt-0.5 text-red-500" />
             <div className="space-y-1 min-w-0">
               <span className="font-bold text-red-700 uppercase tracking-wider text-[10px]">Execution Error</span>
-              <pre className="whitespace-pre-wrap leading-relaxed text-[11px] text-red-600 select-all">{node.error}</pre>
+              <pre className="whitespace-pre-wrap leading-relaxed text-[11px] text-red-600 select-all">{activeNode.error}</pre>
             </div>
           </div>
         )}

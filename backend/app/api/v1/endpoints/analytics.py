@@ -485,6 +485,7 @@ async def get_dashboard_stats(
     project_id: str,
     from_ts: Optional[float] = None,  # Optional timestamp filter
     to_ts: Optional[float] = None,
+    application_name: Optional[str] = None,  # Optional application filter
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -493,25 +494,31 @@ async def get_dashboard_stats(
     """
     client = get_clickhouse_client()
 
-    # Build WHERE clause with time filtering
-    where_clause = f"project_id = '{project_id}'"
-
-    # Apply time filtering if provided
+    # Build WHERE clauses with time and application filtering
+    trace_where_clause = f"project_id = '{project_id}'"
     if from_ts is not None:
-        where_clause += f" AND toUnixTimestamp(start_time) >= {from_ts}"
+        trace_where_clause += f" AND toUnixTimestamp(start_time) >= {from_ts}"
     if to_ts is not None:
-        where_clause += f" AND toUnixTimestamp(start_time) <= {to_ts}"
+        trace_where_clause += f" AND toUnixTimestamp(start_time) <= {to_ts}"
+    if application_name:
+        trace_where_clause += f" AND application_name = '{application_name}'"
 
-    # 1. Total Traces
+    obs_where_clause = f"project_id = '{project_id}'"
+    if from_ts is not None:
+        obs_where_clause += f" AND toUnixTimestamp(start_time) >= {from_ts}"
+    if to_ts is not None:
+        obs_where_clause += f" AND toUnixTimestamp(start_time) <= {to_ts}"
+    if application_name:
+        obs_where_clause += f" AND trace_id IN (SELECT trace_id FROM traces WHERE project_id = '{project_id}' AND application_name = '{application_name}')"
+
     # 1. Total Traces & Tokens over Time
-    # We want two series: Traces count and Token usage
     traces_query = f"""
     SELECT 
         count() as trace_count, 
         toStartOfHour(start_time) as time,
         sum(duration_ms) as total_latency
     FROM traces
-    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    WHERE {trace_where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY time
     ORDER BY time ASC
     """
@@ -527,7 +534,7 @@ async def get_dashboard_stats(
             END
         ) as total_tokens
     FROM observations
-    WHERE {where_clause}
+    WHERE {obs_where_clause}
     GROUP BY time
     ORDER BY time ASC
     """
@@ -536,7 +543,7 @@ async def get_dashboard_stats(
     scores_query = f"""
     SELECT name, count(), avg(toFloat64OrZero(output_text))
     FROM observations
-    WHERE {where_clause} AND type = 'score'
+    WHERE {obs_where_clause} AND type = 'score'
     GROUP BY name
     """
 
@@ -554,11 +561,9 @@ async def get_dashboard_stats(
         ) as total_tokens,
         sum(total_cost) as total_cost
     FROM observations
-    WHERE {where_clause}
+    WHERE {obs_where_clause}
     GROUP BY model_name
     """
-
-    # ... (lat queries) ...
 
     # 4. Latency Percentiles
     # Traces
@@ -569,7 +574,7 @@ async def get_dashboard_stats(
            quantile(0.95)(duration_ms) as p95, 
            quantile(0.99)(duration_ms) as p99
     FROM traces
-    WHERE {where_clause} AND parent_span_id IS NULL
+    WHERE {trace_where_clause} AND parent_span_id IS NULL
     GROUP BY name
     """
 
@@ -581,7 +586,7 @@ async def get_dashboard_stats(
         quantile(0.90)(duration_ms) as p90,
         quantile(0.99)(duration_ms) as p99
     FROM traces
-    WHERE {where_clause} AND parent_span_id IS NULL
+    WHERE {trace_where_clause} AND parent_span_id IS NULL
     GROUP BY time
     ORDER BY time ASC
     """
@@ -594,7 +599,7 @@ async def get_dashboard_stats(
         quantile(0.90)(dateDiff('millisecond', start_time, end_time)) as p90,
         quantile(0.99)(dateDiff('millisecond', start_time, end_time)) as p99
     FROM observations
-    WHERE {where_clause} AND model IS NOT NULL AND model != ''
+    WHERE {obs_where_clause} AND model IS NOT NULL AND model != ''
     GROUP BY time
     ORDER BY time ASC
     """
@@ -610,7 +615,7 @@ async def get_dashboard_stats(
         if(application_name = '' OR application_name IS NULL, 'Unknown', application_name) as app,
         count() as count
     FROM traces
-    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    WHERE {trace_where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY time, app
     ORDER BY time ASC
     """
@@ -624,7 +629,7 @@ async def get_dashboard_stats(
         countIf(status_code = 'ERROR') as error_count,
         count() as total_count
     FROM traces
-    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    WHERE {trace_where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY app
     """
 
@@ -648,8 +653,9 @@ async def get_dashboard_stats(
         ) as total_tokens
     FROM traces t
     INNER JOIN observations o ON t.trace_id = o.trace_id
-    WHERE {where_clause.replace("project_id", "t.project_id")} 
+    WHERE {trace_where_clause.replace("project_id", "t.project_id")} 
       AND (t.parent_span_id IS NULL OR t.parent_span_id = '')
+      AND o.project_id = '{project_id}'
     GROUP BY app
     """
 
@@ -659,7 +665,7 @@ async def get_dashboard_stats(
         status_code,
         count()
     FROM traces
-    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
+    WHERE {trace_where_clause} AND (parent_span_id IS NULL OR parent_span_id = '')
     GROUP BY status_code
     """
 
@@ -681,7 +687,7 @@ async def get_dashboard_stats(
             END
         ) as total_completion
     FROM observations
-    WHERE {where_clause}
+    WHERE {obs_where_clause}
     """
 
     # 9. Top Users
@@ -690,7 +696,7 @@ async def get_dashboard_stats(
         if(user_id = '' OR user_id IS NULL, 'Unknown', user_id) as user,
         count() as count
     FROM traces
-    WHERE {where_clause} AND (parent_span_id IS NULL OR parent_span_id = '') AND user_id != ''
+    WHERE {trace_where_clause} AND (parent_span_id IS NULL OR parent_span_id = '') AND user_id != ''
     GROUP BY user
     ORDER BY count DESC
     LIMIT 10
@@ -710,7 +716,7 @@ async def get_dashboard_stats(
             END
         ) as tokens_per_sec
     FROM observations
-    WHERE {where_clause} 
+    WHERE {obs_where_clause} 
       AND (isValidJSON(token_usage) OR token_usage LIKE '{{%')
       AND model != '' AND model IS NOT NULL
     GROUP BY model_name
@@ -724,7 +730,7 @@ async def get_dashboard_stats(
            quantile(0.95)(dateDiff('millisecond', start_time, end_time)) as p95, 
            quantile(0.99)(dateDiff('millisecond', start_time, end_time)) as p99
     FROM observations
-    WHERE {where_clause} AND model IS NOT NULL AND model != ''
+    WHERE {obs_where_clause} AND model IS NOT NULL AND model != ''
     GROUP BY model
     """
 
