@@ -9,7 +9,8 @@ export default function EvaluationsLayout({ children }: { children: React.ReactN
   const pathname = usePathname();
   
   // "runs" tab active for both /runs and /run (detail)
-  const currentTab = pathname.includes("/run") ? "runs" : pathname.includes("/autoeval") ? "autoeval" : pathname.includes("/batcheval") ? "batcheval" : "overview";
+  // const currentTab = pathname.includes("/run") ? "runs" : pathname.includes("/autoeval") ? "autoeval" : pathname.includes("/batcheval") ? "batcheval" : "overview";
+  const currentTab = pathname.includes("/run") ? "runs" : pathname.includes("/autoeval") ? "autoeval" : "overview";
 
   return (
     <div className="container mx-auto space-y-6">
@@ -23,7 +24,7 @@ export default function EvaluationsLayout({ children }: { children: React.ReactN
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="runs">Evaluations</TabsTrigger>
           <TabsTrigger value="autoeval">Auto Eval</TabsTrigger>
-          <TabsTrigger value="batcheval">Batch Eval</TabsTrigger>
+          {/* <TabsTrigger value="batcheval">Batch Eval</TabsTrigger> */}
         </TabsList>
         {children}
       </Tabs>

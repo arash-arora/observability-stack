@@ -62,9 +62,9 @@ export default function EvaluationsList() {
   // Read initial tab from URL ?eval_type=...
   const [subTab, setSubTabState] = useState<"sdk" | "auto_eval" | "batch_eval">("sdk");
 
-  // Batch Evaluations State
-  const [batchEvals, setBatchEvals] = useState<any[]>([]);
-  const [batchLoading, setBatchLoading] = useState(false);
+  // Batch Evaluations State (disabled)
+  // const [batchEvals, setBatchEvals] = useState<any[]>([]);
+  // const [batchLoading, setBatchLoading] = useState(false);
 
   // Helper to map application ID to name
   const getAppName = (appId: string) => {
@@ -72,14 +72,14 @@ export default function EvaluationsList() {
     return app ? app.name : appId;
   };
 
-  const handleRerunBatchEval = async (batchId: string) => {
-    try {
-      await api.post(`/evaluations/batch/${batchId}/rerun`);
-      fetchBatchEvals();
-    } catch (e) {
-      console.error("Failed to rerun batch evaluation", e);
-    }
-  };
+  // const handleRerunBatchEval = async (batchId: string) => {
+  //   try {
+  //     await api.post(`/evaluations/batch/${batchId}/rerun`);
+  //     fetchBatchEvals();
+  //   } catch (e) {
+  //     console.error("Failed to rerun batch evaluation", e);
+  //   }
+  // };
 
   // On mount, sync subTab from URL
   useEffect(() => {
@@ -113,28 +113,28 @@ export default function EvaluationsList() {
     }
   };
 
-  const fetchBatchEvals = async () => {
-    setBatchLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (selectedApp && selectedApp !== "all") {
-        const appObj = applications.find(a => a.name === selectedApp);
-        if (appObj) {
-          params.set("application_id", appObj.id);
-        } else if (selectedProject) {
-          params.set("project_id", selectedProject.id);
-        }
-      } else if (selectedProject) {
-        params.set("project_id", selectedProject.id);
-      }
-      const res = await api.get(`/evaluations/batch?${params.toString()}`);
-      setBatchEvals(res.data);
-    } catch (e) {
-      console.error("Failed to fetch batch evaluations", e);
-    } finally {
-      setBatchLoading(false);
-    }
-  };
+  // const fetchBatchEvals = async () => {
+  //   setBatchLoading(true);
+  //   try {
+  //     const params = new URLSearchParams();
+  //     if (selectedApp && selectedApp !== "all") {
+  //       const appObj = applications.find(a => a.name === selectedApp);
+  //       if (appObj) {
+  //         params.set("application_id", appObj.id);
+  //       } else if (selectedProject) {
+  //         params.set("project_id", selectedProject.id);
+  //       }
+  //     } else if (selectedProject) {
+  //       params.set("project_id", selectedProject.id);
+  //     }
+  //     const res = await api.get(`/evaluations/batch?${params.toString()}`);
+  //     setBatchEvals(res.data);
+  //   } catch (e) {
+  //     console.error("Failed to fetch batch evaluations", e);
+  //   } finally {
+  //     setBatchLoading(false);
+  //   }
+  // };
 
   const fetchRuns = async (time: string = timeRange, app: string = selectedApp) => {
     setLoading(true);
@@ -161,7 +161,7 @@ export default function EvaluationsList() {
 
   useEffect(() => {
     if (subTab === "batch_eval") {
-      fetchBatchEvals();
+      // fetchBatchEvals();
     } else {
       fetchRuns(timeRange, selectedApp);
     }
@@ -179,16 +179,16 @@ export default function EvaluationsList() {
     return () => clearInterval(interval);
   }, [runs, timeRange, selectedApp, selectedProject, subTab]);
 
-  // Polling for Batch Evaluations
-  useEffect(() => {
-    if (subTab !== "batch_eval") return;
-    const hasRunning = batchEvals.some(be => be.status === "RUNNING");
-    if (!hasRunning) return;
-    const interval = setInterval(() => {
-      fetchBatchEvals();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [batchEvals, selectedApp, selectedProject, subTab]);
+  // Polling for Batch Evaluations (disabled)
+  // useEffect(() => {
+  //   if (subTab !== "batch_eval") return;
+  //   const hasRunning = batchEvals.some(be => be.status === "RUNNING");
+  //   if (!hasRunning) return;
+  //   const interval = setInterval(() => {
+  //     fetchBatchEvals();
+  //   }, 5000);
+  //   return () => clearInterval(interval);
+  // }, [batchEvals, selectedApp, selectedProject, subTab]);
 
   // Filter runs by selected project's applications if one is selected
   const filteredRuns = useMemo(() => {
@@ -241,7 +241,7 @@ export default function EvaluationsList() {
             </Select>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={() => subTab === "batch_eval" ? fetchBatchEvals() : fetchRuns(timeRange, selectedApp)}>
+        <Button variant="outline" size="sm" onClick={() => fetchRuns(timeRange, selectedApp)}>
           <RefreshCw className="mr-2 h-4 w-4" /> Refresh
         </Button>
       </div>
@@ -250,91 +250,14 @@ export default function EvaluationsList() {
         <TabsList className="mb-2">
           <TabsTrigger value="sdk">Traces / SDK Manual Runs</TabsTrigger>
           <TabsTrigger value="auto_eval">Auto Eval Rules</TabsTrigger>
-          <TabsTrigger value="batch_eval">Batch Evaluations</TabsTrigger>
+          {/* <TabsTrigger value="batch_eval">Batch Evaluations</TabsTrigger> */}
         </TabsList>
       </Tabs>
       
       <div className="rounded-md border">
+        {/* Batch Eval Table Disabled */}
         {subTab === "batch_eval" ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Created</TableHead>
-                <TableHead>Application</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-sm">Total Traces</TableHead>
-                <TableHead className="text-sm">Evaluated</TableHead>
-                <TableHead className="text-sm">Success Rate</TableHead>
-                <TableHead className="text-sm">Avg Score</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {batchEvals.map((be) => (
-                <TableRow key={be.id}>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {format(new Date(be.created_at), "MMM d, HH:mm")}
-                  </TableCell>
-                  <TableCell className="text-sm">{getAppName(be.application_id)}</TableCell>
-                  <TableCell>
-                    <Badge variant={be.status === "COMPLETED" ? "default" : be.status === "RUNNING" ? "secondary" : "destructive"}>
-                      {be.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm">{be.total_traces}</TableCell>
-                  <TableCell className="text-sm">
-                    <div>{be.evaluated_traces}/{be.traces_to_eval}</div>
-                    {be.status === "RUNNING" && be.traces_to_eval > 0 && (
-                      <div className="w-[80px] bg-muted rounded-full h-1 mt-1 overflow-hidden">
-                        <div 
-                          className="bg-yellow-500 h-1 rounded-full transition-all duration-300" 
-                          style={{ width: `${(be.evaluated_traces / be.traces_to_eval) * 100}%` }}
-                        />
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {be.evaluated_traces > 0 ? `${Math.round((be.successful_evaluations / be.evaluated_traces) * 100)}%` : "-"}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {typeof be.avg_score === 'number' ? be.avg_score.toFixed(2) : "-"}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {be.status === "COMPLETED" && (
-                        <Link href={`/dashboard/evaluations/run?batch_id=${be.id}`}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs text-blue-500 hover:text-blue-700 px-2"
-                            title="View evaluations for this batch"
-                          >
-                            <ExternalLink className="h-3 w-3 mr-1" />
-                            View Evals
-                          </Button>
-                        </Link>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRerunBatchEval(be.id)}
-                        title="Rerun evaluation"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!batchLoading && batchEvals.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    No batch evaluations found.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+          <div className="text-center py-8 text-muted-foreground">Batch evaluations are temporarily disabled.</div>
         ) : (
           <Table>
             <TableHeader>
