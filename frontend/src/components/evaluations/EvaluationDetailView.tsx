@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
-import { Play, Activity } from "lucide-react";
+import { Play, Activity, Wrench } from "lucide-react";
 
 interface EvaluationResult {
   id: string;
@@ -20,6 +20,25 @@ interface EvaluationResult {
   status?: string;
   metadata_json?: any;
 }
+
+const METRIC_INPUTS_MAP: Record<string, { input: boolean; output: boolean; context: boolean; expected: boolean }> = {
+  Faithfulness: { input: true, output: true, context: true, expected: false },
+  FaithfulnessEvaluator: { input: true, output: true, context: true, expected: false },
+  AnswerRelevancy: { input: true, output: true, context: false, expected: false },
+  AnswerRelevancyEvaluator: { input: true, output: true, context: false, expected: false },
+  ContextualPrecision: { input: true, output: true, context: true, expected: false },
+  ContextualPrecisionEvaluator: { input: true, output: true, context: true, expected: false },
+  ContextualRecall: { input: true, output: false, context: true, expected: true },
+  ContextualRecallEvaluator: { input: true, output: false, context: true, expected: true },
+  ContextualRelevancy: { input: true, output: false, context: true, expected: false },
+  ContextualRelevancyEvaluator: { input: true, output: false, context: true, expected: false },
+  Hallucination: { input: true, output: true, context: true, expected: false },
+  HallucinationEvaluator: { input: true, output: true, context: true, expected: false },
+  Toxicity: { input: false, output: true, context: false, expected: false },
+  ToxicityEvaluator: { input: false, output: true, context: false, expected: false },
+  Bias: { input: false, output: true, context: false, expected: false },
+  BiasEvaluator: { input: false, output: true, context: false, expected: false },
+};
 
 function parseCleanParam(val: string, paramType: 'input' | 'output'): string {
   if (!val) return "N/A";
@@ -204,11 +223,37 @@ interface EvaluationDetailViewProps {
   onRerun: () => void;
 }
 
+const isAgenticMetric = (metricId: string): boolean => {
+  const m = metricId.toLowerCase();
+  return (
+    m.includes("toolselection") ||
+    m.includes("toolsequence") ||
+    m.includes("agentrouting") ||
+    m.includes("workflowcompletion") ||
+    m.includes("hitl")
+  );
+};
+
 export default function EvaluationDetailView({
   result,
   onRerun
 }: EvaluationDetailViewProps) {
   if (!result) return null;
+
+  const isAgentic = isAgenticMetric(result.metric_id);
+
+  // Dynamic filter for active fields based on the metric map
+  const activeFields = METRIC_INPUTS_MAP[result.metric_id] || METRIC_INPUTS_MAP[result.metric_id + "Evaluator"] || { input: true, output: true, context: true, expected: true };
+
+  // Determine visibility of sections
+  const showInput = isAgentic || activeFields.input;
+  const showOutput = isAgentic || activeFields.output;
+  const showContext = !isAgentic && activeFields.context; // Remove context from agentic evaluations
+  const showExpected = !isAgentic && activeFields.expected && result.expected_output;
+
+  const displayInputVal = result.input || "N/A";
+  const displayOutputVal = result.output || "N/A";
+  const workflowDetails = result.metadata_json?.workflow_details;
 
   const getStatusColor = () => {
        if (result.status === "RUNNING") return "bg-yellow-500/10 border-yellow-500/20";
@@ -231,8 +276,9 @@ export default function EvaluationDetailView({
   };
 
   return (
-    <div className="space-y-6">
-        <div className="flex items-center justify-between mb-6">
+    <div className="space-y-8">
+        {/* Header */}
+        <div className="flex items-center justify-between">
             <div>
                 <h2 className="text-2xl font-bold tracking-tight">Evaluation Details</h2>
                 <p className="text-muted-foreground flex items-center gap-2">
@@ -253,71 +299,158 @@ export default function EvaluationDetailView({
             </Button>
         </div>
 
-        {/* Status Card */}
-        <div className={`p-6 rounded-lg border ${getStatusColor()}`}>
-            <div className="flex items-center justify-between mb-4">
-                <Badge variant={getBadgeVariant()} className={`text-md px-3 py-1`}>
-                    {getBadgeLabel()}
-                </Badge>
-                <span className="text-4xl font-bold font-mono">
-                    {result.score !== null ? result.score.toFixed(3) : "-"}
-                </span>
+        {/* Metric Name */}
+        <div className="border rounded-lg p-4 bg-muted/20">
+            <h3 className="text-xs font-semibold mb-1 text-muted-foreground uppercase tracking-wider">Evaluation Metric</h3>
+            <div className="font-mono text-sm font-bold text-foreground">
+                {result.metric_id}
             </div>
-            <p className="text-lg text-foreground/90 italic">
-                {result.reason || (result.status === "RUNNING" ? "Evaluation in progress..." : "No reason provided.")}
-            </p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
-            {/* Metric Info */}
-            <div className="col-span-2">
-                <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Metric</h3>
-                <div className="p-4 rounded-md bg-muted/50 border font-mono text-sm">
-                    {result.metric_id}
+        {/* > Output (Evaluation Output) */}
+        <div className="space-y-3">
+            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                Output
+            </h2>
+            <div className={`p-6 rounded-lg border ${getStatusColor()} space-y-4`}>
+                <div className="flex items-center justify-between">
+                    <Badge variant={getBadgeVariant()} className="text-md px-3 py-1 font-semibold">
+                        {getBadgeLabel()}
+                    </Badge>
+                    <span className="text-4xl font-bold font-mono text-foreground">
+                        {result.score !== null ? result.score.toFixed(3) : "-"}
+                    </span>
+                </div>
+                <div>
+                    <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">Feedback & Reason</h4>
+                    <p className="text-md text-foreground/90 italic leading-relaxed">
+                        {result.reason || (result.status === "RUNNING" ? "Evaluation in progress..." : "No reason provided.")}
+                    </p>
                 </div>
             </div>
+        </div>
 
-            {/* Input */}
-            <div className="col-span-2">
-                <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Input</h3>
-                <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
-                    {parseCleanParam(result.input, 'input')}
-                </pre>
+        {/* > Input (Inputs given to the metric) */}
+        <div className="space-y-4">
+            <h2 className="text-lg font-bold text-foreground">
+                Input
+            </h2>
+            <div className="grid gap-6 md:grid-cols-2 border rounded-lg p-6 bg-muted/5">
+                {/* Node / Agent / LLM / Tool Input */}
+                {showInput && (
+                    <div className="col-span-2">
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Node / Agent / LLM / Tool Input</h4>
+                        <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
+                            {parseCleanParam(displayInputVal, 'input')}
+                        </pre>
+                    </div>
+                )}
+
+                {/* Node / Agent / LLM / Tool Output */}
+                {showOutput && (
+                    <div className="col-span-2">
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Node / Agent / LLM / Tool Output</h4>
+                        <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
+                            {parseCleanParam(displayOutputVal, 'output')}
+                        </pre>
+                    </div>
+                )}
+
+                {/* Node / Agent / LLM / Tool Context */}
+                {showContext && (
+                    <div className="col-span-2">
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Node / Agent / LLM / Tool Context</h4>
+                        <div className="space-y-2">
+                            {result.context && result.context.length > 0 ? (
+                                result.context.map((ctx, i) => (
+                                     <pre key={i} className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap">
+                                        {ctx}
+                                     </pre>
+                                ))
+                            ) : (
+                                <div className="text-sm text-muted-foreground">No context provided.</div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Node / Agent / LLM / Tool Ground Truth */}
+                {showExpected && (
+                    <div className="col-span-2">
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Node / Agent / LLM / Tool Ground Truth</h4>
+                        <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
+                            {result.expected_output}
+                        </pre>
+                    </div>
+                )}
+
+                {/* Workflow Details */}
+                {workflowDetails && (
+                    <div className="col-span-2 space-y-4 pt-6 border-t border-dashed">
+                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Workflow Details</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {workflowDetails.agents && workflowDetails.agents.length > 0 && (
+                                <div className="space-y-3">
+                                    <span className="text-xs font-semibold text-muted-foreground block flex items-center gap-1.5">
+                                        <Activity className="h-3.5 w-3.5 text-primary" />
+                                        Evaluated Agents
+                                    </span>
+                                    <div className="space-y-2">
+                                        {workflowDetails.agents.map((agent: string) => {
+                                            const parts = agent.split(":");
+                                            const name = parts[0].trim();
+                                            const desc = parts.slice(1).join(":").trim();
+                                            return (
+                                                <div key={agent} className="p-3 rounded-lg border bg-background/50 flex flex-col gap-1 shadow-sm">
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="outline" className="border-primary/30 text-primary bg-primary/5 hover:bg-primary/5 font-mono text-[11px]">
+                                                            {name}
+                                                        </Badge>
+                                                    </div>
+                                                    {desc && (
+                                                        <p className="text-xs text-muted-foreground leading-relaxed pl-1">
+                                                            {desc}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                            {workflowDetails.tools && workflowDetails.tools.length > 0 && (
+                                <div className="space-y-3">
+                                    <span className="text-xs font-semibold text-muted-foreground block flex items-center gap-1.5">
+                                        <Wrench className="h-3.5 w-3.5 text-secondary" />
+                                        Evaluated Tools
+                                    </span>
+                                    <div className="space-y-2">
+                                        {workflowDetails.tools.map((tool: string) => {
+                                            const parts = tool.split(":");
+                                            const name = parts[0].trim();
+                                            const desc = parts.slice(1).join(":").trim();
+                                            return (
+                                                <div key={tool} className="p-3 rounded-lg border bg-background/50 flex flex-col gap-1 shadow-sm">
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="outline" className="border-secondary/30 text-secondary bg-secondary/5 hover:bg-secondary/5 font-mono text-[11px]">
+                                                            {name}
+                                                        </Badge>
+                                                    </div>
+                                                    {desc && (
+                                                        <p className="text-xs text-muted-foreground leading-relaxed pl-1">
+                                                            {desc}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
-
-            {/* Output */}
-            <div className="col-span-2">
-                <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Output</h3>
-                <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
-                    {parseCleanParam(result.output, 'output')}
-                </pre>
-            </div>
-
-            {/* Context */}
-             <div className="col-span-2">
-                <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Context</h3>
-                <div className="space-y-2">
-                    {result.context && result.context.length > 0 ? (
-                        result.context.map((ctx, i) => (
-                             <pre key={i} className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap">
-                                {ctx}
-                             </pre>
-                        ))
-                    ) : (
-                        <div className="text-sm text-muted-foreground">No context provided.</div>
-                    )}
-                </div>
-            </div>
-
-             {/* Expected */}
-             {result.expected_output && (
-                <div className="col-span-2">
-                    <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wider">Expected Output</h3>
-                    <pre className="p-4 rounded-md bg-muted/50 border font-mono text-sm whitespace-pre-wrap overflow-x-auto">
-                        {result.expected_output}
-                    </pre>
-                </div>
-             )}
         </div>
 
         {/* Evaluator Execution Details */}

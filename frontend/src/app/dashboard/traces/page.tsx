@@ -34,6 +34,11 @@ export default function TracesPage() {
   // Pagination State
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(totalCount / rowsPerPage));
+  }, [totalCount, rowsPerPage]);
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
@@ -159,6 +164,8 @@ export default function TracesPage() {
         }
       });
       setTraces(res.data);
+      const total = parseInt(res.headers['x-total-count'] || '0', 10);
+      setTotalCount(total);
     } catch (err) {
       console.error(err);
     } finally {
@@ -579,7 +586,7 @@ export default function TracesPage() {
           {/* Footer / Pagination */}
           <div className="flex-none px-6 py-3.5 border-t border-black/[0.04] bg-white flex items-center justify-between text-[11px] text-[#6e6e73] select-none">
             <div>
-              Showing <span className="font-bold text-[#1d1d1f]">{traces.length > 0 ? (page - 1) * rowsPerPage + 1 : 0}</span> to <span className="font-bold text-[#1d1d1f]">{(page - 1) * rowsPerPage + traces.length}</span> executions
+              Showing <span className="font-bold text-[#1d1d1f]">{traces.length > 0 ? (page - 1) * rowsPerPage + 1 : 0}</span> to <span className="font-bold text-[#1d1d1f]">{(page - 1) * rowsPerPage + traces.length}</span> of <span className="font-bold text-[#1d1d1f]">{totalCount}</span> executions
             </div>
             <div className="flex items-center gap-2">
               <span>Rows per page</span>
@@ -595,7 +602,7 @@ export default function TracesPage() {
                 <option value={50}>50</option>
                 <option value={100}>100</option>
               </select>
-              <div className="flex items-center gap-1 ml-4">
+              <div className="flex items-center gap-1 ml-4 text-xs">
                 <button
                   disabled={page === 1}
                   onClick={() => setPage(p => Math.max(1, p - 1))}
@@ -604,11 +611,11 @@ export default function TracesPage() {
                 >
                   <ChevronDown size={13} className="rotate-90" />
                 </button>
-                <button className="px-2 py-0.5 bg-neutral-50 border border-black/[0.04] rounded font-bold text-[#1d1d1f] min-w-[20px] text-center">
-                  {page}
-                </button>
+                <span className="font-semibold text-[#1d1d1f] px-2 select-none">
+                  {page}/{totalPages}
+                </span>
                 <button
-                  disabled={traces.length < rowsPerPage}
+                  disabled={page >= totalPages}
                   onClick={() => setPage(p => p + 1)}
                   className="p-1 hover:bg-black/[0.02] disabled:opacity-30 disabled:hover:bg-transparent rounded cursor-pointer transition-all"
                   title="Next Page"

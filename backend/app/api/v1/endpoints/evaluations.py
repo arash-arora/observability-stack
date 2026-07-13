@@ -5,7 +5,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from opentelemetry import trace
 from app.core.database import get_session
 from app.core.schema import MetricInfo, EvaluationRequest, EvaluationResponse
 from app.core.security import (
@@ -15,8 +14,6 @@ from app.core.security import (
     resolve_ingest_key_hash,
 )
 from app.api.v1.endpoints.data.metric_data import STATIC_METRICS_REGISTRY
-from observix.context import observability_context
-from observix import init_observability
 from app.models.llm_provider import LLMProvider
 
 router = APIRouter()
@@ -290,243 +287,245 @@ async def run_evaluation(
                 if key_obj:
                     user_api_key = create_internal_ingest_token(key_obj.key)
 
-    context_api_key = user_api_key if observe else None
-    context_host = host if observe and user_api_key else None
-
-    # Initialize with request-scoped credentials (idempotent - won't add duplicate processors)
-    if context_api_key:
-        init_observability(url=context_host, api_key=context_api_key)
-
-    with observability_context(api_key=context_api_key, host=context_host, evaluation_trace=True):
+    try:
+        # 2. Instantiate Evaluator
+        custom_prompt = inputs.get("custom_prompt")
+        metric_prompt = custom_prompt
+        
+        if not metric_prompt and request.metric_id:
+            # Let's try to get it from DB
+            from app.models.metric import Metric
+            metric_row = await db.get(Metric, request.metric_id)
+            if metric_row and metric_row.prompt:
+                metric_prompt = metric_row.prompt
+        
         try:
-            # 2. Instantiate Evaluator
-            custom_prompt = inputs.get("custom_prompt")
-            metric_prompt = custom_prompt
-            
-            if not metric_prompt and request.metric_id:
-                # Let's try to get it from DB
-                from app.models.metric import Metric
-                metric_row = await db.get(Metric, request.metric_id)
-                if metric_row and metric_row.prompt:
-                    metric_prompt = metric_row.prompt
-            
-            try:
-                llm_kwargs = {}
-                if api_key:
-                    llm_kwargs["api_key"] = api_key
-                if azure_endpoint:
-                    llm_kwargs["azure_endpoint"] = azure_endpoint
-                if api_version:
-                    llm_kwargs["api_version"] = api_version
-                if deployment_name:
-                    llm_kwargs["deployment_name"] = deployment_name
+            llm_kwargs = {}
+            if api_key:
+                llm_kwargs["api_key"] = api_key
+            if azure_endpoint:
+                llm_kwargs["azure_endpoint"] = azure_endpoint
+            if api_version:
+                llm_kwargs["api_version"] = api_version
+            if deployment_name:
+                llm_kwargs["deployment_name"] = deployment_name
 
-                if metric_prompt:
-                    from observix.evaluation.integrations.observix_eval import CustomEvaluator
-                    EvaluatorClass = CustomEvaluator
+            if metric_prompt:
+                from app.core.evaluation.integrations.observix_eval import CustomEvaluator
+                EvaluatorClass = CustomEvaluator
+                evaluator = EvaluatorClass(
+                    provider=provider, model=model, **llm_kwargs
+                )
+            else:
+                # We dynamically import from app.core.evaluation
+                eval_module = importlib.import_module("app.core.evaluation")
+                EvaluatorClass = getattr(eval_module, request.metric_id, None)
+
+                if not EvaluatorClass:
+                    raise ValueError(
+                        f"Evaluator class {request.metric_id} not found in SDK"
+                    )
+
+                # Initialize Evaluator with LLM
+                try:
                     evaluator = EvaluatorClass(
                         provider=provider, model=model, **llm_kwargs
                     )
-                else:
-                    # We dynamically import from observix.evaluation
-                    eval_module = importlib.import_module("observix.evaluation")
-                    EvaluatorClass = getattr(eval_module, request.metric_id, None)
-
-                    if not EvaluatorClass:
-                        raise ValueError(
-                            f"Evaluator class {request.metric_id} not found in SDK"
-                        )
-
-                    # Initialize Evaluator with LLM
-                    try:
-                        evaluator = EvaluatorClass(
-                            provider=provider, model=model, **llm_kwargs
-                        )
-                    except TypeError:
-                        logger.warning(
-                            f"Evaluator {request.metric_id} does not accept llm/kwargs in init. Trying default init."
-                        )
-                        try:
-                            evaluator = EvaluatorClass()
-                        except Exception as e:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Evaluator {request.metric_id} init failed even with default init: {str(e)}",
-                            )
-
-            except Exception as e:
-                logger.error(f"Failed to init Evaluator: {e}")
-                return EvaluationResponse(
-                    score=0.0, passed=False, reason=f"Evaluator Init Failed: {str(e)}"
-                )
-
-            # 3. Run Evaluation
-            try:
-                query = inputs.get("input") or inputs.get("query")
-                context = inputs.get("context")
-                output = inputs.get("output") or inputs.get("response")
-                expected = inputs.get("expected")
-
-                trace_id = None
-
-                # Fetch Application Rubrics (Application Context)
-                rubric_prompt = None
-
-                # Resolving Application to get Rubric
-                # Priority 1: user_api_key (Observix API Key) - Most reliable
-                api_key_obj = None
-                if user_api_key:
-                    from sqlalchemy.orm import selectinload as sql_selectinload
-
-                    key_hash = resolve_ingest_key_hash(user_api_key)
-
-                    # Query ApiKey by resolved hash -> Application
-                    stmt = (
-                        select(ApiKey)
-                        .options(sql_selectinload(ApiKey.application))
-                        .where(ApiKey.key == key_hash)
+                except TypeError:
+                    logger.warning(
+                        f"Evaluator {request.metric_id} does not accept llm/kwargs in init. Trying default init."
                     )
-                    ak_result = await db.execute(stmt)
-                    api_key_obj = ak_result.scalars().first()
+                    try:
+                        evaluator = EvaluatorClass()
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Evaluator {request.metric_id} init failed even with default init: {str(e)}",
+                        )
 
-                    if (
-                        api_key_obj
-                        and api_key_obj.application
-                        and api_key_obj.application.rubric_prompt
-                    ):
-                        rubric_prompt = api_key_obj.application.rubric_prompt
+        except Exception as e:
+            logger.error(f"Failed to init Evaluator: {e}")
+            return EvaluationResponse(
+                score=0.0, passed=False, reason=f"Evaluator Init Failed: {str(e)}"
+            )
 
-                # Priority 2: application_id in inputs (if API key not provided or failed)
-                if not rubric_prompt and inputs.get("application_id"):
-                    app_id_val = inputs.get("application_id")
+        # 3. Run Evaluation
+        try:
+            query = inputs.get("input") or inputs.get("query")
+            if not query and isinstance(trace_input, dict):
+                query = trace_input.get("input")
+                if not query:
+                    spans = trace_input.get("spans", [])
+                    if isinstance(spans, list):
+                        root_span = next((s for s in spans if isinstance(s, dict) and not s.get("parent_span_id")), None)
+                        if not root_span and spans:
+                            root_span = spans[0]
+                        if isinstance(root_span, dict):
+                            query = root_span.get("input")
 
-                    # Validate usage permissions/auth if strictly needed,
-                    # but here we assume the runner has access if they can trigger eval
-                    app_res = await db.get(Application, app_id_val)
-                    if app_res and app_res.rubric_prompt:
-                        rubric_prompt = app_res.rubric_prompt
+            context = inputs.get("context")
+            
+            output = inputs.get("output") or inputs.get("response")
+            if not output and isinstance(trace_input, dict):
+                output = trace_input.get("output")
+                if not output:
+                    spans = trace_input.get("spans", [])
+                    if isinstance(spans, list):
+                        root_span = next((s for s in spans if isinstance(s, dict) and not s.get("parent_span_id")), None)
+                        if not root_span and spans:
+                            root_span = spans[0]
+                        if isinstance(root_span, dict):
+                            output = root_span.get("output")
 
-                async def _execute_eval():
-                    # Forward any non-standard inputs directly to Evaluator as kwargs
-                    mapped_keys = {"input", "query", "output", "response", "context", "expected", "trace", "provider", "provider_id", "model", "api_key", "azure_endpoint", "api_version", "deployment_name", "observe", "user_api_key", "host", "custom_prompt"}
-                    extra_kwargs = {k: v for k, v in inputs.items() if k not in mapped_keys}
-                    
-                    if metric_prompt:
-                        import re
-                        formatted_prompt = metric_prompt
-                        # Frontend creates variables with {{var_name}}
-                        variables = set(re.findall(r'\{\{([^}]+)\}\}', metric_prompt))
-                        for var in variables:
-                            # Map standard expected variables differently if they are mapped to input keys
-                            val = inputs.get(var)
-                            if val is None:
-                                # fallback to lower
-                                val = inputs.get(var.lower(), "")
-                                
-                            formatted_prompt = formatted_prompt.replace(f"{{{{{var}}}}}", str(val))
+            expected = inputs.get("expected")
+
+            trace_id = None
+
+            # Fetch Application Rubrics (Application Context)
+            rubric_prompt = None
+
+            # Resolving Application to get Rubric
+            # Priority 1: user_api_key (Observix API Key) - Most reliable
+            api_key_obj = None
+            if user_api_key:
+                from sqlalchemy.orm import selectinload as sql_selectinload
+
+                key_hash = resolve_ingest_key_hash(user_api_key)
+
+                # Query ApiKey by resolved hash -> Application
+                stmt = (
+                    select(ApiKey)
+                    .options(sql_selectinload(ApiKey.application))
+                    .where(ApiKey.key == key_hash)
+                )
+                ak_result = await db.execute(stmt)
+                api_key_obj = ak_result.scalars().first()
+
+                if (
+                    api_key_obj
+                    and api_key_obj.application
+                    and api_key_obj.application.rubric_prompt
+                ):
+                    rubric_prompt = api_key_obj.application.rubric_prompt
+
+            # Priority 2: application_id in inputs (if API key not provided or failed)
+            if not rubric_prompt and inputs.get("application_id"):
+                app_id_val = inputs.get("application_id")
+                app_res = await db.get(Application, app_id_val)
+                if app_res and app_res.rubric_prompt:
+                    rubric_prompt = app_res.rubric_prompt
+
+            async def _execute_eval():
+                # Forward any non-standard inputs directly to Evaluator as kwargs
+                mapped_keys = {"input", "query", "output", "response", "context", "expected", "trace", "provider", "provider_id", "model", "api_key", "azure_endpoint", "api_version", "deployment_name", "observe", "user_api_key", "host", "custom_prompt"}
+                extra_kwargs = {k: v for k, v in inputs.items() if k not in mapped_keys}
+                
+                if metric_prompt:
+                    import re
+                    formatted_prompt = metric_prompt
+                    variables = set(re.findall(r'\{\{([^}]+)\}\}', metric_prompt))
+                    for var in variables:
+                        val = inputs.get(var)
+                        if val is None:
+                            val = inputs.get(var.lower(), "")
+                        formatted_prompt = formatted_prompt.replace(f"{{{{{var}}}}}", str(val))
+                        
+                    single_vars = set(re.findall(r'(?<!\{)\{([^}]+)\}(?!\})', formatted_prompt))
+                    for var in single_vars:
+                        if var in inputs:
+                            formatted_prompt = formatted_prompt.replace(f"{{{var}}}", str(inputs[var]))
                             
-                        # Format any single braced variables if the user mixed them up (only if exist in inputs)
-                        single_vars = set(re.findall(r'(?<!\{)\{([^}]+)\}(?!\})', formatted_prompt))
-                        for var in single_vars:
-                            if var in inputs:
-                                formatted_prompt = formatted_prompt.replace(f"{{{var}}}", str(inputs[var]))
-                                
-                        extra_kwargs["custom_instructions"] = formatted_prompt
+                    extra_kwargs["custom_instructions"] = formatted_prompt
 
-                    res = evaluator.evaluate(
-                        input_query=query,
-                        output=output,
+                res = evaluator.evaluate(
+                    input_query=query,
+                    output=output,
+                    context=(
+                        context
+                        if isinstance(context, list)
+                        else [str(context)] if context else []
+                    ),
+                    expected=expected,
+                    trace=trace_input,
+                    rubric=rubric_prompt,
+                    trace_enabled=False,  # tracing disabled
+                    **extra_kwargs
+                )
+                if inspect.iscoroutine(res):
+                    res = await res
+                return res
+
+            result = await _execute_eval()
+            trace_id = result.metadata.get("trace_id") if result.metadata else None
+
+            # Save Result to DB
+            persist_result = inputs.get("persist_result", True)
+            if persist_result:
+                try:
+                    target_trace_id = request.trace_id or inputs.get("trace_id") or (inputs.get("trace") if isinstance(inputs.get("trace"), str) else inputs.get("trace", {}).get("trace_id") if isinstance(inputs.get("trace"), dict) else None)
+                    if not target_trace_id:
+                        import uuid
+                        target_trace_id = f"manual_{uuid.uuid4().hex}"
+                    
+                    resolved_app_name = None
+                    if target_trace_id and not target_trace_id.startswith("manual_"):
+                        try:
+                            from app.core.clickhouse import get_clickhouse_client
+                            ch_client = get_clickhouse_client()
+                            ch_res = ch_client.query(f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1").result_rows
+                            if ch_res and ch_res[0][0]:
+                                resolved_app_name = str(ch_res[0][0])
+                        except Exception as ex:
+                            logger.error(f"Failed to query trace application_name: {ex}")
+                    
+                    eval_result = EvaluationResult(
+                        trace_id=target_trace_id or trace_id,
+                        metric_id=request.metric_id,
+                        input=str(query) if query else None,
+                        output=str(output) if output else None,
                         context=(
                             context
                             if isinstance(context, list)
                             else [str(context)] if context else []
                         ),
-                        expected=expected,
-                        trace=trace_input,
-                        rubric=rubric_prompt,  # Pass the rubric to SDK
-                        trace_enabled=observe,  # Pass tracing flag
-                        **extra_kwargs
+                        expected_output=str(expected) if expected else None,
+                        score=result.score,
+                        reason=result.reason,
+                        passed=result.passed,
+                        status="COMPLETED",
+                        metadata_json=(
+                            {**(result.metadata or {}), "workflow_details": inputs["workflow_details"]}
+                            if "workflow_details" in inputs and isinstance(result.metadata or {}, dict)
+                            else result.metadata
+                        ),
+                        application_name=resolved_app_name or inputs.get("application_name")
+                        or (
+                            api_key_obj.application.name
+                            if api_key_obj and api_key_obj.application
+                            else None
+                        ),
                     )
-                    if inspect.iscoroutine(res):
-                        res = await res
-                    return res
+                    db.add(eval_result)
+                    await db.commit()
+                except Exception as e:
+                    logger.error(f"Failed to save evaluation result to DB: {e}")
 
-                if observe:
-                    tracer = trace.get_tracer("observix")
-                    with tracer.start_as_current_span(
-                        f"{request.metric_id}", kind=trace.SpanKind.CLIENT
-                    ) as span:
-                        trace_id = f"{span.get_span_context().trace_id:032x}"
-                        result = await _execute_eval()
-                else:
-                    result = await _execute_eval()
-                    # Fallback if evaluator returns trace_id in metadata
-                    trace_id = result.metadata.get("trace_id")
-
-                # Save Result to DB (if enabled AND observed)
-                # User req: Only save if being traced/observed
-                persist_result = inputs.get("persist_result", True)
-                if persist_result and observe:
-                    try:
-                        target_trace_id = request.trace_id or inputs.get("trace_id") or (inputs.get("trace") if isinstance(inputs.get("trace"), str) else inputs.get("trace", {}).get("trace_id") if isinstance(inputs.get("trace"), dict) else None)
-                        
-                        resolved_app_name = None
-                        if target_trace_id:
-                            try:
-                                from app.core.clickhouse import get_clickhouse_client
-                                ch_client = get_clickhouse_client()
-                                ch_res = ch_client.query(f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1").result_rows
-                                if ch_res and ch_res[0][0]:
-                                    resolved_app_name = str(ch_res[0][0])
-                            except Exception as ex:
-                                logger.error(f"Failed to query trace application_name: {ex}")
-                        
-                        eval_result = EvaluationResult(
-                            trace_id=target_trace_id or trace_id,
-                            metric_id=request.metric_id,
-                            input=str(query) if query else None,
-                            output=str(output) if output else None,
-                            context=(
-                                context
-                                if isinstance(context, list)
-                                else [str(context)] if context else []
-                            ),
-                            expected_output=str(expected) if expected else None,
-                            score=result.score,
-                            reason=result.reason,
-                            passed=result.passed,
-                            status="COMPLETED",
-                            metadata_json=result.metadata,
-                            application_name=resolved_app_name or inputs.get("application_name")
-                            or (
-                                api_key_obj.application.name
-                                if api_key_obj and api_key_obj.application
-                                else None
-                            ),
-                        )
-                        db.add(eval_result)
-                        await db.commit()
-                    except Exception as e:
-                        logger.error(f"Failed to save evaluation result to DB: {e}")
-                        # Don't fail the request if saving fails, just log it
-
-                return EvaluationResponse(
-                    score=result.score,
-                    reason=result.reason or "Evaluation completed successfully.",
-                    passed=result.passed,
-                    trace_id=trace_id,
-                )
-
-            except Exception as e:
-                logger.error(f"Evaluation failed: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-        except Exception as e:
-            logger.error(f"Evaluation Execution Failed: {e}")
             return EvaluationResponse(
-                score=0.0, passed=False, reason=f"Execution Failed: {str(e)}"
+                score=result.score,
+                reason=result.reason or "Evaluation completed successfully.",
+                passed=result.passed,
+                trace_id=trace_id,
             )
 
+        except Exception as e:
+            logger.error(f"Evaluation failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    except Exception as e:
+        logger.error(f"Evaluation Execution Failed: {e}")
+        return EvaluationResponse(
+            score=0.0, passed=False, reason=f"Execution Failed: {str(e)}"
+        )
 
 @router.get("/runs", response_model=List[TraceEvaluationSummary])
 async def list_evaluation_runs(
@@ -1181,13 +1180,13 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                         llm_kwargs["deployment_name"] = deployment_name
 
                     if metric_prompt:
-                        from observix.evaluation.integrations.observix_eval import CustomEvaluator
+                        from app.core.evaluation.integrations.observix_eval import CustomEvaluator
                         evaluators[m_id] = {
                             "evaluator": CustomEvaluator(provider=provider, model=model, **llm_kwargs),
                             "prompt": metric_prompt
                         }
                     else:
-                        eval_module = importlib.import_module("observix.evaluation")
+                        eval_module = importlib.import_module("app.core.evaluation")
                         EvaluatorClass = getattr(eval_module, m_id, None)
                         if EvaluatorClass:
                             evaluators[m_id] = {
@@ -1270,24 +1269,17 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
 
                             # Execute evaluation — run in thread executor to avoid blocking the event loop
                             import asyncio as _asyncio
-                            from opentelemetry import context as otel_context
                             _loop = _asyncio.get_event_loop()
-                            _ctx = otel_context.get_current()
 
                             def _run_eval():
-                                _token = otel_context.attach(_ctx)
-                                try:
-                                    with observability_context(api_key=None, host=None, evaluation_trace=True):
-                                        return evaluator.evaluate(
-                                            input_query=query,
-                                            output=output,
-                                            context=context if isinstance(context, list) else [str(context)] if context else [],
-                                            expected=None,
-                                            rubric=rubric_prompt,
-                                            **extra_kwargs
-                                        )
-                                finally:
-                                    otel_context.detach(_token)
+                                return evaluator.evaluate(
+                                    input_query=query,
+                                    output=output,
+                                    context=context if isinstance(context, list) else [str(context)] if context else [],
+                                    expected=None,
+                                    rubric=rubric_prompt,
+                                    **extra_kwargs
+                                )
 
                             res = await _loop.run_in_executor(None, _run_eval)
                             if inspect.iscoroutine(res):

@@ -148,6 +148,72 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
 
   // 3. If object
   if (typeof val === 'object' && val !== null) {
+    if (val.choices && Array.isArray(val.choices)) {
+      const choicesMsgs: ChatMessage[] = [];
+      val.choices.forEach((choice: any) => {
+        if (choice.message) {
+          choicesMsgs.push(...parseMessages(choice.message, forceInputMapping, hideSystem, outputFinalOnly));
+        } else if (choice.text) {
+          choicesMsgs.push({ role: forceInputMapping ? 'user' : 'ai', content: choice.text });
+        }
+      });
+      return choicesMsgs;
+    }
+
+    if (val.contents && Array.isArray(val.contents)) {
+      return parseMessages(val.contents, forceInputMapping, hideSystem, outputFinalOnly);
+    }
+
+    if (val.candidates && Array.isArray(val.candidates)) {
+      const candidateMsgs: ChatMessage[] = [];
+      val.candidates.forEach((cand: any) => {
+        if (cand.content) {
+          candidateMsgs.push(...parseMessages(cand.content, forceInputMapping, hideSystem, outputFinalOnly));
+        }
+      });
+      return candidateMsgs;
+    }
+
+    if (val.parts && Array.isArray(val.parts)) {
+      const textParts = val.parts.map((p: any) => {
+        if (typeof p === 'string') return p;
+        return p.text || p.content || JSON.stringify(p);
+      }).join("\n").trim();
+      const roleStr = String(val.role || 'other').toLowerCase();
+      let role: 'system' | 'user' | 'ai' | 'other' = 'other';
+      if (roleStr.includes('system')) role = 'system';
+      else if (roleStr.includes('user') || roleStr.includes('human')) role = 'user';
+      else if (roleStr.includes('model') || roleStr.includes('ai') || roleStr.includes('assistant')) role = 'ai';
+      return [{ role, content: textParts }];
+    }
+
+    if (val.kwargs && val.kwargs.content !== undefined) {
+      const idList = Array.isArray(val.id) ? val.id : [];
+      const className = idList[idList.length - 1] || '';
+      let role: 'system' | 'user' | 'ai' | 'other' = 'other';
+      if (className.includes('System')) role = 'system';
+      else if (className.includes('Human') || className.includes('User')) role = 'user';
+      else if (className.includes('AI') || className.includes('Assistant')) role = 'ai';
+      else role = forceInputMapping ? 'user' : 'ai';
+      
+      const content = val.kwargs.content;
+      return [{ role, content: typeof content === 'string' ? content : JSON.stringify(content) }];
+    }
+
+    if (val.generations && Array.isArray(val.generations)) {
+      const genMsgs: ChatMessage[] = [];
+      val.generations.forEach((gen: any) => {
+        if (gen.text) {
+          genMsgs.push({ role: forceInputMapping ? 'user' : 'ai', content: gen.text });
+        }
+      });
+      return genMsgs;
+    }
+
+    if (val.response && typeof val.response === 'string') {
+      return [{ role: forceInputMapping ? 'user' : 'ai', content: val.response }];
+    }
+
     if (val.content !== undefined || val.text !== undefined || val.role !== undefined || val.type !== undefined) {
       const single = parseSingleMessage(val, forceInputMapping);
       if (single && single.role === 'system' && hideSystem) {
@@ -158,9 +224,6 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
 
     if (val.messages && Array.isArray(val.messages)) {
       return parseMessages(val.messages, forceInputMapping, hideSystem, outputFinalOnly);
-    }
-    if (val.args && Array.isArray(val.args)) {
-      return parseMessages(val.args, forceInputMapping, hideSystem, outputFinalOnly);
     }
     if (val.kwargs?.messages && Array.isArray(val.kwargs.messages)) {
       return parseMessages(val.kwargs.messages, forceInputMapping, hideSystem, outputFinalOnly);
@@ -176,6 +239,9 @@ function parseMessages(val: any, forceInputMapping?: boolean, hideSystem?: boole
     }
     if (val.output) {
       return parseMessages(val.output, forceInputMapping, hideSystem, outputFinalOnly);
+    }
+    if (val.args && Array.isArray(val.args) && val.args.length > 0) {
+      return parseMessages(val.args, forceInputMapping, hideSystem, outputFinalOnly);
     }
   }
 
@@ -223,7 +289,21 @@ function parseSingleMessage(m: any, forceInputMapping?: boolean): ChatMessage | 
     role = forceInputMapping ? 'user' : 'other';
   }
   
-  let content = m.content || m.text || m.message || (typeof m === 'object' ? JSON.stringify(m) : String(m));
+  let content = "";
+  if (m.content !== undefined && m.content !== null) {
+    if (Array.isArray(m.content)) {
+      content = m.content.map((block: any) => {
+        if (typeof block === 'string') return block;
+        return block.text || block.content || JSON.stringify(block);
+      }).join("\n");
+    } else if (typeof m.content === 'object') {
+      content = m.content.text || m.content.content || JSON.stringify(m.content);
+    } else {
+      content = String(m.content);
+    }
+  } else {
+    content = m.text || m.message || (typeof m === 'object' ? JSON.stringify(m) : String(m));
+  }
 
   // Parse LLM tool calls — handle both native arrays and Python-serialized strings
   let rawToolCalls = m.tool_calls
@@ -397,19 +477,37 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
       }
     }, [filteredEvalMetrics, selectedMetricId]);
 
+  // Helper to stringify data for the modal using robust parseMessages
+  const prepareData = (val: any, isInput: boolean = true) => {
+      if (!val) return "";
+      const parsed = parseMessages(val, isInput);
+      if (parsed && parsed.length > 0) {
+          return parsed.map(msg => msg.content).join("\n\n").trim();
+      }
+      if (typeof val === 'string') {
+          try {
+              const parsedJson = JSON.parse(val);
+              const reParsed = parseMessages(parsedJson, isInput);
+              if (reParsed && reParsed.length > 0) {
+                  return reParsed.map(msg => msg.content).join("\n\n").trim();
+              }
+          } catch {
+              // Not JSON
+          }
+          return val;
+      }
+      return typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val);
+  };
+
   // Auto-fill inputs if evaluating a specific node
   useEffect(() => {
       if (selectedMetric && evalTarget && evalTarget !== 'trace') {
           const prefill: Record<string, string> = {};
           selectedMetric.inputs.forEach((input: string) => {
               if (input.toLowerCase() === 'input' || input.toLowerCase() === 'query') {
-                  prefill[input] = typeof (evalTarget as Node).input === 'string' 
-                    ? (evalTarget as Node).input 
-                    : JSON.stringify((evalTarget as Node).input || '', null, 2);
+                  prefill[input] = prepareData((evalTarget as Node).input, true);
               } else if (input.toLowerCase() === 'output' || input.toLowerCase() === 'response') {
-                  prefill[input] = typeof (evalTarget as Node).output === 'string' 
-                    ? (evalTarget as Node).output 
-                    : JSON.stringify((evalTarget as Node).output || '', null, 2);
+                  prefill[input] = prepareData((evalTarget as Node).output, false);
               } else {
                   prefill[input] = '';
               }
@@ -1163,6 +1261,9 @@ function NodeDetailView({
     return node;
   }, [node, selectedAttemptIdx]);
 
+  const totalAttempts = node.attempts?.length || 1;
+  const currentAttempt = node.attempts ? (selectedAttemptIdx + 1) : (activeNode.attributes?.attempt || 1);
+
   // For agent nodes: input comes from first child, output from last child
   const isAgentNode = activeNode.type?.toLowerCase() === 'agent';
 
@@ -1538,6 +1639,8 @@ function NodeDetailView({
         </div>
       </div>
 
+
+
       {/* Main Parameters lists */}
       <div className="space-y-5 flex-1 overflow-y-auto pr-1">
         {/* INPUT Section */}
@@ -1579,30 +1682,30 @@ function NodeDetailView({
         </div>
 
         {/* METADATA Section */}
-        {(() => {
-          if (!activeNode.attributes || typeof activeNode.attributes !== 'object') return null;
-          const ignoreKeys = ['observation_id', 'parent_observation_id', 'tools', 'candidate_agents', 'context', 'description', 'docstring', 'agent_name', 'tool_name'];
-          const filteredAttributes = Object.entries(activeNode.attributes).filter(([k]) => !ignoreKeys.includes(k));
-          if (filteredAttributes.length === 0) return null;
-          return (
-            <div className="space-y-2.5">
-              <div className="flex justify-between items-center border-t border-black/[0.04] pt-4 mt-2">
-                <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 select-none">
-                  <Cpu size={11} className="text-[#0071e3]" />
-                  Metadata & Attributes
-                </span>
-              </div>
-              <div className="p-4 bg-neutral-50/50 border border-black/[0.03] rounded-2xl text-[11px] font-mono divide-y divide-black/[0.03]">
-                {filteredAttributes.map(([key, value]) => (
-                  <div key={key} className="flex justify-between py-1.5 first:pt-0 last:pb-0">
-                    <span className="text-[#6e6e73] font-semibold">{key}</span>
-                    <span className="text-[#1d1d1f] font-medium max-w-[70%] break-all text-right">{String(value)}</span>
-                  </div>
-                ))}
-              </div>
+        <div className="space-y-2.5">
+          <div className="flex justify-between items-center border-t border-black/[0.04] pt-4 mt-2">
+            <span className="text-[10px] text-[#6e6e73] font-bold uppercase tracking-wider flex items-center gap-1.5 select-none">
+              <Cpu size={11} className="text-[#0071e3]" />
+              metadata
+            </span>
+          </div>
+          <div className="p-4 bg-neutral-50/50 border border-black/[0.03] rounded-2xl text-[11px] font-mono divide-y divide-black/[0.03]">
+            <div className="flex justify-between py-1.5 first:pt-0 last:pb-0">
+              <span className="text-[#6e6e73]">time taken:</span>
+              <span className="text-[#1d1d1f] font-medium">
+                {activeNode.duration_ms !== undefined 
+                  ? (activeNode.duration_ms >= 1000 
+                     ? `${(activeNode.duration_ms / 1000).toFixed(3)}s` 
+                     : `${activeNode.duration_ms.toFixed(0)}ms`) 
+                  : "-"}
+              </span>
             </div>
-          );
-        })()}
+            <div className="flex justify-between py-1.5 first:pt-0 last:pb-0">
+              <span className="text-[#6e6e73]">attempt:</span>
+              <span className="text-[#1d1d1f] font-medium">{currentAttempt}/{totalAttempts}</span>
+            </div>
+          </div>
+        </div>
 
         {/* Error notification alert if applicable */}
         {activeNode.error && (

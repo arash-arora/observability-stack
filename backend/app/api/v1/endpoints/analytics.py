@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.core.clickhouse import get_clickhouse_client
 from app.core.database import get_session
 from app.api.deps import get_current_user
@@ -99,6 +99,7 @@ async def get_system_metrics(current_user: User = Depends(get_current_user)):
 @router.get("/traces")
 async def get_traces(
     project_id: str,
+    response: Response,
     limit: int = 50,
     offset: int = 0,
     search: Optional[str] = None,
@@ -224,6 +225,20 @@ async def get_traces(
     ORDER BY {order_clause}
     LIMIT {limit} OFFSET {offset}
     """
+
+    # Count Query
+    count_query = f"""
+    SELECT count()
+    FROM traces t
+    WHERE {where_clause} AND (t.parent_span_id IS NULL OR t.parent_span_id = '')
+    """
+    try:
+        count_result = client.query(count_query)
+        total_count = count_result.result_rows[0][0] if count_result.result_rows else 0
+    except Exception as e:
+        logger.error(f"Failed to count traces: {e}")
+        total_count = 0
+    response.headers["X-Total-Count"] = str(total_count)
 
     try:
         result = client.query(query)

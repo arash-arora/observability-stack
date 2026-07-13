@@ -36,6 +36,17 @@ type EvaluationModalProps = {
   defaultObserve?: boolean;
 };
 
+const METRIC_INPUTS_MAP: Record<string, { input: boolean; output: boolean; context: boolean; expected: boolean }> = {
+  FaithfulnessEvaluator: { input: true, output: true, context: true, expected: false },
+  AnswerRelevancyEvaluator: { input: true, output: true, context: false, expected: false },
+  ContextualPrecisionEvaluator: { input: true, output: true, context: true, expected: false },
+  ContextualRecallEvaluator: { input: true, output: false, context: true, expected: true },
+  ContextualRelevancyEvaluator: { input: true, output: false, context: true, expected: false },
+  HallucinationEvaluator: { input: true, output: true, context: true, expected: false },
+  ToxicityEvaluator: { input: false, output: true, context: false, expected: false },
+  BiasEvaluator: { input: false, output: true, context: false, expected: false },
+};
+
 const OBSERVIX_METRICS = [
     "ToolSelectionEvaluator", 
     "ToolInputStructureEvaluator",
@@ -93,29 +104,45 @@ export default function EvaluationModal({
   const [error, setError] = useState<string | null>(null);
     const isTraceScopedEvaluation = Boolean(initialData?.trace);
 
-  // Load initial data when modal opens
+// Helper to stringify circular JSON structures safely
+function safeJsonStringify(obj: any, indent = 2) {
+  const cache = new Set();
+  return JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'object' && value !== null) {
+      if (cache.has(value)) {
+        return undefined;
+      }
+      cache.add(value);
+    }
+    return value;
+  }, indent);
+}
+
+// Load initial data when modal opens
   useEffect(() => {
     if (isOpen) {
       setInput(initialData.input || "");
       setOutput(initialData.output || "");
       
-      // Handle context: join array if necessary, or use string
-      if (Array.isArray(initialData.context)) {
+      // Handle context: join array if necessary, or use string. Fallback to input if empty.
+      if (Array.isArray(initialData.context) && initialData.context.length > 0) {
         setContext(initialData.context.join("\n\n"));
+      } else if (initialData.context && String(initialData.context).trim() !== "") {
+        setContext(String(initialData.context));
       } else {
-        setContext(initialData.context || "");
+        setContext(initialData.input || "");
       }
       
       setExpectedOutput("");
       
       if (initialData.trace) {
-          setTraceData(JSON.stringify(initialData.trace, null, 2));
+          setTraceData(safeJsonStringify(initialData.trace, 2));
       } else {
           setTraceData("");
       }
 
       if (initialData.workflow_details) {
-          setWorkflowDetails(JSON.stringify(initialData.workflow_details, null, 2));
+          setWorkflowDetails(safeJsonStringify(initialData.workflow_details, 2));
       } else {
           setWorkflowDetails("");
       }
@@ -288,74 +315,87 @@ export default function EvaluationModal({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {!initialData.isTraceEvaluation && (
+                  {initialData.isTraceEvaluation ? (
+                      <>
+                        <SelectItem value="ToolSelectionEvaluator">Tool Selection</SelectItem>
+                        <SelectItem value="ToolInputStructureEvaluator">Tool Input Structure</SelectItem>
+                        <SelectItem value="ToolSequenceEvaluator">Tool Sequence</SelectItem>
+                        <SelectItem value="AgentRoutingEvaluator">Agent Routing</SelectItem>
+                        <SelectItem value="HITLEvaluator">Human-in-the-Loop</SelectItem>
+                        <SelectItem value="WorkflowCompletionEvaluator">Workflow Completion</SelectItem>
+                        <SelectItem value="CustomEvaluator">Custom Metric</SelectItem>
+                      </>
+                  ) : (
                       <>
                         <SelectItem value="FaithfulnessEvaluator">Faithfulness</SelectItem>
                         <SelectItem value="AnswerRelevancyEvaluator">Answer Relevancy</SelectItem>
                         <SelectItem value="ContextualPrecisionEvaluator">Contextual Precision</SelectItem>
                         <SelectItem value="ContextualRecallEvaluator">Contextual Recall</SelectItem>
                         <SelectItem value="HallucinationEvaluator">Hallucination</SelectItem>
-                        {/* <SelectItem value="TaskCompletionEvaluator">Task Completion</SelectItem>
-                        <SelectItem value="ToolCorrectnessEvaluator">Tool Correctness</SelectItem> */}
                         <SelectItem value="ToxicityEvaluator">Toxicity</SelectItem>
                         <SelectItem value="BiasEvaluator">Bias</SelectItem>
                       </>
                   )}
-                  
-                  {/* Observix Exclusive */}
-                  <SelectItem value="ToolSelectionEvaluator">Tool Selection</SelectItem>
-                  <SelectItem value="ToolInputStructureEvaluator">Tool Input Structure</SelectItem>
-                  <SelectItem value="ToolSequenceEvaluator">Tool Sequence</SelectItem>
-                  <SelectItem value="AgentRoutingEvaluator">Agent Routing</SelectItem>
-                  <SelectItem value="HITLEvaluator">Human-in-the-Loop</SelectItem>
-                  <SelectItem value="WorkflowCompletionEvaluator">Workflow Completion</SelectItem>
-                  <SelectItem value="CustomEvaluator">Custom Metric</SelectItem>
-                  {/* <SelectItem value="AccuracyEvaluator">Accuracy</SelectItem> */}
                 </SelectContent>
               </Select>
             </div>
 
             {!isObservixMetric ? (
                 <>
-                    <div className="space-y-2">
-                    <Label>Input Payload / Query</Label>
-                    <Textarea
-                        className="font-mono text-xs min-h-[80px]"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="User query..."
-                    />
-                    </div>
+                    {(() => {
+                      const activeInputs = METRIC_INPUTS_MAP[metric] || { input: true, output: true, context: true, expected: true };
+                      return (
+                        <>
+                          {activeInputs.input && (
+                            <div className="space-y-2">
+                              <Label>Input Payload / Query</Label>
+                              <Textarea
+                                  className="font-mono text-xs min-h-[80px]"
+                                  value={input}
+                                  onChange={(e) => setInput(e.target.value)}
+                                  placeholder="User query..."
+                              />
+                            </div>
+                          )}
 
-                    <div className="space-y-2">
-                    <Label>Output / Response</Label>
-                    <Textarea
-                        className="font-mono text-xs min-h-[80px]"
-                        value={output}
-                        onChange={(e) => setOutput(e.target.value)}
-                        placeholder="LLM response..."
-                    />
-                    </div>
+                          {activeInputs.output && (
+                            <div className="space-y-2">
+                              <Label>Output / Response</Label>
+                              <Textarea
+                                  className="font-mono text-xs min-h-[80px]"
+                                  value={output}
+                                  onChange={(e) => setOutput(e.target.value)}
+                                  placeholder="LLM response..."
+                              />
+                            </div>
+                          )}
 
-                    <div className="space-y-2">
-                    <Label>Retrieval Context (Split by double newline)</Label>
-                    <Textarea
-                        className="font-mono text-xs min-h-[120px]"
-                        value={context}
-                        onChange={(e) => setContext(e.target.value)}
-                        placeholder="Retrieved context chunks..."
-                    />
-                    </div>
+                          {activeInputs.context && (
+                            <div className="space-y-2">
+                              <Label>Retrieval Context (Split by double newline)</Label>
+                              <Textarea
+                                  className="font-mono text-xs min-h-[120px]"
+                                  value={context}
+                                  onChange={(e) => setContext(e.target.value)}
+                                  placeholder="Retrieved context chunks..."
+                              />
+                            </div>
+                          )}
 
-                    <div className="space-y-2">
-                    <Label>Expected Output (Optional)</Label>
-                    <Textarea
-                        className="font-mono text-xs min-h-[60px]"
-                        value={expectedOutput}
-                        onChange={(e) => setExpectedOutput(e.target.value)}
-                        placeholder="Ground truth..."
-                    />
-                    </div>
+                          {activeInputs.expected && (
+                            <div className="space-y-2">
+                              <Label>Expected Output (Optional)</Label>
+                              <Textarea
+                                  className="font-mono text-xs min-h-[60px]"
+                                  value={expectedOutput}
+                                  onChange={(e) => setExpectedOutput(e.target.value)}
+                                  placeholder="Ground truth..."
+                              />
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                 </>
             ) : (
                 <>

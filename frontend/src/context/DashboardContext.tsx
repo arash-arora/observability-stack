@@ -21,8 +21,8 @@ interface DashboardContextType {
   projects: Project[];
   selectedOrg: Organization | null;
   selectedProject: Project | null;
-  setSelectedOrg: (org: Organization) => void;
-  setSelectedProject: (project: Project) => void;
+  setSelectedOrg: (org: Organization | null) => void;
+  setSelectedProject: (project: Project | null) => void;
   isLoading: boolean;
   refreshContext: () => Promise<void>;
 }

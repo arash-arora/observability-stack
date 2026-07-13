@@ -81,12 +81,23 @@ export default function ApplicationsPage() {
     fetchData();
   };
 
-  // Filter applications by selected project if one is selected
+  // Filter projects by selected organization
+  const orgProjects = useMemo(() => {
+    if (!selectedOrg) return projects;
+    return projects.filter(p => p.organization_id === selectedOrg.id);
+  }, [projects, selectedOrg]);
+
+  // Filter applications by selected project if one is selected, or by selected organization
   const filteredApplications = useMemo(() => {
-    return selectedProject 
-      ? applications.filter(app => app.project_id === selectedProject.id)
-      : applications;
-  }, [applications, selectedProject]);
+    if (selectedProject) {
+      return applications.filter(app => app.project_id === selectedProject.id);
+    }
+    if (selectedOrg) {
+      const orgProjectIds = orgProjects.map(p => p.id);
+      return applications.filter(app => orgProjectIds.includes(app.project_id));
+    }
+    return applications;
+  }, [applications, selectedProject, selectedOrg, orgProjects]);
 
   const formatRelativeTime = (isoString?: string) => {
     if (!isoString) return "Never";
@@ -125,12 +136,25 @@ export default function ApplicationsPage() {
          {canCreate && (
              <Button 
                onClick={() => setIsModalOpen(true)}
-               className="bg-[#0071e3] hover:bg-[#0071e3]/90 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer px-4 py-2"
+               disabled={selectedOrg && orgProjects.length === 0}
+               className="bg-[#0071e3] hover:bg-[#0071e3]/90 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
              >
-              <Plus size={14} /> New Application
-            </Button>
+               <Plus size={14} /> New Application
+             </Button>
          )}
       </div>
+
+      {selectedOrg && orgProjects.length === 0 && (
+        <div className="rounded-3xl border border-amber-200 bg-amber-50/50 p-5 flex flex-col gap-2 -mt-2 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 text-amber-800">
+            <ShieldAlert size={18} className="text-amber-600 shrink-0" />
+            <span className="font-bold text-xs">No project created yet</span>
+          </div>
+          <p className="text-xs text-amber-700 leading-relaxed max-w-2xl">
+            You must create a project under <span className="font-bold">{selectedOrg.name}</span> before you can create an application. Please use the project selector in the top navigation bar to create a project first.
+          </p>
+        </div>
+      )}
 
       {selectedProject && (
           <p className="text-xs text-[#6e6e73] font-semibold -mt-6">
@@ -246,7 +270,7 @@ export default function ApplicationsPage() {
       <ApplicationModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        projects={selectedProject ? [selectedProject] : projects} 
+        projects={selectedProject ? [selectedProject] : orgProjects} 
         onCreated={handleCreated}
       />
 

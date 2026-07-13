@@ -2,7 +2,7 @@ from app.core.schema import MetricInfo
 
 
 def get_code_snippet_template(metric_id: str):
-    return f"""from observix.evaluation import {metric_id}
+    return f"""from app.core.evaluation import {metric_id}
 
 llm_kwargs = {{
     'api_key': api_key,

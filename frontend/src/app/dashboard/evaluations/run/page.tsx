@@ -135,7 +135,8 @@ export default function RunDetailPage() {
                         context: rerunData.context,
                         trace: {
                             trace_id: rerunData.trace_id || traceGroupId
-                        }
+                        },
+                        workflow_details: rerunData.metadata_json?.workflow_details
                     }}
                 />
             )}

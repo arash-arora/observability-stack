@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { OrgApi, Organization, Project } from '@/services/org-api';
+import { useDashboard } from '@/context/DashboardContext';
 import { Plus, Building2, FolderKanban, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ import {
 
 export default function OrganizationsPage() {
     const { user } = useAuth();
+    const { refreshContext, setSelectedOrg, setSelectedProject } = useDashboard();
     const [orgs, setOrgs] = useState<Organization[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [newOrgName, setNewOrgName] = useState('');
@@ -59,8 +61,14 @@ export default function OrganizationsPage() {
     const handleCreateOrg = async () => {
         if (!newOrgName) return;
         try {
-            await OrgApi.createOrganization(newOrgName);
+            const newOrg = await OrgApi.createOrganization(newOrgName);
             setNewOrgName('');
+            setSelectedOrgId(newOrg.id);
+            localStorage.setItem('selectedOrgId', newOrg.id);
+            localStorage.removeItem('selectedProjectId');
+            setSelectedOrg(newOrg);
+            setSelectedProject(null);
+            await refreshContext();
             fetchData();
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Failed to create org');
@@ -83,8 +91,11 @@ export default function OrganizationsPage() {
     const handleCreateProject = async () => {
         if (!newProjectName || !selectedOrgId) return;
         try {
-            await OrgApi.createProject(newProjectName, selectedOrgId);
+            const newProj = await OrgApi.createProject(newProjectName, selectedOrgId);
             setNewProjectName('');
+            localStorage.setItem('selectedProjectId', newProj.id);
+            setSelectedProject(newProj);
+            await refreshContext();
             fetchData();
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Failed to create project');

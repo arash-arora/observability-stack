@@ -1,6 +1,6 @@
 "use client";
-
-import { useState } from "react";
+ 
+import { useState, useEffect } from "react";
 import api from "@/lib/api";
 import {
   Dialog,
@@ -19,26 +19,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
+ 
 interface Project {
   id: string;
   name: string;
 }
-
+ 
 interface Application {
   id: string;
   name: string;
   project_id: string;
   api_key?: string;
 }
-
+ 
 interface ApplicationModalProps {
   isOpen: boolean;
   onClose: () => void;
   projects: Project[];
   onCreated: (app: Application) => void;
 }
-
+ 
 export default function ApplicationModal({
   isOpen,
   onClose,
@@ -49,6 +49,18 @@ export default function ApplicationModal({
   const [projectId, setProjectId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setName("");
+      setError("");
+      if (projects.length === 1) {
+        setProjectId(projects[0].id);
+      } else {
+        setProjectId("");
+      }
+    }
+  }, [isOpen, projects]);
 
   const handleSubmit = async () => {
     if (!name || !projectId) {

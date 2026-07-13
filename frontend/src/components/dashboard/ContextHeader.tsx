@@ -42,13 +42,18 @@ export default function ContextHeader() {
     ? projects.filter(p => p.organization_id === selectedOrg.id) 
     : [];
 
-  const handleOrgCreated = (newOrg: any) => {
-      // Refresh logic: ideally context updates automatically or we trigger a refetch
-      window.location.reload(); 
+  const handleOrgCreated = async (newOrg: any) => {
+      localStorage.setItem('selectedOrgId', newOrg.id);
+      localStorage.removeItem('selectedProjectId');
+      setSelectedOrg(newOrg);
+      setSelectedProject(null);
+      await refreshContext();
   };
 
-  const handleProjectCreated = (newProj: any) => {
-      window.location.reload();
+  const handleProjectCreated = async (newProj: any) => {
+      localStorage.setItem('selectedProjectId', newProj.id);
+      setSelectedProject(newProj);
+      await refreshContext();
   };
 
   return (

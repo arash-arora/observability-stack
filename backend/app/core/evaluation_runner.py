@@ -12,9 +12,6 @@ from app.models.evaluation_rule import EvaluationRule
 from app.models.evaluation_result import EvaluationResult
 from app.models.all_models import ApiKey, Application
 from app.models.llm_provider import LLMProvider
-from observix.context import observability_context
-from observix import init_observability
-from opentelemetry import trace, context as otel_context
 
 import json
 
@@ -34,7 +31,6 @@ def extract_clean_param(val: str, param_type: str) -> str:
         data = json.loads(val_trimmed)
     except:
         try:
-            # Try python-like dict replacement
             json_str = val_trimmed.replace("'", '"').replace("True", "true").replace("False", "false").replace("None", "null")
             data = json.loads(json_str)
         except:
@@ -84,7 +80,7 @@ def extract_clean_param(val: str, param_type: str) -> str:
                 
         if "kwargs" in data and isinstance(data["kwargs"], dict):
             kwargs_data = data["kwargs"]
-            for k in ["input", "query", "question", "prompt"] if param_type == "input" else ["output", "response", "completion", "result", "text"]:
+            for k in (["input", "query", "question", "prompt"] if param_type == "input" else ["output", "response", "completion", "result", "text"]):
                 if k in kwargs_data and kwargs_data[k]:
                     if isinstance(kwargs_data[k], str):
                         return kwargs_data[k]
@@ -132,6 +128,7 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
     """
     Run evaluation based on a triggered rule and trace data.
     trace_data should look like { "input": ..., "output": ..., "context": ..., "trace_id": ... }
+    Evaluations are executed directly — no OTel instrumentation.
     """
     logger.info(f"Starting triggered evaluation for Rule ID: {rule_id}")
     
@@ -158,7 +155,6 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
             target_trace_id = trace_data.get("trace_id")
             
             # Prepare Inputs
-            # Prioritize trace_data, then rule inputs
             raw_query = trace_data.get("input") or inputs.get("input") or inputs.get("query")
             query = extract_clean_param(raw_query, "input")
             
@@ -216,132 +212,101 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
 
                     # Fallback to Stored Provider if keys not in inputs
                     if not api_key:
-                         provider_id = inputs.get("provider_id")
-                         app_id = rule.application_id
-                         provider_obj = None
-                         
-                         # If provider_id is specified, fetch exact provider
-                         if provider_id:
-                             try:
-                                 provider_obj = await session.get(LLMProvider, provider_id)
-                             except Exception as e:
-                                 logger.error(f"Failed to fetch provider {provider_id}: {e}")
-                                 provider_obj = None
-                         
-                         # Fallback: search by provider type if no exact match
-                         if not provider_obj and app_id:
-                             app_res = await session.get(Application, app_id)
-                             if app_res:
-                                 # Find Provider for Project
-                                 stmt = select(LLMProvider).where(
-                                     LLMProvider.project_id == app_res.project_id,
-                                     LLMProvider.provider == provider
-                                 )
-                                 prov_res = await session.execute(stmt)
-                                 provider_obj = prov_res.scalars().first()
-                         
-                         if provider_obj:
-                             api_key = decrypt_value(provider_obj.api_key)
-                             if not model: model = provider_obj.model_name
-                             if not azure_endpoint: azure_endpoint = provider_obj.base_url
-                             if not api_version: api_version = provider_obj.api_version
-                             if not deployment_name: deployment_name = provider_obj.deployment_name
+                        provider_id = inputs.get("provider_id")
+                        app_id = rule.application_id
+                        provider_obj = None
+                        
+                        # If provider_id is specified, fetch exact provider
+                        if provider_id:
+                            try:
+                                provider_obj = await session.get(LLMProvider, provider_id)
+                            except Exception as e:
+                                logger.error(f"Failed to fetch provider {provider_id}: {e}")
+                                provider_obj = None
+                        
+                        # Fallback: search by provider type if no exact match
+                        if not provider_obj and app_id:
+                            app_res = await session.get(Application, app_id)
+                            if app_res:
+                                stmt = select(LLMProvider).where(
+                                    LLMProvider.project_id == app_res.project_id,
+                                    LLMProvider.provider == provider
+                                )
+                                prov_res = await session.execute(stmt)
+                                provider_obj = prov_res.scalars().first()
+                        
+                        if provider_obj:
+                            api_key = decrypt_value(provider_obj.api_key)
+                            if not model: model = provider_obj.model_name
+                            if not azure_endpoint: azure_endpoint = provider_obj.base_url
+                            if not api_version: api_version = provider_obj.api_version
+                            if not deployment_name: deployment_name = provider_obj.deployment_name
 
                     if not model:
                         model = deployment_name
 
-                    # Observability Config
-                    observe = inputs.get("observe", False)
-                    user_api_key = inputs.get("user_api_key")
-                    host = inputs.get("host") or "http://localhost:8000"
+                    # 1. Instantiate Evaluator
+                    try:
+                        eval_module = importlib.import_module("app.core.evaluation")
+                        EvaluatorClass = getattr(eval_module, metric_id, None)
+                        
+                        if not EvaluatorClass:
+                            raise ValueError(f"Evaluator class {metric_id} not found in SDK")
+
+                        llm_kwargs = {}
+                        if api_key: llm_kwargs['api_key'] = api_key
+                        if azure_endpoint: llm_kwargs['azure_endpoint'] = azure_endpoint
+                        if api_version: llm_kwargs['api_version'] = api_version
+                        if deployment_name: llm_kwargs['deployment_name'] = deployment_name
+
+                        evaluator = EvaluatorClass(provider=provider, model=model, **llm_kwargs)
+                    except Exception as e:
+                        raise ValueError(f"Failed to init Evaluator: {e}")
+
+                    # 2. Run Evaluation (no OTel tracing)
+                    rubric_prompt = None
+                    app_id = rule.application_id
+                    if app_id:
+                        app_res = await session.get(Application, app_id)
+                        if app_res and app_res.rubric_prompt:
+                            rubric_prompt = app_res.rubric_prompt
+
+                    async def _execute_eval():
+                        res = evaluator.evaluate(
+                            input_query=query,
+                            output=output,
+                            context=context if isinstance(context, list) else [str(context)] if context else [],
+                            expected=expected,
+                            rubric=rubric_prompt
+                        )
+                        if inspect.iscoroutine(res):
+                            res = await res
+                        return res
+
+                    result = await _execute_eval()
+                    execution_trace_id = result.metadata.get("trace_id") if result.metadata else None
+
+                    # 3. Update Result
+                    eval_result.score = result.score
+                    eval_result.reason = result.reason
+                    eval_result.passed = result.passed
                     
-                    context_api_key = user_api_key if observe else None
-                    context_host = host if observe and user_api_key else None
+                    # Add agent details to metadata
+                    metadata = dict(result.metadata) if result.metadata else {}
+                    metadata["trigger_type"] = "auto_eval"
+                    metadata["rule_id"] = rule_id
+                    if trace_data.get("observation_name"):
+                        metadata["agent_name"] = trace_data.get("observation_name")
                     
-                    if context_api_key:
-                        init_observability(url=context_host, api_key=context_api_key)
-
-                    with observability_context(api_key=context_api_key, host=context_host, evaluation_trace=True):
-                        # 1. Instantiate Evaluator
-                        try:
-                            eval_module = importlib.import_module("observix.evaluation")
-                            EvaluatorClass = getattr(eval_module, metric_id, None)
-                            
-                            if not EvaluatorClass:
-                                 raise ValueError(f"Evaluator class {metric_id} not found in SDK")
-
-                            llm_kwargs = {}
-                            if api_key: llm_kwargs['api_key'] = api_key
-                            if azure_endpoint: llm_kwargs['azure_endpoint'] = azure_endpoint
-                            if api_version: llm_kwargs['api_version'] = api_version
-                            if deployment_name: llm_kwargs['deployment_name'] = deployment_name
-
-                            evaluator = EvaluatorClass(provider=provider, model=model, **llm_kwargs)
-                        except Exception as e:
-                            raise ValueError(f"Failed to init Evaluator: {e}")
-
-                        # 2. Run Evaluation
-                        # Fetch Rubric
-                        rubric_prompt = None
-                        app_id = rule.application_id
-                        if app_id:
-                             app_res = await session.get(Application, app_id)
-                             if app_res and app_res.rubric_prompt:
-                                  rubric_prompt = app_res.rubric_prompt
-
-                        async def _execute_eval():
-                            res = evaluator.evaluate(
-                                input_query=query,
-                                output=output,
-                                context=context if isinstance(context, list) else [str(context)] if context else [],
-                                expected=expected,
-                                rubric=rubric_prompt
-                            )
-                            if inspect.iscoroutine(res):
-                                res = await res
-                            return res
-
-                        # Trace execution
-                        execution_trace_id = None
-                        if observe:
-                            tracer = trace.get_tracer("observix")
-                            # Force root span by using empty context
-                            root_context = otel_context.Context()
-                            with tracer.start_as_current_span(
-                                f"trigger_eval_{metric_id}",
-                                kind=trace.SpanKind.CLIENT,
-                                context=root_context
-                            ) as span:
-
-                                execution_trace_id = f"{span.get_span_context().trace_id:032x}"
-                                result = await _execute_eval()
-                        else:
-                            result = await _execute_eval()
-                            execution_trace_id = result.metadata.get("trace_id")
-
-                        # 3. Update Result
-                        eval_result.score = result.score
-                        eval_result.reason = result.reason
-                        eval_result.passed = result.passed
+                    eval_result.metadata_json = metadata
+                    if not eval_result.trace_id:
+                        eval_result.trace_id = execution_trace_id
                         
-                        # Add agent details to metadata
-                        metadata = dict(result.metadata) if result.metadata else {}
-                        metadata["trigger_type"] = "auto_eval"
-                        metadata["rule_id"] = rule_id
-                        if trace_data.get("observation_name"):
-                            metadata["agent_name"] = trace_data.get("observation_name")
-                        
-                        eval_result.metadata_json = metadata
-                        # If we have an execution trace ID, we might want to store it in metadata maybe?
-                        # or if target_trace_id was none, use execution_trace_id
-                        if not eval_result.trace_id:
-                            eval_result.trace_id = execution_trace_id
-                            
-                        eval_result.status = "COMPLETED"
-                        
-                        session.add(eval_result)
-                        await session.commit()
-                        logger.info(f"Metric {metric_id} for Rule {rule_id} completed successfully.")
+                    eval_result.status = "COMPLETED"
+                    
+                    session.add(eval_result)
+                    await session.commit()
+                    logger.info(f"Metric {metric_id} for Rule {rule_id} completed successfully.")
 
                 except Exception as e:
                     logger.error(f"Metric {metric_id} for Rule {rule_id} failed: {e}")

@@ -213,14 +213,11 @@ async def test_provider(
         # Decrypt the stored api_key before using it
         plaintext_api_key = decrypt_value(provider_config.api_key)
 
-        # Dynamic import to avoid heavy dependencies if unused
-        from observix import llm
-
         # Determine provider type and instantiate client
         client = None
 
         if provider_config.provider == "openai":
-            from observix.llm.openai import AsyncOpenAI
+            from openai import AsyncOpenAI
 
             client = AsyncOpenAI(api_key=plaintext_api_key)
 
@@ -231,7 +228,7 @@ async def test_provider(
             return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "azure":
-            from observix.llm.openai import AsyncAzureOpenAI
+            from openai import AsyncAzureOpenAI
 
             client = AsyncAzureOpenAI(
                 api_key=plaintext_api_key,
@@ -258,7 +255,7 @@ async def test_provider(
             return {"output": response.content}
 
         elif provider_config.provider == "huggingface":
-            from observix.llm.huggingface import InferenceClient
+            from huggingface_hub import InferenceClient
 
             config_data = provider_config.provider_config or {}
             client = InferenceClient(
@@ -273,12 +270,13 @@ async def test_provider(
             return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "bedrock":
-            from observix.llm.bedrock import BedrockClient
+            import boto3
             import json
 
             config_data = provider_config.provider_config or {}
 
-            bedrock = BedrockClient(
+            bedrock = boto3.client(
+                'bedrock-runtime',
                 region_name=config_data.get('aws_region'),
                 aws_access_key_id=config_data.get('aws_access_key_id'),
                 aws_secret_access_key=config_data.get('aws_secret_access_key'),
@@ -303,7 +301,7 @@ async def test_provider(
         elif provider_config.provider == "vertexai":
             from google.cloud import aiplatform
             from google.oauth2 import service_account
-            from observix.llm.vertexai import GenerativeModel
+            from vertexai.generative_models import GenerativeModel
             import json
 
             config_data = provider_config.provider_config or {}
@@ -321,7 +319,7 @@ async def test_provider(
             return {"output": response.text}
 
         elif provider_config.provider == "anthropic":
-            from observix.llm.anthropic import AsyncAnthropic
+            from anthropic import AsyncAnthropic
 
             client = AsyncAnthropic(api_key=plaintext_api_key)
             response = await client.messages.create(
@@ -332,11 +330,10 @@ async def test_provider(
             return {"output": response.content[0].text}
 
         elif provider_config.provider == "google":
-            from observix.llm.google import GenerativeModel
             import google.generativeai as genai
 
             genai.configure(api_key=plaintext_api_key)
-            model = GenerativeModel(model_name=provider_config.model_name)
+            model = genai.GenerativeModel(model_name=provider_config.model_name)
             response = model.generate_content(request.input_text)
             return {"output": response.text}
 
