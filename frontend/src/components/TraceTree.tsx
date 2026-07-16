@@ -1465,7 +1465,7 @@ function NodeDetailView({
       </button>
     </div>
   );
-  const renderContentBox = (content: any, format: 'markdown' | 'json' | 'raw', isInput?: boolean, hideSystem?: boolean) => {
+  const renderContentBox = (content: any, format: 'markdown' | 'json' | 'raw', isInput?: boolean, hideSystem?: boolean, isError?: boolean) => {
     if (!content) return <div className="text-neutral-400 italic text-[11px] p-2 bg-neutral-50/50 rounded-xl">Empty payload</div>;
     
     const rawString = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -1522,6 +1522,7 @@ function NodeDetailView({
           const isSystem = msg.role === 'system';
           const isUser = msg.role === 'user';
           const isAI = msg.role === 'ai';
+          const displayAsError = isAI && !isInput && isError;
 
           return (
             <div 
@@ -1531,6 +1532,8 @@ function NodeDetailView({
                   ? "bg-neutral-50 border-black/[0.03] text-[#6e6e73]" 
                   : isUser
                   ? "bg-[#0071e3]/5 border-[#0071e3]/10 text-[#1d1d1f]"
+                  : displayAsError
+                  ? "bg-red-50/40 border-red-100 text-[#1d1d1f]"
                   : isAI
                   ? "bg-orange-50/40 border-orange-100 text-[#1d1d1f]"
                   : "bg-neutral-50 border-black/[0.03] text-[#1d1d1f]"
@@ -1553,7 +1556,15 @@ function NodeDetailView({
                     <span>User Input</span>
                   </>
                 )}
-                {isAI && (
+                {displayAsError && (
+                  <>
+                    <div className="w-5 h-5 rounded-lg bg-red-100 flex items-center justify-center border border-red-200 text-red-600">
+                      <AlertCircle size={10} />
+                    </div>
+                    <span className="text-red-600 font-bold">Error</span>
+                  </>
+                )}
+                {isAI && !displayAsError && (
                   <>
                     <div className="w-5 h-5 rounded-lg bg-orange-100 flex items-center justify-center border border-orange-200 text-orange-600">
                       <Bot size={10} />
@@ -1732,7 +1743,7 @@ function NodeDetailView({
               <CopyButton text={typeof displayOutput === 'string' ? displayOutput : JSON.stringify(displayOutput, null, 2)} />
             </div>
           </div>
-          {!outputCollapsed && renderContentBox(displayOutput, outputFormat, false)}
+          {!outputCollapsed && renderContentBox(displayOutput, outputFormat, false, false, !!activeNode.error || activeNode.status === 'ERROR' || activeNode.status === 'FAILURE')}
         </div>
 
         {/* METADATA Section */}

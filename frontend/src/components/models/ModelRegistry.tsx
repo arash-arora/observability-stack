@@ -244,7 +244,7 @@ export default function ModelRegistry() {
                     )}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
-                    {new Date(p.created_at).toLocaleDateString()}
+                    {p.created_at ? new Date(p.created_at).toLocaleDateString() : "-"}
                 </TableCell>
                 <TableCell className="text-right">
                   <Button variant="ghost" size="icon" onClick={() => handleEdit(p)} className="hover:bg-slate-100 mr-1">

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.api import deps
 from app.core import security
+from app.core.config import settings
 from app.core.database import get_session
 from app.models.all_models import User
 from pydantic import BaseModel
@@ -81,7 +82,7 @@ async def login_access_token(
     ):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
 
-    access_token_expires = timedelta(minutes=60 * 24 * 8)  # 8 days
+    access_token_expires = timedelta(minutes=settings.JWT_EXPIRY_MINUTES)
     return {
         "access_token": security.create_access_token(
             user.id, expires_delta=access_token_expires

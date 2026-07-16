@@ -124,6 +124,135 @@ async def fetch_retrieval_contexts(trace_id: str) -> list:
         return []
 
 
+
+async def fetch_complete_trace(trace_id: str) -> dict:
+    """
+    Fetch all spans and observations for a trace from ClickHouse
+    and format it as {"spans": [...], "observations": [...], "trace_id": trace_id}
+    """
+    from app.core.clickhouse import get_clickhouse_client
+    client = get_clickhouse_client()
+    
+    # 1. Fetch Spans
+    spans_query = f"""
+        SELECT 
+            trace_id, span_id, parent_span_id, name, kind, start_time, end_time, 
+            status_code, status_message, attributes, events, links, duration_ms, application_name
+        FROM traces 
+        WHERE trace_id = '{trace_id}'
+        ORDER BY start_time ASC
+    """
+    
+    # 2. Fetch Observations
+    obs_query = f"""
+        SELECT 
+            id, parent_observation_id, name, type, model, start_time, end_time, 
+            input_text, output_text, token_usage, model_parameters, metadata_json, 
+            extra, observation_type, error, total_cost
+        FROM observations
+        WHERE trace_id = '{trace_id}'
+        ORDER BY start_time ASC
+    """
+    
+    try:
+        spans_res = client.query(spans_query).result_rows
+        obs_res = client.query(obs_query).result_rows
+        
+        spans = []
+        for row in spans_res:
+            spans.append({
+                "trace_id": row[0],
+                "span_id": row[1],
+                "parent_span_id": row[2],
+                "name": row[3],
+                "kind": row[4],
+                "start_time": str(row[5]),
+                "end_time": str(row[6]),
+                "status_code": row[7],
+                "status_message": row[8],
+                "attributes": row[9],
+                "events": json.loads(row[10]) if row[10] else [],
+                "duration_ms": row[12],
+                "application_name": row[13],
+                "type": "span",
+            })
+            
+        observations = []
+        for row in obs_res:
+            parent_id = str(row[1]) if row[1] and str(row[1]) != "0" else None
+            obs_meta = {}
+            if row[11]:
+                try:
+                    obs_meta = json.loads(row[11]) if isinstance(row[11], str) else row[11]
+                except:
+                    obs_meta = {}
+            observations.append({
+                "id": str(row[0]),
+                "parent_observation_id": parent_id,
+                "name": row[2],
+                "type": row[3],
+                "model": row[4],
+                "start_time": str(row[5]),
+                "end_time": str(row[6]),
+                "input_text": row[7],
+                "input": row[7],
+                "output_text": row[8],
+                "output": row[8],
+                "token_usage": json.loads(row[9]) if row[9] else {},
+                "model_parameters": json.loads(row[10]) if row[10] else {},
+                "metadata_json": obs_meta,
+                "extra": row[12],
+                "observation_type": row[13],
+                "error": row[14],
+                "total_cost": row[15],
+            })
+            
+        return {
+            "trace_id": trace_id,
+            "spans": spans,
+            "observations": observations
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch complete trace {trace_id} from ClickHouse: {e}")
+        return {"trace_id": trace_id, "spans": [], "observations": []}
+
+
+def extract_workflow_details(trace: dict) -> dict:
+    """
+    Extract workflow details (evaluated agents and tools) from the trace.
+    """
+    agents = []
+    tools = []
+    
+    seen_agents = set()
+    for obs in trace.get("observations", []):
+        if obs.get("type") in ["agent", "chain"]:
+            name = obs.get("name")
+            if name and name not in seen_agents:
+                seen_agents.add(name)
+                meta = obs.get("metadata_json") or {}
+                if isinstance(meta, str):
+                    try: meta = json.loads(meta)
+                    except: meta = {}
+                desc = meta.get("description") or ""
+                agents.append(f"{name}: {desc}" if desc else name)
+                
+    seen_tools = set()
+    for obs in trace.get("observations", []):
+        if obs.get("type") == "tool":
+            name = obs.get("name")
+            if name and name not in seen_tools:
+                seen_tools.add(name)
+                meta = obs.get("metadata_json") or {}
+                if isinstance(meta, str):
+                    try: meta = json.loads(meta)
+                    except: meta = {}
+                desc = meta.get("description") or ""
+                tools.append(f"{name}: {desc}" if desc else name)
+                
+    return {"agents": agents, "tools": tools}
+
+
 async def run_triggered_evaluation(rule_id: int, trace_data: dict):
     """
     Run evaluation based on a triggered rule and trace data.
@@ -153,6 +282,16 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
 
             inputs = rule.inputs or {}
             target_trace_id = trace_data.get("trace_id")
+            
+            # Fetch complete trace and workflow details if agentic evaluation
+            is_agentic = trace_data.get("is_agentic", False)
+            trace = None
+            workflow_details = None
+            if is_agentic and target_trace_id:
+                import asyncio
+                await asyncio.sleep(0.05)
+                trace = await fetch_complete_trace(target_trace_id)
+                workflow_details = extract_workflow_details(trace)
             
             # Prepare Inputs
             raw_query = trace_data.get("input") or inputs.get("input") or inputs.get("query")
@@ -185,6 +324,17 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
             expected = trace_data.get("expected") or inputs.get("expected")
 
             for metric_id in metric_ids:
+                # Check for duplicate evaluations to prevent double runs
+                if target_trace_id:
+                    dup_stmt = select(EvaluationResult).where(
+                        EvaluationResult.trace_id == target_trace_id,
+                        EvaluationResult.metric_id == metric_id
+                    )
+                    dup_res = await session.execute(dup_stmt)
+                    if dup_res.scalars().first():
+                        logger.info(f"Evaluation for trace {target_trace_id} and metric {metric_id} already exists. Skipping.")
+                        continue
+
                 # Create Initial Evaluation Result (PENDING/RUNNING)
                 eval_result = EvaluationResult(
                     trace_id=target_trace_id,
@@ -277,7 +427,11 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                             output=output,
                             context=context if isinstance(context, list) else [str(context)] if context else [],
                             expected=expected,
-                            rubric=rubric_prompt
+                            rubric=rubric_prompt,
+                            trace=trace,
+                            agents=workflow_details.get("agents", []) if workflow_details else [],
+                            tools=workflow_details.get("tools", []) if workflow_details else [],
+                            workflow_details=workflow_details
                         )
                         if inspect.iscoroutine(res):
                             res = await res
@@ -297,6 +451,22 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                     metadata["rule_id"] = rule_id
                     if trace_data.get("observation_name"):
                         metadata["agent_name"] = trace_data.get("observation_name")
+                    if workflow_details:
+                        metadata["workflow_details"] = workflow_details
+                    # For agentic evals, store trace observations so the frontend can render the full trace
+                    if is_agentic and trace and trace.get("observations"):
+                        metadata["trace_observations"] = [
+                            {
+                                "id": o.get("id"),
+                                "name": o.get("name"),
+                                "type": o.get("type"),
+                                "input": o.get("input_text") or o.get("input"),
+                                "output": o.get("output_text") or o.get("output"),
+                                "parent_observation_id": o.get("parent_observation_id"),
+                                "start_time": o.get("start_time"),
+                            }
+                            for o in trace["observations"]
+                        ]
                     
                     eval_result.metadata_json = metadata
                     if not eval_result.trace_id:

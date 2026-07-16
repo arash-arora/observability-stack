@@ -1,5 +1,9 @@
 import clickhouse_connect
+import logging
+import time
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 def get_clickhouse_client():
     client = clickhouse_connect.get_client(
@@ -11,10 +15,23 @@ def get_clickhouse_client():
     return client
 
 def init_clickhouse():
-    print("[Backend] Initializing ClickHouse tables...")
-    client = get_clickhouse_client()
+    logger.info("Initializing ClickHouse tables...")
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            client = get_clickhouse_client()
+            client.command("SELECT 1")  # connectivity check
+            break
+        except Exception as e:
+            if attempt == max_retries:
+                logger.error("ClickHouse connection failed after %d attempts: %s", max_retries, e)
+                raise
+            wait = 2 ** attempt
+            logger.warning("ClickHouse connection attempt %d/%d failed, retrying in %ds...", attempt, max_retries, wait)
+            time.sleep(wait)
+            client = get_clickhouse_client()
+
     # Ensure tables exist with project_id
-    # We might want to do this more robustly with migration scripts, but for now:
     client.command("""
     CREATE TABLE IF NOT EXISTS traces (
         trace_id String,
@@ -36,6 +53,7 @@ def init_clickhouse():
         application_name Nullable(String)
     ) ENGINE = MergeTree()
     ORDER BY (project_id, start_time)
+    TTL start_time + INTERVAL 90 DAY
     """)
 
     client.command("""
@@ -62,6 +80,7 @@ def init_clickhouse():
         user_id Nullable(String)
     ) ENGINE = MergeTree()
     ORDER BY (project_id, start_time)
+    TTL start_time + INTERVAL 90 DAY
     """)
 
     # Create system_metrics table
@@ -160,4 +179,4 @@ def init_clickhouse():
     GROUP BY project_id, application_name, timestamp, window_start, window_end
     """)
 
-    print("[Backend] ClickHouse initialization complete.")
+    logger.info("ClickHouse initialization complete")

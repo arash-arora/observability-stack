@@ -52,3 +52,36 @@ async def update_user_me(
     await session.refresh(current_user)
 
     return UserUpdate(full_name=current_user.full_name)  # Don't return password
+
+
+@router.delete("/me")
+async def delete_user_me(
+    current_user: User = Depends(deps.get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """
+    Delete own user profile.
+    """
+    # 1. Update Metrics associated with user to have user_id = None
+    from app.models.metric import Metric
+    from sqlmodel import select
+    stmt = select(Metric).where(Metric.user_id == current_user.id)
+    res = await session.execute(stmt)
+    user_metrics = res.scalars().all()
+    for m in user_metrics:
+        m.user_id = None
+        session.add(m)
+        
+    # 2. Delete Organization User links
+    from app.models.all_models import OrganizationUserLink
+    stmt_link = select(OrganizationUserLink).where(OrganizationUserLink.user_id == current_user.id)
+    res_link = await session.execute(stmt_link)
+    links = res_link.scalars().all()
+    for link in links:
+        await session.delete(link)
+
+    # 3. Delete user
+    await session.delete(current_user)
+    await session.commit()
+
+    return {"status": "success", "message": "Account deleted successfully"}

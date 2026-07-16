@@ -2,6 +2,7 @@ import inspect
 import logging
 import importlib
 from typing import List, Optional
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -678,7 +679,7 @@ async def list_evaluation_runs(
     from datetime import timedelta, datetime as dt
 
     # Calculate time filter
-    now = dt.utcnow()
+    now = dt.now(timezone.utc).replace(tzinfo=None)
     if time_range == "24h":
         time_filter = now - timedelta(hours=24)
     elif time_range == "7d":
@@ -1211,7 +1212,7 @@ async def create_batch_evaluation(
             model_name=model_name,
             provider_id=request.provider_id,
             status="RUNNING",
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc).replace(tzinfo=None),
             selected_trace_ids=selected_trace_ids,
         )
 
@@ -1261,7 +1262,7 @@ async def rerun_batch_evaluation(
 
     # Reset the batch evaluation
     batch_eval.status = "RUNNING"
-    batch_eval.started_at = datetime.utcnow()
+    batch_eval.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     batch_eval.evaluated_traces = 0
     batch_eval.successful_evaluations = 0
     batch_eval.failed_evaluations = 0
@@ -1376,7 +1377,7 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
 
             if not trace_ids or not metric_ids:
                 batch_eval.status = "COMPLETED"
-                batch_eval.completed_at = datetime.utcnow()
+                batch_eval.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(batch_eval)
                 await db.commit()
                 return
@@ -1646,7 +1647,7 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
 
             # Finalize BatchEvaluation
             batch_eval.status = "COMPLETED"
-            batch_eval.completed_at = datetime.utcnow()
+            batch_eval.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.add(batch_eval)
             await db.commit()
             logger.info(f"Batch evaluation {batch_id} completed successfully.")
@@ -1658,6 +1659,6 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
             )
             batch_eval.status = "FAILED"
             batch_eval.error_message = str(e)
-            batch_eval.completed_at = datetime.utcnow()
+            batch_eval.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.add(batch_eval)
             await db.commit()

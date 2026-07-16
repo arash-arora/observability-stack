@@ -138,3 +138,42 @@ async def assign_user_role(
 
     await session.commit()
     return {"status": "success"}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user_admin(
+    user_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(deps.get_current_user),
+) -> Any:
+    """
+    Delete any user. Only superuser.
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 1. Update Metrics associated with user to have user_id = None
+    from app.models.metric import Metric
+    stmt = select(Metric).where(Metric.user_id == user_id)
+    res = await session.execute(stmt)
+    user_metrics = res.scalars().all()
+    for m in user_metrics:
+        m.user_id = None
+        session.add(m)
+        
+    # 2. Delete Organization User links
+    stmt_link = select(OrganizationUserLink).where(OrganizationUserLink.user_id == user_id)
+    res_link = await session.execute(stmt_link)
+    links = res_link.scalars().all()
+    for link in links:
+        await session.delete(link)
+
+    # 3. Delete user
+    await session.delete(user)
+    await session.commit()
+
+    return {"status": "success", "message": f"User {user_id} deleted successfully"}

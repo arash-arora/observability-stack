@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Trash2 } from "lucide-react";
 
 export default function UserManagement() {
     const [users, setUsers] = useState<User[]>([]);
@@ -85,6 +86,16 @@ export default function UserManagement() {
         }
     };
 
+    const handleDeleteClick = async (userId: string, email: string) => {
+        if (!confirm(`Are you sure you want to delete user ${email}?`)) return;
+        try {
+            await AdminApi.deleteUser(userId);
+            await fetchData();
+        } catch (err: any) {
+            alert(err.response?.data?.detail || 'Failed to delete user');
+        }
+    };
+
     if (loading) return <div className="p-8">Loading User Management...</div>;
     if (error) return <div className="p-8 text-red-500">Error: {error}</div>;
 
@@ -126,15 +137,25 @@ export default function UserManagement() {
                                         : <span className="text-muted-foreground">-</span>
                                     }
                                 </TableCell>
-                                <TableCell>{new Date(user.created_at).toLocaleDateString()}</TableCell>
+                                <TableCell>{user.created_at ? new Date(user.created_at).toLocaleDateString() : "-"}</TableCell>
                                 <TableCell className="text-right">
-                                    <Button 
-                                        variant="outline" 
-                                        size="sm"
-                                        onClick={() => handleAssignClick(user)}
-                                    >
-                                        Assign Role
-                                    </Button>
+                                    <div className="flex justify-end gap-2">
+                                        <Button 
+                                            variant="outline" 
+                                            size="sm"
+                                            onClick={() => handleAssignClick(user)}
+                                        >
+                                            Assign Role
+                                        </Button>
+                                        <Button 
+                                            variant="outline" 
+                                            size="sm"
+                                            className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                            onClick={() => handleDeleteClick(user.id, user.email)}
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    </div>
                                 </TableCell>
                             </TableRow>
                         ))}

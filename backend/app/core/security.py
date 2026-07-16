@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Union
 import hashlib
@@ -56,7 +56,7 @@ def create_internal_ingest_token(hashed_api_key: str, expires_minutes: int = 10)
     payload = {
         "typ": "internal_ingest",
         "hk": hashed_api_key,
-        "exp": datetime.utcnow() + timedelta(minutes=expires_minutes),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=expires_minutes),
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return f"{INTERNAL_INGEST_TOKEN_PREFIX}{token}"
@@ -114,9 +114,9 @@ def create_access_token(
     subject: Union[str, Any], expires_delta: timedelta = None
 ) -> str:
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode = {"exp": expire, "sub": str(subject)}
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

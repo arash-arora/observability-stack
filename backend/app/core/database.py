@@ -5,7 +5,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy import text
 from contextlib import asynccontextmanager
 
-engine = create_async_engine(settings.DATABASE_URL, echo=True, future=True)
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+    pool_recycle=1800,
+    pool_pre_ping=True,
+)
 async_session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 from app.models.all_models import Role
@@ -19,9 +28,6 @@ async def seed_roles(session: AsyncSession):
         role = result.scalars().first()
         if not role:
             role = Role(name=role_name, permissions=permissions)
-            session.add(role)
-        else:
-            role.permissions = permissions
             session.add(role)
     await session.commit()
 

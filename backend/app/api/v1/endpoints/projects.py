@@ -18,6 +18,9 @@ from app.models.all_models import (
 )
 from app.core.permissions import Permissions
 from pydantic import BaseModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def check_permission(
@@ -466,7 +469,7 @@ async def read_applications(
             for r in ch_res.result_rows:
                 last_trace_map[r[0]] = r[1].isoformat() if r[1] else None
         except Exception as e:
-            print(f"Failed to query last trace from Clickhouse: {e}")
+            logger.warning("Failed to query last trace from Clickhouse: %s", e)
 
     return [
         ApplicationRead(
@@ -528,7 +531,7 @@ async def read_application(
         if ch_res.result_rows and ch_res.result_rows[0][0]:
             last_trace_at = ch_res.result_rows[0][0].isoformat()
     except Exception as e:
-        print(f"Failed to query last trace: {e}")
+        logger.warning("Failed to query last trace: %s", e)
 
     return ApplicationRead(
         id=application.id,
@@ -603,7 +606,7 @@ async def update_application(
         if ch_res.result_rows and ch_res.result_rows[0][0]:
             last_trace_at = ch_res.result_rows[0][0].isoformat()
     except Exception as e:
-        print(f"Failed to query last trace: {e}")
+        logger.warning("Failed to query last trace: %s", e)
 
     return ApplicationRead(
         id=app_reloaded.id,

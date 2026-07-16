@@ -149,8 +149,37 @@ async def get_traces(
 
         # Remove duplicates
         mapped_status = list(set(mapped_status))
-        status_list = "', '".join(mapped_status)
-        where_clause += f" AND t.status_code IN ('{status_list}')"
+        
+        # If we are filtering specifically for errors, find traces with at least one failed final attempt
+        if len(mapped_status) == 1 and "ERROR" in mapped_status:
+            where_clause += f""" AND t.trace_id IN (
+                SELECT DISTINCT trace_id
+                FROM (
+                    SELECT trace_id, name, status_code
+                    FROM traces
+                    WHERE project_id = '{project_id}'
+                    ORDER BY start_time DESC
+                    LIMIT 1 BY trace_id, name
+                )
+                WHERE status_code = 'ERROR'
+            )"""
+        # If we are filtering specifically for success, find traces with no failed final attempts
+        elif "ERROR" not in mapped_status:
+            status_list = "', '".join(mapped_status)
+            where_clause += f""" AND t.status_code IN ('{status_list}') AND t.trace_id NOT IN (
+                SELECT DISTINCT trace_id
+                FROM (
+                    SELECT trace_id, name, status_code
+                    FROM traces
+                    WHERE project_id = '{project_id}'
+                    ORDER BY start_time DESC
+                    LIMIT 1 BY trace_id, name
+                )
+                WHERE status_code = 'ERROR'
+            )"""
+        else:
+            status_list = "', '".join(mapped_status)
+            where_clause += f" AND t.status_code IN ('{status_list}')"
 
     if name:
         name_list = "', '".join(name)
@@ -183,7 +212,18 @@ async def get_traces(
         t.start_time, 
         t.end_time, 
         t.duration_ms, 
-        t.status_code, 
+        -- If any node's final attempt in this trace failed, return 'ERROR'
+        if(t.trace_id IN (
+            SELECT DISTINCT trace_id
+            FROM (
+                SELECT trace_id, name, status_code
+                FROM traces
+                WHERE project_id = '{project_id}'
+                ORDER BY start_time DESC
+                LIMIT 1 BY trace_id, name
+            )
+            WHERE status_code = 'ERROR'
+        ), 'ERROR', t.status_code) as status_code, 
         t.user_id,
         o_first.input_text,
         o_last.output_text,
@@ -841,7 +881,7 @@ async def get_dashboard_stats(
             count = row[1]
             total_scores += count
             scores_stats.append(
-                {"name": row[0], "count": count, "avg": round(row[2], 2)}
+                {"name": row[0], "count": count, "avg": round(row[2], 2) if row[2] is not None else 0.0}
             )
 
         # Process Models & Cost
@@ -878,7 +918,7 @@ async def get_dashboard_stats(
             apps_metrics_map[app] = {
                 "name": app,
                 "request_count": row[1],
-                "avg_latency": round(row[2], 2),
+                "avg_latency": round(row[2], 2) if row[2] is not None else 0.0,
                 "error_count": row[3],
                 "total_count": row[4],
                 # Derived
@@ -928,7 +968,7 @@ async def get_dashboard_stats(
         # Process Gen Speed
         gen_speed = []
         for row in gen_speed_res.result_rows:
-            gen_speed.append({"model": row[0], "tokens_per_sec": round(row[1], 2)})
+            gen_speed.append({"model": row[0], "tokens_per_sec": round(row[1], 2) if row[1] is not None else 0.0})
 
         # Process Latencies
         def process_latencies(rows):
@@ -937,10 +977,10 @@ async def get_dashboard_stats(
                 stats.append(
                     {
                         "name": row[0],
-                        "p50": round(row[1], 2),
-                        "p90": round(row[2], 2),
-                        "p95": round(row[3], 2),
-                        "p99": round(row[4], 2),
+                        "p50": round(row[1], 2) if row[1] is not None else 0.0,
+                        "p90": round(row[2], 2) if row[2] is not None else 0.0,
+                        "p95": round(row[3], 2) if row[3] is not None else 0.0,
+                        "p99": round(row[4], 2) if row[4] is not None else 0.0,
                     }
                 )
             return stats
@@ -954,9 +994,9 @@ async def get_dashboard_stats(
             time_bucket = row[0]
             trace_latency_series.append({
                 "time": time_bucket.strftime("%I:%M %p"),
-                "p50": round(row[1], 2),
-                "p90": round(row[2], 2),
-                "p99": round(row[3], 2),
+                "p50": round(row[1], 2) if row[1] is not None else 0.0,
+                "p90": round(row[2], 2) if row[2] is not None else 0.0,
+                "p99": round(row[3], 2) if row[3] is not None else 0.0,
             })
 
         generation_latency_series = []
@@ -964,9 +1004,9 @@ async def get_dashboard_stats(
             time_bucket = row[0]
             generation_latency_series.append({
                 "time": time_bucket.strftime("%I:%M %p"),
-                "p50": round(row[1], 2),
-                "p90": round(row[2], 2),
-                "p99": round(row[3], 2),
+                "p50": round(row[1], 2) if row[1] is not None else 0.0,
+                "p90": round(row[2], 2) if row[2] is not None else 0.0,
+                "p99": round(row[3], 2) if row[3] is not None else 0.0,
             })
 
         # --- Evaluation Trend (Last 30 days) ---
@@ -992,7 +1032,8 @@ async def get_dashboard_stats(
 
                 trend_res = await session.execute(trend_stmt)
                 for day, avg in trend_res.all():
-                    eval_trend.append({"date": day, "avg_score": round(avg, 2)})
+                    if day and avg is not None:
+                        eval_trend.append({"date": day, "avg_score": round(avg, 2)})
             except Exception as e:
                 logger.error(f"Failed to fetch eval trend: {e}")
 
@@ -1019,7 +1060,7 @@ async def get_dashboard_stats(
         }
 
     except Exception as e:
-        print(f"Analytics Error: {e}")
+        logger.error("Analytics Error: %s", e)
         # Return empty structure on error to prevent UI crash
         return {
             "total_traces": 0,
@@ -1260,7 +1301,7 @@ async def get_evaluation_stats(
             ),
         }
     except Exception as e:
-        print(f"Eval Stats Error: {e}")
+        logger.error("Eval Stats Error: %s", e)
         return {
             "pass_fail": [],
             "avg_scores": [],
@@ -1574,7 +1615,7 @@ async def get_application_stats(
                     )
 
             except Exception as e:
-                print(f"App Eval Stats Error: {e}")
+                logger.error("App Eval Stats Error: %s", e)
 
         return {
             "overview": {
@@ -1599,8 +1640,8 @@ async def get_application_stats(
         }
 
     except Exception as e:
-        print(f"App Stats Error: {e}")
+        logger.error("App Stats Error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        print(f"Eval Stats Error: {e}")
+        logger.error("Eval Stats Error: %s", e)
         return {"pass_fail": [], "avg_scores": [], "score_trend": []}

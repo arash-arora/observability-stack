@@ -4,9 +4,11 @@ from app.models.alert import Alert
 from app.models.alert_rule import AlertRule
 from app.core.database import get_session
 from app.services.notifications import NotificationService
+from app.api.deps import get_current_user
+from app.models.all_models import User
 from sqlmodel import select
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import logging
 
@@ -18,7 +20,8 @@ router = APIRouter(prefix="/notification-channels", tags=["notifications"])
 @router.get("/", response_model=List[NotificationChannel])
 async def list_notification_channels(
     project_id: uuid.UUID,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """List all notification channels for a project"""
     stmt = select(NotificationChannel).where(NotificationChannel.project_id == project_id)
@@ -29,7 +32,8 @@ async def list_notification_channels(
 @router.get("/{channel_id}", response_model=NotificationChannel)
 async def get_notification_channel(
     channel_id: str,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Get a specific notification channel"""
     stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
@@ -45,7 +49,8 @@ async def get_notification_channel(
 @router.post("/", response_model=NotificationChannel)
 async def create_notification_channel(
     channel: NotificationChannel,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Create new notification channel"""
     # Check if ID already exists
@@ -66,7 +71,8 @@ async def create_notification_channel(
 async def update_notification_channel(
     channel_id: str,
     channel_update: NotificationChannel,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Update an existing notification channel"""
     stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
@@ -89,7 +95,8 @@ async def update_notification_channel(
 @router.delete("/{channel_id}")
 async def delete_notification_channel(
     channel_id: str,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Delete notification channel"""
     stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
@@ -107,7 +114,8 @@ async def delete_notification_channel(
 @router.post("/{channel_id}/test")
 async def test_notification_channel(
     channel_id: str,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Send a test notification to a channel"""
     stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
@@ -137,7 +145,7 @@ async def test_notification_channel(
             metric_value=85.5,
             threshold=80.0,
             application_name="Test Application",
-            fingerprint=f"test_{channel_id}_{datetime.utcnow().timestamp()}",
+            fingerprint=f"test_{channel_id}_{datetime.now(timezone.utc).timestamp()}",
             context={}
         )
 

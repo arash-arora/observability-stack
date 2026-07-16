@@ -3,7 +3,7 @@ from app.models.alert import Alert
 from app.core.database import get_session_ctx
 from app.core.clickhouse import get_clickhouse_client
 from sqlmodel import select
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 
@@ -80,7 +80,7 @@ class AlertRunner:
 
             stmt = select(func.avg(EvaluationResult.score)).where(
                 EvaluationResult.metric_id.in_(metric_ids),
-                EvaluationResult.created_at >= datetime.utcnow() - timedelta(minutes=window_minutes)
+                EvaluationResult.created_at >= (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).replace(tzinfo=None)
             )
 
             if rule.application_id:
@@ -102,7 +102,7 @@ class AlertRunner:
 
             stmt = select(func.avg(DataDriftMetric.drift_score)).where(
                 DataDriftMetric.project_id == rule.project_id,
-                DataDriftMetric.created_at >= datetime.utcnow() - timedelta(minutes=window_minutes)
+                DataDriftMetric.created_at >= (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).replace(tzinfo=None)
             )
 
             if rule.application_id:
@@ -123,7 +123,7 @@ class AlertRunner:
 
             stmt = select(func.avg(ModelQualityMetric.score)).where(
                 ModelQualityMetric.project_id == rule.project_id,
-                ModelQualityMetric.created_at >= datetime.utcnow() - timedelta(minutes=window_minutes)
+                ModelQualityMetric.created_at >= (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).replace(tzinfo=None)
             )
 
             if rule.application_id:
@@ -163,7 +163,7 @@ class AlertRunner:
             if alert:
                 # Update existing
                 alert.occurrence_count += 1
-                alert.last_occurrence = datetime.utcnow()
+                alert.last_occurrence = datetime.now(timezone.utc).replace(tzinfo=None)
                 alert.metric_value = metric_value
             else:
                 # Create new
@@ -201,7 +201,7 @@ class AlertRunner:
 
             if alert:
                 alert.state = "RESOLVED"
-                alert.resolved_at = datetime.utcnow()
+                alert.resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 alert.resolved_by = "auto"
                 alert.resolution_note = "Metric returned to normal"
                 await session.commit()
@@ -223,8 +223,18 @@ class AlertRunner:
 
         cooldown_minutes = rule.notification_config.get("cooldown_minutes", 15)
         last_notification = max(n["timestamp"] for n in alert.notifications_sent)
-
-        time_since = datetime.utcnow() - last_notification
+        # Convert last_notification to datetime if it is a string or parsed object
+        if isinstance(last_notification, str):
+            from dateutil.parser import parse
+            last_dt = parse(last_notification)
+        else:
+            last_dt = last_notification
+        
+        # Ensure last_dt is timezone-aware and uses UTC
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+            
+        time_since = datetime.now(timezone.utc) - last_dt
         return time_since.total_seconds() >= cooldown_minutes * 60
 
     async def send_notifications(self, alert: Alert, rule: AlertRule):

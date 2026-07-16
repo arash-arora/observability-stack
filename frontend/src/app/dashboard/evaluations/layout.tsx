@@ -23,7 +23,7 @@ export default function EvaluationsLayout({ children }: { children: React.ReactN
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="runs">Evaluations</TabsTrigger>
           <TabsTrigger value="autoeval">Auto Eval</TabsTrigger>
-          <TabsTrigger value="batcheval">Batch Eval</TabsTrigger>
+          {/* <TabsTrigger value="batcheval">Batch Eval</TabsTrigger> */}
         </TabsList>
         {children}
       </Tabs>

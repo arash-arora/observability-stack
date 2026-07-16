@@ -48,6 +48,8 @@ class UpdateProviderRequest(BaseModel):
     is_public: Optional[bool] = None
 
 
+from datetime import datetime
+
 class LLMProviderRead(BaseModel):
     """Response model that never exposes the raw api_key."""
     id: uuid.UUID
@@ -61,6 +63,7 @@ class LLMProviderRead(BaseModel):
     project_id: uuid.UUID
     user_id: Optional[uuid.UUID] = None
     is_public: bool
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -79,6 +82,7 @@ class LLMProviderRead(BaseModel):
             project_id=p.project_id,
             user_id=p.user_id,
             is_public=p.is_public,
+            created_at=p.created_at,
         )
 
 

@@ -250,7 +250,7 @@ export default function EvaluationsList() {
         <TabsList className="mb-2">
           <TabsTrigger value="sdk">Traces / SDK Manual Runs</TabsTrigger>
           <TabsTrigger value="auto_eval">Auto Eval Rules</TabsTrigger>
-          <TabsTrigger value="batch_eval">Batch Evaluations</TabsTrigger>
+          {/* <TabsTrigger value="batch_eval">Batch Evaluations</TabsTrigger> */}
         </TabsList>
       </Tabs>
       

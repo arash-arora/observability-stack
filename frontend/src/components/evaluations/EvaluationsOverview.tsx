@@ -315,7 +315,7 @@ export default function EvaluationsOverview() {
           <CardContent className="pt-2">
             {stats.metric_insights && stats.metric_insights.length > 0 ? (
               <div className="space-y-4">
-                {stats.metric_insights.map((metric: any) => {
+                {stats.metric_insights.slice(0, 5).map((metric: any) => {
                   const scoreColor = metric.avg_score >= 0.8 
                     ? 'text-emerald-500' 
                     : metric.avg_score >= 0.6 

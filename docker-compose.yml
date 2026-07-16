@@ -34,11 +34,28 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://10.17.34.14:8011,http://localhost:3000}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: always
-    volumes:
-      - ./backend/app:/app/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 #   postgres:
 #     image: postgres:15

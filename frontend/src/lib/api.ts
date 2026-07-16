@@ -23,10 +23,13 @@ const resolveApiBaseUrl = () => {
 };
 
 const apiBaseUrl = resolveApiBaseUrl();
-console.log("[API] Resolved Base URL:", apiBaseUrl);
+if (process.env.NODE_ENV === 'development') {
+  console.log("[API] Resolved Base URL:", apiBaseUrl);
+}
 
 const api = axios.create({
   baseURL: apiBaseUrl,
+  timeout: 30000, // 30-second timeout to prevent hanging requests
   headers: {
     'Content-Type': 'application/json',
   },

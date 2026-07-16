@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.models.alert_rule import AlertRule
 from app.models.alert import Alert
 from app.core.database import get_session
+from app.api.deps import get_current_user
+from app.models.all_models import User
 from sqlmodel import select
 from typing import List
 import uuid
@@ -12,7 +14,8 @@ router = APIRouter(prefix="/alert-rules", tags=["alerts"])
 @router.get("/", response_model=List[AlertRule])
 async def list_alert_rules(
     project_id: uuid.UUID,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """List all alert rules for a project"""
     stmt = select(AlertRule).where(AlertRule.project_id == project_id)
@@ -23,7 +26,8 @@ async def list_alert_rules(
 @router.get("/{rule_id}", response_model=AlertRule)
 async def get_alert_rule(
     rule_id: uuid.UUID,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Get a specific alert rule"""
     stmt = select(AlertRule).where(AlertRule.id == rule_id)
@@ -39,7 +43,8 @@ async def get_alert_rule(
 @router.post("/", response_model=AlertRule)
 async def create_alert_rule(
     rule: AlertRule,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Create new alert rule"""
     session.add(rule)
@@ -52,7 +57,8 @@ async def create_alert_rule(
 async def update_alert_rule(
     rule_id: uuid.UUID,
     rule_update: AlertRule,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Update an existing alert rule"""
     stmt = select(AlertRule).where(AlertRule.id == rule_id)
@@ -75,7 +81,8 @@ async def update_alert_rule(
 @router.delete("/{rule_id}")
 async def delete_alert_rule(
     rule_id: uuid.UUID,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Delete alert rule"""
     stmt = select(AlertRule).where(AlertRule.id == rule_id)
@@ -93,7 +100,8 @@ async def delete_alert_rule(
 @router.get("/{rule_id}/alerts", response_model=List[Alert])
 async def list_rule_alerts(
     rule_id: uuid.UUID,
-    session = Depends(get_session)
+    session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """List all alerts for a specific rule"""
     stmt = select(Alert).where(Alert.alert_rule_id == rule_id).order_by(Alert.triggered_at.desc())

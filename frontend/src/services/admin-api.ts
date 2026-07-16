@@ -36,5 +36,9 @@ export const AdminApi = {
     assignUserRole: async (userId: string, payload: AssignRolePayload) => {
         const response = await api.post(`/admin/users/${userId}/assign`, payload);
         return response.data;
+    },
+    deleteUser: async (userId: string) => {
+        const response = await api.delete(`/admin/users/${userId}`);
+        return response.data;
     }
 };

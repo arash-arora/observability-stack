@@ -9,8 +9,11 @@ from app.core.security import resolve_ingest_key_hash
 from app.models.all_models import ApiKey
 from app.core.clickhouse import get_clickhouse_client
 import json
+import logging
 from datetime import datetime
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -95,10 +98,7 @@ async def ingest_traces(
         return {"status": "success", "count": len(data)}
     except Exception as e:
         import traceback
-        error_msg = f"Traces Error: {str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        with open("ingest_error.log", "a") as f:
-            f.write(error_msg + "\n")
+        logger.error("Traces ingestion error: %s\n%s", str(e), traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/observations")
@@ -179,40 +179,76 @@ async def ingest_observations(
             ])
 
             # --- Auto-Evaluation Logic ---
-            # We trigger eval on "agent" or "chain" type observations that are root-ish (no parent, or explicitly marked)
-            # For simplicity, if we see an observation with valid input/output, we check for rules.
-            # In a real system, we might wait for the full trace or use specific span kinds.
-            
+            # Group observations by trace_id to support multi-trace ingestion batches cleanly
+            obs_by_trace = {}
+            for obs in observations:
+                tid = obs.get("trace_id")
+                if tid:
+                    if tid not in obs_by_trace:
+                        obs_by_trace[tid] = []
+                    obs_by_trace[tid].append(obs)
+
             # Fetch Rules for this Application
             app_id = api_key_obj.application_id
-            
-            rules_res = await session.execute(select(EvaluationRule).where(EvaluationRule.application_id == str(app_id)).where(EvaluationRule.active == True))
+            rules_res = await session.execute(
+                select(EvaluationRule)
+                .where(EvaluationRule.application_id == str(app_id))
+                .where(EvaluationRule.active == True)
+            )
             rules = rules_res.scalars().all()
-            
-            if rules:
-                for obs in observations:
-                    # Filter: Only evaluate "interesting" spans? 
-                    # For now: Any agent/chain execution or if it looks like a generation
-                    if obs.get("type") in ["agent", "chain", "llm"]: 
-                        trace_data = {
-                            "input": obs.get("input_text"),
-                            "output": obs.get("output_text"),
-                            "context": obs.get("metadata_json"), # simplified usage of metadata as context
-                            "trace_id": obs.get("trace_id"),
-                            "observation_id": obs.get("id"),
-                            "observation_name": obs.get("name"),
-                            "application_name": application_name
-                        }
+
+            AGENTIC_METRICS = {
+                "ToolSelectionEvaluator",
+                "ToolInputStructureEvaluator",
+                "ToolSequenceEvaluator",
+                "AgentRoutingEvaluator",
+                "HITLEvaluator",
+                "WorkflowCompletionEvaluator"
+            }
+
+            if rules and obs_by_trace:
+                for tid, trace_obs_list in obs_by_trace.items():
+                    for rule in rules:
+                        rule_metrics = [m.strip() for m in (rule.metric_ids or "").split(",") if m.strip()]
+                        is_agentic_rule = any(m in AGENTIC_METRICS for m in rule_metrics)
                         
-                        # Trigger all active rules
-                        for rule in rules:
-                            background_tasks.add_task(run_triggered_evaluation, rule.id, trace_data)
+                        if is_agentic_rule:
+                            # Agentic rule: evaluate the complete trace exactly ONCE.
+                            # We find the root-most node in the ingested list to act as the primary evaluation anchor.
+                            root_obs = next(
+                                (o for o in trace_obs_list if not o.get("parent_observation_id")),
+                                None
+                            )
+                            if root_obs:
+                                trace_data = {
+                                    "input": root_obs.get("input_text"),
+                                    "output": root_obs.get("output_text"),
+                                    "context": root_obs.get("metadata_json"),
+                                    "trace_id": root_obs.get("trace_id"),
+                                    "observation_id": root_obs.get("id"),
+                                    "observation_name": root_obs.get("name"),
+                                    "application_name": application_name,
+                                    "is_agentic": True
+                                }
+                                background_tasks.add_task(run_triggered_evaluation, rule.id, trace_data)
+                        else:
+                            # Non-agentic rule: evaluate individual nodes that contain input/output data.
+                            for obs in trace_obs_list:
+                                if obs.get("input_text") or obs.get("output_text"):
+                                    trace_data = {
+                                        "input": obs.get("input_text"),
+                                        "output": obs.get("output_text"),
+                                        "context": obs.get("metadata_json"),
+                                        "trace_id": obs.get("trace_id"),
+                                        "observation_id": obs.get("id"),
+                                        "observation_name": obs.get("name"),
+                                        "application_name": application_name,
+                                        "is_agentic": False
+                                    }
+                                    background_tasks.add_task(run_triggered_evaluation, rule.id, trace_data)
 
         return {"status": "success", "count": len(data)}
     except Exception as e:
         import traceback
-        error_msg = f"Observations Error: {str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        with open("ingest_error.log", "a") as f:
-            f.write(error_msg + "\n")
+        logger.error("Observations ingestion error: %s\n%s", str(e), traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))

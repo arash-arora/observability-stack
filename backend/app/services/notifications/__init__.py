@@ -3,7 +3,7 @@ from app.models.alert_rule import AlertRule
 from app.models.notification_channel import NotificationChannel
 from app.core.database import get_session_ctx
 from sqlmodel import select
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -50,5 +50,5 @@ class NotificationService:
             "channel": channel.id,
             "channel_type": channel.channel_type,
             "status": "sent",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
