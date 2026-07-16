@@ -2,9 +2,16 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.core.clickhouse import get_clickhouse_client
 from app.core.database import get_session
+import uuid
 from app.api.deps import get_current_user
 from app.models.all_models import Application, OrganizationUserLink, Project, User
 from app.models.evaluation_result import EvaluationResult
+from app.api.v1.endpoints.projects import (
+    check_permission,
+    get_allowed_application_names,
+    check_app_permission_by_name,
+)
+from app.core.permissions import Permissions
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case
 import logging
@@ -181,7 +188,7 @@ async def get_traces(
         o_first.input_text,
         o_last.output_text,
         o_metrics.total_tokens,
-        0.0 as total_cost, -- Placeholder for cost calculation
+        COALESCE(o_metrics.total_cost, 0.0) as total_cost,
         t.attributes, -- Metadata
         t.application_name
     FROM traces t
@@ -216,7 +223,8 @@ async def get_traces(
                     COALESCE(JSONExtractInt(token_usage, 'total_tokens'), 0)
                     ELSE 0 
                 END
-            ) as total_tokens
+            ) as total_tokens,
+            sum(COALESCE(total_cost, 0.0)) as total_cost
         FROM observations
         WHERE project_id = '{project_id}'
         GROUP BY trace_id
@@ -244,9 +252,10 @@ async def get_traces(
         result = client.query(query)
         traces = []
         for row in result.result_rows:
-            # Estimate cost based on tokens (very rough mock: $0.000002 per token)
             tokens = row[9] or 0
-            est_cost = tokens * 0.000002
+            db_cost = row[10] or 0.0
+            # Fallback to estimation only if db_cost is zero or None
+            cost = db_cost if db_cost > 0.0 else (tokens * 0.000002)
 
             traces.append(
                 {
@@ -260,7 +269,7 @@ async def get_traces(
                     "input": row[7],
                     "output": row[8],
                     "total_tokens": tokens,
-                    "total_cost": est_cost,
+                    "total_cost": cost,
                     "metadata": row[11],  # Map
                     "application_name": row[12],
                 }
@@ -507,6 +516,16 @@ async def get_dashboard_stats(
     """
     Get aggregated dashboard statistics for a project.
     """
+    # Project Access Check
+    proj = await session.get(Project, uuid.UUID(project_id))
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not current_user.is_superuser:
+        has_perm = await check_permission(session, current_user.id, proj.organization_id, Permissions.PROJECT_READ)
+        if not has_perm:
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+
     client = get_clickhouse_client()
 
     # Build WHERE clauses with time and application filtering
@@ -952,28 +971,30 @@ async def get_dashboard_stats(
 
         # --- Evaluation Trend (Last 30 days) ---
         eval_trend = []
-        try:
-            # Note: We are not filtering by project_id here as EvaluationResult lacks it currently.
-            # This is a known limitation for now.
-            # If we wanted to be strict, we'd need to join with Trace via trace_id in Postgres if traces were synced,
-            # or add project_id to EvaluationResult.
-            trend_stmt = (
-                select(
-                    func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
-                        "day"
-                    ),
-                    func.avg(EvaluationResult.score),
+        has_eval_perm = current_user.is_superuser or await check_permission(session, current_user.id, proj.organization_id, Permissions.EVAL_READ)
+        if has_eval_perm:
+            try:
+                # Note: We are not filtering by project_id here as EvaluationResult lacks it currently.
+                # This is a known limitation for now.
+                # If we wanted to be strict, we'd need to join with Trace via trace_id in Postgres if traces were synced,
+                # or add project_id to EvaluationResult.
+                trend_stmt = (
+                    select(
+                        func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
+                            "day"
+                        ),
+                        func.avg(EvaluationResult.score),
+                    )
+                    .group_by("day")
+                    .order_by("day")
+                    .limit(30)
                 )
-                .group_by("day")
-                .order_by("day")
-                .limit(30)
-            )
 
-            trend_res = await session.execute(trend_stmt)
-            for day, avg in trend_res.all():
-                eval_trend.append({"date": day, "avg_score": round(avg, 2)})
-        except Exception as e:
-            logger.error(f"Failed to fetch eval trend: {e}")
+                trend_res = await session.execute(trend_stmt)
+                for day, avg in trend_res.all():
+                    eval_trend.append({"date": day, "avg_score": round(avg, 2)})
+            except Exception as e:
+                logger.error(f"Failed to fetch eval trend: {e}")
 
         return {
             "total_traces": total_traces,
@@ -1035,21 +1056,16 @@ async def get_evaluation_stats(
         # 0. Base filters scoped by project membership (if project provided)
         scope_filter = [EvaluationResult.score != None]
 
+        # Check permissions
         if project_id:
-            access_stmt = (
-                select(Project.id)
-                .join(
-                    OrganizationUserLink,
-                    OrganizationUserLink.organization_id == Project.organization_id,
-                )
-                .where(
-                    Project.id == project_id,
-                    OrganizationUserLink.user_id == current_user.id,
-                )
-            )
-            access_res = await session.execute(access_stmt)
-            if access_res.scalar_one_or_none() is None:
-                raise HTTPException(status_code=403, detail="Not authorized for project")
+            proj = await session.get(Project, uuid.UUID(project_id))
+            if not proj:
+                raise HTTPException(status_code=404, detail="Project not found")
+
+            if not current_user.is_superuser:
+                has_perm = await check_permission(session, current_user.id, proj.organization_id, Permissions.EVAL_READ)
+                if not has_perm:
+                    raise HTTPException(status_code=403, detail="Not authorized to view evaluation statistics for this project")
 
             app_names_stmt = select(Application.name).where(Application.project_id == project_id)
             app_names_res = await session.execute(app_names_stmt)
@@ -1067,9 +1083,28 @@ async def get_evaluation_stats(
                 }
 
             scope_filter.append(EvaluationResult.application_name.in_(app_names))
+        else:
+            # project_id is not provided
+            if not current_user.is_superuser:
+                allowed_apps = await get_allowed_application_names(session, current_user, Permissions.EVAL_READ)
+                if not allowed_apps:
+                    return {
+                        "pass_fail": [],
+                        "avg_scores": [],
+                        "score_trend": [],
+                        "score_distribution": [],
+                        "app_summary": [],
+                        "metric_insights": [],
+                        "total_runs": 0,
+                    }
+                scope_filter.append(EvaluationResult.application_name.in_(allowed_apps))
 
         base_filter = list(scope_filter)
         if application_name:
+            if not current_user.is_superuser:
+                has_perm = await check_app_permission_by_name(session, current_user, application_name, Permissions.EVAL_READ)
+                if not has_perm:
+                    raise HTTPException(status_code=403, detail="Not authorized to view evaluation statistics for this application")
             base_filter.append(EvaluationResult.application_name == application_name)
 
         # 1. Pass/Fail Ratio
@@ -1249,6 +1284,22 @@ async def get_application_stats(
     """
     Get detailed statistics for a specific application.
     """
+    # Project & Application Access Check
+    proj = await session.get(Project, uuid.UUID(project_id))
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not current_user.is_superuser:
+        has_perm = await check_permission(session, current_user.id, proj.organization_id, Permissions.PROJECT_READ)
+        if not has_perm:
+            raise HTTPException(status_code=403, detail="Not authorized to access this project")
+
+        # Check if the app actually belongs to this project
+        stmt = select(Application).where(Application.name == app_name, Application.project_id == proj.id)
+        app_res = await session.execute(stmt)
+        if not app_res.scalars().first():
+            raise HTTPException(status_code=404, detail="Application not found in this project")
+
     client = get_clickhouse_client()
 
     where_clause = f"project_id = '{project_id}' AND application_name = '{app_name}'"
@@ -1460,66 +1511,70 @@ async def get_application_stats(
             "pass_fail_trend": [],  # New Chart
         }
 
-        try:
-            # Total & Pass Rate
-            stmt = select(
-                func.count().label("total"),
-                func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label(
-                    "passed"
-                ),
-                func.avg(EvaluationResult.score).label("avg_score"),
-            ).where(EvaluationResult.application_name == app_name)
+        # Check if user has eval:read permission to view evaluations stats
+        has_eval_perm = current_user.is_superuser or await check_permission(session, current_user.id, proj.organization_id, Permissions.EVAL_READ)
 
-            pg_res = await session.execute(stmt)
-            pg_row = pg_res.one()
-
-            total_evals = pg_row.total or 0
-            passed_evals = pg_row.passed or 0
-
-            eval_metrics["total_evals"] = total_evals
-            eval_metrics["avg_score"] = (
-                round(pg_row.avg_score, 2) if pg_row.avg_score else 0
-            )
-            eval_metrics["pass_rate"] = (
-                round((passed_evals / total_evals * 100), 1) if total_evals > 0 else 0
-            )
-
-            # Eval Trend
-            trend_stmt = (
-                select(
-                    func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
-                        "day"
-                    ),
-                    func.avg(EvaluationResult.score),
+        if has_eval_perm:
+            try:
+                # Total & Pass Rate
+                stmt = select(
+                    func.count().label("total"),
                     func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label(
-                        "passed_count"
+                        "passed"
                     ),
-                    func.count().label("total_count"),
-                )
-                .where(EvaluationResult.application_name == app_name)
-                .group_by("day")
-                .order_by("day")
-                .limit(30)
-            )
+                    func.avg(EvaluationResult.score).label("avg_score"),
+                ).where(EvaluationResult.application_name == app_name)
 
-            trend_pg_res = await session.execute(trend_stmt)
-            for day, avg, passed, total in trend_pg_res.all():
-                avg = avg or 0
-                # Reformat Day? YYYY-MM-DD is fine for X axis, maybe format in frontend
-                # But let's try to match style if possible.
-                # Actually simpler to keep YYYY-MM-DD for eval trend usually.
-                eval_metrics["score_trend"].append(
-                    {"date": day, "score": round(avg, 2)}
-                )
+                pg_res = await session.execute(stmt)
+                pg_row = pg_res.one()
 
-                # Pass/Fail Trend
-                failed = total - passed
-                eval_metrics["pass_fail_trend"].append(
-                    {"date": day, "passed": passed, "failed": failed}
+                total_evals = pg_row.total or 0
+                passed_evals = pg_row.passed or 0
+
+                eval_metrics["total_evals"] = total_evals
+                eval_metrics["avg_score"] = (
+                    round(pg_row.avg_score, 2) if pg_row.avg_score else 0
+                )
+                eval_metrics["pass_rate"] = (
+                    round((passed_evals / total_evals * 100), 1) if total_evals > 0 else 0
                 )
 
-        except Exception as e:
-            print(f"App Eval Stats Error: {e}")
+                # Eval Trend
+                trend_stmt = (
+                    select(
+                        func.to_char(EvaluationResult.created_at, "YYYY-MM-DD").label(
+                            "day"
+                        ),
+                        func.avg(EvaluationResult.score),
+                        func.sum(case((EvaluationResult.passed == True, 1), else_=0)).label(
+                            "passed_count"
+                        ),
+                        func.count().label("total_count"),
+                    )
+                    .where(EvaluationResult.application_name == app_name)
+                    .group_by("day")
+                    .order_by("day")
+                    .limit(30)
+                )
+
+                trend_pg_res = await session.execute(trend_stmt)
+                for day, avg, passed, total in trend_pg_res.all():
+                    avg = avg or 0
+                    # Reformat Day? YYYY-MM-DD is fine for X axis, maybe format in frontend
+                    # But let's try to match style if possible.
+                    # Actually simpler to keep YYYY-MM-DD for eval trend usually.
+                    eval_metrics["score_trend"].append(
+                        {"date": day, "score": round(avg, 2)}
+                    )
+
+                    # Pass/Fail Trend
+                    failed = total - passed
+                    eval_metrics["pass_fail_trend"].append(
+                        {"date": day, "passed": passed, "failed": failed}
+                    )
+
+            except Exception as e:
+                print(f"App Eval Stats Error: {e}")
 
         return {
             "overview": {

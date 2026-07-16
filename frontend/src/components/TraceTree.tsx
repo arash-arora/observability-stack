@@ -522,6 +522,40 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
 
   const handleRunEval = async () => {
       if (!selectedMetricId) return;
+
+      // Validate required inputs based on metric requirements
+      const METRIC_REQUIRED_INPUTS: Record<string, string[]> = {
+          'FaithfulnessEvaluator': ['input', 'output', 'context'],
+          'ContextualPrecisionEvaluator': ['input', 'output', 'context'],
+          'ContextualRecallEvaluator': ['input', 'context', 'expected'],
+          'ContextualRelevancyEvaluator': ['input', 'context'],
+          'HallucinationEvaluator': ['input', 'output', 'context'],
+          'TaskCompletionEvaluator': ['input', 'output', 'expected'],
+          'ToolCorrectnessEvaluator': ['input', 'output', 'expected'],
+      };
+
+      const requiredFields = METRIC_REQUIRED_INPUTS[selectedMetricId] || [];
+      const missingRequired: string[] = [];
+
+      requiredFields.forEach(fieldName => {
+          const matchingInput = selectedMetric?.inputs.find((inp: string) =>
+              inp.toLowerCase() === fieldName.toLowerCase()
+          );
+          if (matchingInput && !evalInputs[matchingInput]?.trim()) {
+              missingRequired.push(fieldName);
+          }
+      });
+
+      if (missingRequired.length > 0) {
+          setEvalResult({
+              passed: false,
+              score: 0,
+              reason: `⚠️ Missing required inputs: ${missingRequired.join(', ')}. Please provide all required data for accurate evaluation.`
+          });
+          setEvalRunning(false);
+          return;
+      }
+
       setEvalRunning(true);
       setEvalResult(null);
       try {
@@ -907,18 +941,38 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
 
                   {selectedMetric && selectedMetric.inputs.length > 0 && (
                       <div className="space-y-3 pt-2">
-                          <Label className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Required Inputs</Label>
-                          {selectedMetric.inputs.map((inputKey: string) => (
-                              <div key={inputKey} className="space-y-1.5">
-                                  <Label className="font-mono text-xs">{inputKey}</Label>
-                                  <Textarea 
-                                      className="font-mono text-xs max-h-32" 
-                                      value={evalInputs[inputKey] || ''}
-                                      onChange={(e) => setEvalInputs({...evalInputs, [inputKey]: e.target.value})}
-                                      placeholder={`Enter ${inputKey}...`}
-                                  />
-                              </div>
-                          ))}
+                          <Label className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Evaluation Inputs</Label>
+                          {selectedMetric.inputs.map((inputKey: string) => {
+                              const METRIC_REQUIRED_INPUTS: Record<string, string[]> = {
+                                  'FaithfulnessEvaluator': ['input', 'output', 'context'],
+                                  'ContextualPrecisionEvaluator': ['input', 'output', 'context'],
+                                  'ContextualRecallEvaluator': ['input', 'context', 'expected'],
+                                  'ContextualRelevancyEvaluator': ['input', 'context'],
+                                  'HallucinationEvaluator': ['input', 'output', 'context'],
+                                  'TaskCompletionEvaluator': ['input', 'output', 'expected'],
+                                  'ToolCorrectnessEvaluator': ['input', 'output', 'expected'],
+                              };
+                              const required = METRIC_REQUIRED_INPUTS[selectedMetricId] || [];
+                              const isRequired = required.some(r => r.toLowerCase() === inputKey.toLowerCase());
+                              return (
+                                  <div key={inputKey} className="space-y-1.5">
+                                      <Label className="font-mono text-xs flex items-center gap-2">
+                                          {inputKey}
+                                          {isRequired ? (
+                                              <span className="text-red-500 font-bold">*</span>
+                                          ) : (
+                                              <span className="text-muted-foreground text-[10px]">(optional)</span>
+                                          )}
+                                      </Label>
+                                      <Textarea
+                                          className="font-mono text-xs max-h-32"
+                                          value={evalInputs[inputKey] || ''}
+                                          onChange={(e) => setEvalInputs({...evalInputs, [inputKey]: e.target.value})}
+                                          placeholder={`Enter ${inputKey}...`}
+                                      />
+                                  </div>
+                              );
+                          })}
                       </div>
                   )}
 

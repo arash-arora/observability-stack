@@ -29,6 +29,14 @@ from datetime import datetime
 import uuid
 from app.api.deps import get_current_user
 from app.models.all_models import User
+from app.api.v1.endpoints.projects import (
+    get_allowed_application_names,
+    check_app_permission_by_name,
+    check_app_permission_by_id,
+    check_permission,
+)
+from app.core.permissions import Permissions
+
 
 class TraceEvaluationSummary(BaseModel):
     trace_id: str
@@ -41,13 +49,10 @@ class TraceEvaluationSummary(BaseModel):
     trigger_type: str = "sdk"
 
 
-# ... existing imports ...
-
-
 @router.get("/metrics", response_model=List[Metric])
 async def list_metrics(
     db: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     List all available metrics from the database.
@@ -101,11 +106,12 @@ class MetricCreate(BaseModel):
     prompt: Optional[str] = None
     dummy_data: Optional[dict] = None
 
+
 @router.post("/metrics", response_model=Metric)
 async def create_metric(
-    metric_data: MetricCreate, 
+    metric_data: MetricCreate,
     db: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Create a new custom metric in the database.
@@ -122,31 +128,34 @@ async def create_metric(
         code_snippet=metric_data.code_snippet or "",
         prompt=metric_data.prompt,
         dummy_data=metric_data.dummy_data,
-        user_id=current_user.id
+        user_id=current_user.id,
     )
     db.add(metric)
     await db.commit()
     await db.refresh(metric)
     return metric
 
+
 @router.put("/metrics/{metric_id}", response_model=Metric)
 async def update_metric(
     metric_id: str,
     metric_data: MetricCreate,
     db: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Update a custom metric by ID.
     """
     result = await db.execute(select(Metric).where(Metric.id == metric_id))
     metric = result.scalars().first()
-    
+
     if not metric:
         raise HTTPException(status_code=404, detail="Metric not found")
-        
+
     if metric.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this metric")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to update this metric"
+        )
 
     metric.name = metric_data.name
     metric.description = metric_data.description
@@ -162,23 +171,26 @@ async def update_metric(
     await db.refresh(metric)
     return metric
 
+
 @router.delete("/metrics/{metric_id}")
 async def delete_metric(
     metric_id: str,
     db: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Delete a custom metric by ID.
     """
     result = await db.execute(select(Metric).where(Metric.id == metric_id))
     metric = result.scalars().first()
-    
+
     if not metric:
         raise HTTPException(status_code=404, detail="Metric not found")
-        
+
     if metric.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this metric")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to delete this metric"
+        )
 
     await db.delete(metric)
     await db.commit()
@@ -195,6 +207,43 @@ async def run_evaluation(
     Run an evaluation on-demand using the SDK.
     """
     inputs = request.inputs
+
+    # Check permission
+    app_name = inputs.get("application_name")
+    trace_input = inputs.get("trace")
+    if not app_name and isinstance(trace_input, dict):
+        app_name = trace_input.get("application_name")
+        if not app_name:
+            spans = (
+                trace_input.get("spans")
+                if isinstance(trace_input.get("spans"), list)
+                else []
+            )
+            observations = (
+                trace_input.get("observations")
+                if isinstance(trace_input.get("observations"), list)
+                else []
+            )
+            if spans:
+                app_name = spans[0].get("application_name")
+            if not app_name and observations:
+                app_name = observations[0].get("application_name")
+
+    if app_name:
+        has_perm = await check_app_permission_by_name(db, current_user, app_name, Permissions.EVAL_RUN)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to run evaluations for this application",
+            )
+    else:
+        if not current_user.is_superuser:
+            allowed_apps = await get_allowed_application_names(db, current_user, Permissions.EVAL_RUN)
+            if not allowed_apps:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not authorized to run evaluations",
+                )
     provider = inputs.get("provider", "openai")
     model = inputs.get("model", "gpt-4o")
 
@@ -249,7 +298,11 @@ async def run_evaluation(
         if not app_name and isinstance(trace_input, dict):
             app_name = trace_input.get("application_name")
             if not app_name:
-                spans = trace_input.get("spans") if isinstance(trace_input.get("spans"), list) else []
+                spans = (
+                    trace_input.get("spans")
+                    if isinstance(trace_input.get("spans"), list)
+                    else []
+                )
                 observations = (
                     trace_input.get("observations")
                     if isinstance(trace_input.get("observations"), list)
@@ -279,7 +332,9 @@ async def run_evaluation(
             if app_obj:
                 key_stmt = (
                     select(ApiKey)
-                    .where(ApiKey.application_id == app_obj.id, ApiKey.is_active == True)
+                    .where(
+                        ApiKey.application_id == app_obj.id, ApiKey.is_active == True
+                    )
                     .order_by(desc(ApiKey.created_at))
                 )
                 key_res = await db.execute(key_stmt)
@@ -291,14 +346,15 @@ async def run_evaluation(
         # 2. Instantiate Evaluator
         custom_prompt = inputs.get("custom_prompt")
         metric_prompt = custom_prompt
-        
+
         if not metric_prompt and request.metric_id:
             # Let's try to get it from DB
             from app.models.metric import Metric
+
             metric_row = await db.get(Metric, request.metric_id)
             if metric_row and metric_row.prompt:
                 metric_prompt = metric_row.prompt
-        
+
         try:
             llm_kwargs = {}
             if api_key:
@@ -311,11 +367,12 @@ async def run_evaluation(
                 llm_kwargs["deployment_name"] = deployment_name
 
             if metric_prompt:
-                from app.core.evaluation.integrations.observix_eval import CustomEvaluator
-                EvaluatorClass = CustomEvaluator
-                evaluator = EvaluatorClass(
-                    provider=provider, model=model, **llm_kwargs
+                from app.core.evaluation.integrations.observix_eval import (
+                    CustomEvaluator,
                 )
+
+                EvaluatorClass = CustomEvaluator
+                evaluator = EvaluatorClass(provider=provider, model=model, **llm_kwargs)
             else:
                 # We dynamically import from app.core.evaluation
                 eval_module = importlib.import_module("app.core.evaluation")
@@ -357,21 +414,35 @@ async def run_evaluation(
                 if not query:
                     spans = trace_input.get("spans", [])
                     if isinstance(spans, list):
-                        root_span = next((s for s in spans if isinstance(s, dict) and not s.get("parent_span_id")), None)
+                        root_span = next(
+                            (
+                                s
+                                for s in spans
+                                if isinstance(s, dict) and not s.get("parent_span_id")
+                            ),
+                            None,
+                        )
                         if not root_span and spans:
                             root_span = spans[0]
                         if isinstance(root_span, dict):
                             query = root_span.get("input")
 
             context = inputs.get("context")
-            
+
             output = inputs.get("output") or inputs.get("response")
             if not output and isinstance(trace_input, dict):
                 output = trace_input.get("output")
                 if not output:
                     spans = trace_input.get("spans", [])
                     if isinstance(spans, list):
-                        root_span = next((s for s in spans if isinstance(s, dict) and not s.get("parent_span_id")), None)
+                        root_span = next(
+                            (
+                                s
+                                for s in spans
+                                if isinstance(s, dict) and not s.get("parent_span_id")
+                            ),
+                            None,
+                        )
                         if not root_span and spans:
                             root_span = spans[0]
                         if isinstance(root_span, dict):
@@ -417,24 +488,50 @@ async def run_evaluation(
 
             async def _execute_eval():
                 # Forward any non-standard inputs directly to Evaluator as kwargs
-                mapped_keys = {"input", "query", "output", "response", "context", "expected", "trace", "provider", "provider_id", "model", "api_key", "azure_endpoint", "api_version", "deployment_name", "observe", "user_api_key", "host", "custom_prompt"}
+                mapped_keys = {
+                    "input",
+                    "query",
+                    "output",
+                    "response",
+                    "context",
+                    "expected",
+                    "trace",
+                    "provider",
+                    "provider_id",
+                    "model",
+                    "api_key",
+                    "azure_endpoint",
+                    "api_version",
+                    "deployment_name",
+                    "observe",
+                    "user_api_key",
+                    "host",
+                    "custom_prompt",
+                }
                 extra_kwargs = {k: v for k, v in inputs.items() if k not in mapped_keys}
-                
+
                 if metric_prompt:
                     import re
+
                     formatted_prompt = metric_prompt
-                    variables = set(re.findall(r'\{\{([^}]+)\}\}', metric_prompt))
+                    variables = set(re.findall(r"\{\{([^}]+)\}\}", metric_prompt))
                     for var in variables:
                         val = inputs.get(var)
                         if val is None:
                             val = inputs.get(var.lower(), "")
-                        formatted_prompt = formatted_prompt.replace(f"{{{{{var}}}}}", str(val))
-                        
-                    single_vars = set(re.findall(r'(?<!\{)\{([^}]+)\}(?!\})', formatted_prompt))
+                        formatted_prompt = formatted_prompt.replace(
+                            f"{{{{{var}}}}}", str(val)
+                        )
+
+                    single_vars = set(
+                        re.findall(r"(?<!\{)\{([^}]+)\}(?!\})", formatted_prompt)
+                    )
                     for var in single_vars:
                         if var in inputs:
-                            formatted_prompt = formatted_prompt.replace(f"{{{var}}}", str(inputs[var]))
-                            
+                            formatted_prompt = formatted_prompt.replace(
+                                f"{{{var}}}", str(inputs[var])
+                            )
+
                     extra_kwargs["custom_instructions"] = formatted_prompt
 
                 res = evaluator.evaluate(
@@ -449,7 +546,7 @@ async def run_evaluation(
                     trace=trace_input,
                     rubric=rubric_prompt,
                     trace_enabled=False,  # tracing disabled
-                    **extra_kwargs
+                    **extra_kwargs,
                 )
                 if inspect.iscoroutine(res):
                     res = await res
@@ -462,22 +559,40 @@ async def run_evaluation(
             persist_result = inputs.get("persist_result", True)
             if persist_result:
                 try:
-                    target_trace_id = request.trace_id or inputs.get("trace_id") or (inputs.get("trace") if isinstance(inputs.get("trace"), str) else inputs.get("trace", {}).get("trace_id") if isinstance(inputs.get("trace"), dict) else None)
+                    target_trace_id = (
+                        request.trace_id
+                        or inputs.get("trace_id")
+                        or (
+                            inputs.get("trace")
+                            if isinstance(inputs.get("trace"), str)
+                            else (
+                                inputs.get("trace", {}).get("trace_id")
+                                if isinstance(inputs.get("trace"), dict)
+                                else None
+                            )
+                        )
+                    )
                     if not target_trace_id:
                         import uuid
+
                         target_trace_id = f"manual_{uuid.uuid4().hex}"
-                    
+
                     resolved_app_name = None
                     if target_trace_id and not target_trace_id.startswith("manual_"):
                         try:
                             from app.core.clickhouse import get_clickhouse_client
+
                             ch_client = get_clickhouse_client()
-                            ch_res = ch_client.query(f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1").result_rows
+                            ch_res = ch_client.query(
+                                f"SELECT application_name FROM traces WHERE trace_id = '{target_trace_id}' LIMIT 1"
+                            ).result_rows
                             if ch_res and ch_res[0][0]:
                                 resolved_app_name = str(ch_res[0][0])
                         except Exception as ex:
-                            logger.error(f"Failed to query trace application_name: {ex}")
-                    
+                            logger.error(
+                                f"Failed to query trace application_name: {ex}"
+                            )
+
                     eval_result = EvaluationResult(
                         trace_id=target_trace_id or trace_id,
                         metric_id=request.metric_id,
@@ -494,11 +609,16 @@ async def run_evaluation(
                         passed=result.passed,
                         status="COMPLETED",
                         metadata_json=(
-                            {**(result.metadata or {}), "workflow_details": inputs["workflow_details"]}
-                            if "workflow_details" in inputs and isinstance(result.metadata or {}, dict)
+                            {
+                                **(result.metadata or {}),
+                                "workflow_details": inputs["workflow_details"],
+                            }
+                            if "workflow_details" in inputs
+                            and isinstance(result.metadata or {}, dict)
                             else result.metadata
                         ),
-                        application_name=resolved_app_name or inputs.get("application_name")
+                        application_name=resolved_app_name
+                        or inputs.get("application_name")
                         or (
                             api_key_obj.application.name
                             if api_key_obj and api_key_obj.application
@@ -527,19 +647,34 @@ async def run_evaluation(
             score=0.0, passed=False, reason=f"Execution Failed: {str(e)}"
         )
 
+
 @router.get("/runs", response_model=List[TraceEvaluationSummary])
 async def list_evaluation_runs(
     limit: int = 50,
     offset: int = 0,
     time_range: str = "24h",
     application_name: Optional[str] = None,
-    db: AsyncSession = Depends(get_session)
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """
     List evaluation runs grouped by trace_id with optional filters.
     time_range: "24h", "7d", "30d", "all"
     application_name: optional filter by application name
     """
+    if application_name:
+        has_perm = await check_app_permission_by_name(db, current_user, application_name, Permissions.EVAL_READ)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to view evaluations for this application",
+            )
+    else:
+        if not current_user.is_superuser:
+            allowed_apps = await get_allowed_application_names(db, current_user, Permissions.EVAL_READ)
+            if not allowed_apps:
+                return []
+
     from datetime import timedelta, datetime as dt
 
     # Calculate time filter
@@ -554,18 +689,20 @@ async def list_evaluation_runs(
         time_filter = None
 
     # Build query with filters
-    stmt = (
-        select(
-            EvaluationResult.trace_id,
-            func.max(EvaluationResult.application_name).label("application_name"),
-            func.max(EvaluationResult.created_at).label("created_at"),
-            func.count(EvaluationResult.id).label("count"),
-            func.avg(EvaluationResult.score).label("avg_score"),
-            func.bool_and(EvaluationResult.passed).label("all_passed"),
-            func.array_agg(EvaluationResult.status).label("statuses"),
-            func.json_agg(EvaluationResult.metadata_json).label("metadatas"),
-        )
+    stmt = select(
+        EvaluationResult.trace_id,
+        func.max(EvaluationResult.application_name).label("application_name"),
+        func.max(EvaluationResult.created_at).label("created_at"),
+        func.count(EvaluationResult.id).label("count"),
+        func.avg(EvaluationResult.score).label("avg_score"),
+        func.bool_and(EvaluationResult.passed).label("all_passed"),
+        func.array_agg(EvaluationResult.status).label("statuses"),
+        func.json_agg(EvaluationResult.metadata_json).label("metadatas"),
     )
+
+    # Add allowed apps filter
+    if not current_user.is_superuser and not application_name:
+        stmt = stmt.where(EvaluationResult.application_name.in_(allowed_apps))
 
     # Add time filter
     if time_filter:
@@ -577,8 +714,7 @@ async def list_evaluation_runs(
 
     # Complete the query
     stmt = (
-        stmt
-        .group_by(EvaluationResult.trace_id)
+        stmt.group_by(EvaluationResult.trace_id)
         .order_by(desc("created_at"))
         .offset(offset)
         .limit(limit)
@@ -631,17 +767,27 @@ async def list_evaluation_results(
     trace_id: str = None,
     batch_id: str = None,
     db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """
     List historical evaluation results. Optionally filter by metric_id, trace_id, or batch_id.
     """
+    if not current_user.is_superuser:
+        allowed_apps = await get_allowed_application_names(db, current_user, Permissions.EVAL_READ)
+        if not allowed_apps:
+            return []
+
     from sqlalchemy import cast, String
+
     query = (
         select(EvaluationResult)
         .order_by(EvaluationResult.created_at.desc())
         .offset(offset)
         .limit(limit)
     )
+    if not current_user.is_superuser:
+        query = query.where(EvaluationResult.application_name.in_(allowed_apps))
+
     if metric_id:
         query = query.where(EvaluationResult.metric_id == metric_id)
     if trace_id:
@@ -649,16 +795,21 @@ async def list_evaluation_results(
     if batch_id:
         # Filter where metadata_json->>'batch_id' == batch_id (PostgreSQL JSON operator)
         from sqlalchemy import text
-        query = query.where(
-            text("metadata_json->>'batch_id' = :batch_id")
-        ).params(batch_id=batch_id)
+
+        query = query.where(text("metadata_json->>'batch_id' = :batch_id")).params(
+            batch_id=batch_id
+        )
 
     result = await db.execute(query)
     return result.scalars().all()
 
 
 @router.get("/results/{id}", response_model=EvaluationResult)
-async def get_evaluation_result(id: str, db: AsyncSession = Depends(get_session)):
+async def get_evaluation_result(
+    id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Get a single evaluation result by ID.
     """
@@ -674,17 +825,37 @@ async def get_evaluation_result(id: str, db: AsyncSession = Depends(get_session)
     if not result:
         raise HTTPException(status_code=404, detail="Evaluation result not found")
 
+    if not current_user.is_superuser:
+        if not result.application_name:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access this evaluation result",
+            )
+        has_perm = await check_app_permission_by_name(db, current_user, result.application_name, Permissions.EVAL_READ)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access this evaluation result",
+            )
+
     return result
 
 
 @router.get("/stats")
-async def get_evaluation_stats(db: AsyncSession = Depends(get_session)):
+async def get_evaluation_stats(
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Get aggregate statistics for evaluations (Completed only).
     """
     # Total Count
     result = await db.execute(select(EvaluationResult))
     all_results = result.scalars().all()
+
+    if not current_user.is_superuser:
+        allowed_apps = await get_allowed_application_names(db, current_user, Permissions.EVAL_READ)
+        all_results = [r for r in all_results if r.application_name in allowed_apps]
 
     # Filter for completed only for stats
     completed_results = [
@@ -744,7 +915,9 @@ class BatchEvalCreateRequest(BaseModel):
     application_id: str
     from_date: Optional[datetime] = None
     to_date: Optional[datetime] = None
-    use_all_traces: bool = False  # If True, ignore date range and use all available traces
+    use_all_traces: bool = (
+        False  # If True, ignore date range and use all available traces
+    )
     metric_ids: str  # comma-separated
     traces_to_eval: int
     is_percentage: bool = False
@@ -783,14 +956,38 @@ async def list_batch_evaluations(
     current_user: User = Depends(get_current_user),
 ):
     """List all batch evaluations for an application, project, or user"""
-    stmt = select(BatchEvaluation).where(
-        BatchEvaluation.user_id == current_user.id
-    )
+    if application_id:
+        import uuid
+        has_perm = await check_app_permission_by_id(db, current_user, uuid.UUID(application_id), Permissions.EVAL_READ)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access batch evaluations for this application",
+            )
+    elif project_id:
+        if not current_user.is_superuser:
+            proj = await db.get(Project, project_id)
+            if not proj or not await check_permission(db, current_user.id, proj.organization_id, Permissions.EVAL_READ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Not authorized to access batch evaluations for this project",
+                )
+
+    stmt = select(BatchEvaluation).where(BatchEvaluation.user_id == current_user.id)
     if application_id:
         stmt = stmt.where(BatchEvaluation.application_id == application_id)
     if project_id:
         stmt = stmt.where(BatchEvaluation.project_id == project_id)
-        
+
+    if not application_id and not project_id and not current_user.is_superuser:
+        allowed_apps = await get_allowed_application_names(db, current_user, Permissions.EVAL_READ)
+        if not allowed_apps:
+            return []
+        stmt_app_ids = select(Application.id).where(Application.name.in_(allowed_apps))
+        res_app_ids = await db.execute(stmt_app_ids)
+        allowed_app_ids_str = [str(aid) for aid in res_app_ids.scalars().all()]
+        stmt = stmt.where(BatchEvaluation.application_id.in_(allowed_app_ids_str))
+
     stmt = stmt.order_by(desc(BatchEvaluation.created_at))
     result = await db.execute(stmt)
     batch_evals = result.scalars().all()
@@ -809,7 +1006,18 @@ async def get_batch_evaluation(
         raise HTTPException(status_code=404, detail="Batch evaluation not found")
 
     if batch_eval.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this batch evaluation")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this batch evaluation"
+        )
+
+    if not current_user.is_superuser:
+        import uuid
+        has_perm = await check_app_permission_by_id(db, current_user, uuid.UUID(batch_eval.application_id), Permissions.EVAL_READ)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access evaluations for this application",
+            )
 
     return batch_eval
 
@@ -830,6 +1038,13 @@ async def get_traces_count(
         app_obj = await db.get(Application, uuid.UUID(application_id))
         if not app_obj:
             raise HTTPException(status_code=400, detail="Invalid application_id")
+
+        has_perm = await check_app_permission_by_id(db, current_user, app_obj.id, Permissions.EVAL_READ)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access evaluations for this application",
+            )
         app_name = app_obj.name
 
         client = get_clickhouse_client()
@@ -852,7 +1067,9 @@ async def get_traces_count(
         return {"total_traces": count}
     except Exception as e:
         logger.error(f"Failed to get traces count: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get traces count: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get traces count: {str(e)}"
+        )
 
 
 @router.post("/batch", response_model=BatchEvalResponse)
@@ -871,6 +1088,13 @@ async def create_batch_evaluation(
         app_res = await db.get(Application, uuid.UUID(request.application_id))
         if not app_res:
             raise HTTPException(status_code=400, detail="Invalid application_id")
+
+        has_perm = await check_app_permission_by_id(db, current_user, app_res.id, Permissions.EVAL_CREATE)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to create batch evaluations for this application",
+            )
         actual_project_id = app_res.project_id
         app_name = app_res.name
 
@@ -937,25 +1161,37 @@ async def create_batch_evaluation(
         if total_traces == 0:
             raise HTTPException(
                 status_code=400,
-                detail="The selected application has no traces to evaluate in the specified range."
+                detail="The selected application has no traces to evaluate in the specified range.",
             )
 
         # Calculate how many traces to evaluate
         if request.is_percentage and request.percentage_value:
-            traces_to_eval = max(1, int(total_traces * (request.percentage_value / 100)))
+            traces_to_eval = max(
+                1, int(total_traces * (request.percentage_value / 100))
+            )
         else:
             traces_to_eval = min(request.traces_to_eval, total_traces)
 
         # Randomly select traces
-        selected_trace_ids = random.sample(all_trace_ids, min(traces_to_eval, len(all_trace_ids)))
+        selected_trace_ids = random.sample(
+            all_trace_ids, min(traces_to_eval, len(all_trace_ids))
+        )
 
         # Convert timezone-aware datetimes to naive for storage
         from_date_naive = None
         to_date_naive = None
         if request.from_date:
-            from_date_naive = request.from_date.replace(tzinfo=None) if request.from_date.tzinfo else request.from_date
+            from_date_naive = (
+                request.from_date.replace(tzinfo=None)
+                if request.from_date.tzinfo
+                else request.from_date
+            )
         if request.to_date:
-            to_date_naive = request.to_date.replace(tzinfo=None) if request.to_date.tzinfo else request.to_date
+            to_date_naive = (
+                request.to_date.replace(tzinfo=None)
+                if request.to_date.tzinfo
+                else request.to_date
+            )
 
         # Create batch evaluation record
         batch_eval = BatchEvaluation(
@@ -968,7 +1204,9 @@ async def create_batch_evaluation(
             total_traces=total_traces,
             traces_to_eval=traces_to_eval,
             is_percentage=request.is_percentage,
-            percentage_value=request.percentage_value if request.is_percentage else None,
+            percentage_value=(
+                request.percentage_value if request.is_percentage else None
+            ),
             provider=provider,
             model_name=model_name,
             provider_id=request.provider_id,
@@ -990,7 +1228,9 @@ async def create_batch_evaluation(
         raise
     except Exception as e:
         logger.error(f"Failed to create batch evaluation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to create batch evaluation: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create batch evaluation: {str(e)}"
+        )
 
 
 @router.post("/batch/{batch_id}/rerun", response_model=BatchEvalResponse)
@@ -1006,7 +1246,18 @@ async def rerun_batch_evaluation(
         raise HTTPException(status_code=404, detail="Batch evaluation not found")
 
     if batch_eval.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to rerun this batch evaluation")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to rerun this batch evaluation"
+        )
+
+    if not current_user.is_superuser:
+        import uuid
+        has_perm = await check_app_permission_by_id(db, current_user, uuid.UUID(batch_eval.application_id), Permissions.EVAL_CREATE)
+        if not has_perm:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to rerun batch evaluations for this application",
+            )
 
     # Reset the batch evaluation
     batch_eval.status = "RUNNING"
@@ -1029,12 +1280,15 @@ async def rerun_batch_evaluation(
 
 async def fetch_trace_data_from_clickhouse(trace_id: str) -> dict:
     from app.core.clickhouse import get_clickhouse_client
+
     client = get_clickhouse_client()
-    
+
     # Query application_name from traces table
     app_name = None
     try:
-        t_query = f"SELECT application_name FROM traces WHERE trace_id = '{trace_id}' LIMIT 1"
+        t_query = (
+            f"SELECT application_name FROM traces WHERE trace_id = '{trace_id}' LIMIT 1"
+        )
         t_rows = client.query(t_query).result_rows
         if t_rows and t_rows[0][0]:
             app_name = str(t_rows[0][0])
@@ -1068,6 +1322,7 @@ async def fetch_trace_data_from_clickhouse(trace_id: str) -> dict:
             best_row = rows[0]
 
         import json
+
         metadata = {}
         if best_row[2]:
             try:
@@ -1090,7 +1345,7 @@ async def fetch_trace_data_from_clickhouse(trace_id: str) -> dict:
 
 async def run_batch_evaluation_task(batch_id: uuid.UUID):
     logger.info(f"Starting background batch evaluation task: {batch_id}")
-    
+
     from app.core.database import async_session_factory
     from app.models.batch_evaluation import BatchEvaluation
     from app.models.evaluation_result import EvaluationResult
@@ -1104,7 +1359,7 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
     import inspect
     from datetime import datetime
     import uuid as py_uuid
-    
+
     async with async_session_factory() as db:
         # Load the BatchEvaluation record
         batch_eval = await db.get(BatchEvaluation, batch_id)
@@ -1115,8 +1370,10 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
         try:
             # Get selected trace IDs
             trace_ids = batch_eval.selected_trace_ids or []
-            metric_ids = [m.strip() for m in (batch_eval.metric_ids or "").split(",") if m.strip()]
-            
+            metric_ids = [
+                m.strip() for m in (batch_eval.metric_ids or "").split(",") if m.strip()
+            ]
+
             if not trace_ids or not metric_ids:
                 batch_eval.status = "COMPLETED"
                 batch_eval.completed_at = datetime.utcnow()
@@ -1154,7 +1411,9 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
             rubric_prompt = None
             if batch_eval.application_id:
                 try:
-                    app_obj = await db.get(Application, py_uuid.UUID(batch_eval.application_id))
+                    app_obj = await db.get(
+                        Application, py_uuid.UUID(batch_eval.application_id)
+                    )
                     if app_obj:
                         rubric_prompt = app_obj.rubric_prompt
                 except Exception as ex:
@@ -1168,7 +1427,7 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                     metric_res = await db.execute(metric_stmt)
                     metric_row = metric_res.scalars().first()
                     metric_prompt = metric_row.prompt if metric_row else None
-                    
+
                     llm_kwargs = {}
                     if api_key:
                         llm_kwargs["api_key"] = api_key
@@ -1180,33 +1439,44 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                         llm_kwargs["deployment_name"] = deployment_name
 
                     if metric_prompt:
-                        from app.core.evaluation.integrations.observix_eval import CustomEvaluator
+                        from app.core.evaluation.integrations.observix_eval import (
+                            CustomEvaluator,
+                        )
+
                         evaluators[m_id] = {
-                            "evaluator": CustomEvaluator(provider=provider, model=model, **llm_kwargs),
-                            "prompt": metric_prompt
+                            "evaluator": CustomEvaluator(
+                                provider=provider, model=model, **llm_kwargs
+                            ),
+                            "prompt": metric_prompt,
                         }
                     else:
                         eval_module = importlib.import_module("app.core.evaluation")
                         EvaluatorClass = getattr(eval_module, m_id, None)
                         if EvaluatorClass:
                             evaluators[m_id] = {
-                                "evaluator": EvaluatorClass(provider=provider, model=model, **llm_kwargs),
-                                "prompt": None
+                                "evaluator": EvaluatorClass(
+                                    provider=provider, model=model, **llm_kwargs
+                                ),
+                                "prompt": None,
                             }
                 except Exception as e:
-                    logger.error(f"Failed to initialize evaluator {m_id} for batch eval: {e}")
+                    logger.error(
+                        f"Failed to initialize evaluator {m_id} for batch eval: {e}"
+                    )
 
             # Run evaluation on each trace
             for trace_id in trace_ids:
                 trace_data = await fetch_trace_data_from_clickhouse(trace_id)
                 if not trace_data:
-                    logger.warning(f"Could not load trace data for trace_id {trace_id}, skipping.")
+                    logger.warning(
+                        f"Could not load trace data for trace_id {trace_id}, skipping."
+                    )
                     continue
 
                 query = trace_data.get("input")
                 output = trace_data.get("output")
                 context = trace_data.get("context")
-                
+
                 # Fetch retrieval contexts if available
                 retrieved_contexts = await fetch_retrieval_contexts(trace_id)
                 if retrieved_contexts:
@@ -1229,11 +1499,19 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                         metric_id=m_id,
                         input=str(query) if query else None,
                         output=str(output) if output else None,
-                        context=context if isinstance(context, list) else [str(context)] if context else [],
+                        context=(
+                            context
+                            if isinstance(context, list)
+                            else [str(context)] if context else []
+                        ),
                         expected_output=None,
                         status="RUNNING",
-                        metadata_json={"trigger_type": "batch_eval", "batch_id": str(batch_id)},
-                        application_name=trace_data.get("application_name") or batch_eval.application_id,
+                        metadata_json={
+                            "trigger_type": "batch_eval",
+                            "batch_id": str(batch_id),
+                        },
+                        application_name=trace_data.get("application_name")
+                        or batch_eval.application_id,
                     )
                     db.add(eval_result)
                     await db.commit()
@@ -1246,8 +1524,11 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                             extra_kwargs = {}
                             if metric_prompt:
                                 import re
+
                                 formatted_prompt = metric_prompt
-                                variables = set(re.findall(r'\{\{([^}]+)\}\}', metric_prompt))
+                                variables = set(
+                                    re.findall(r"\{\{([^}]+)\}\}", metric_prompt)
+                                )
                                 inputs_dict = {
                                     "input": query,
                                     "query": query,
@@ -1259,26 +1540,39 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                                     val = inputs_dict.get(var)
                                     if val is None:
                                         val = inputs_dict.get(var.lower(), "")
-                                    formatted_prompt = formatted_prompt.replace(f"{{{{{var}}}}}", str(val))
-                                
-                                single_vars = set(re.findall(r'(?<!\{)\{([^}]+)\}(?!\})', formatted_prompt))
+                                    formatted_prompt = formatted_prompt.replace(
+                                        f"{{{{{var}}}}}", str(val)
+                                    )
+
+                                single_vars = set(
+                                    re.findall(
+                                        r"(?<!\{)\{([^}]+)\}(?!\})", formatted_prompt
+                                    )
+                                )
                                 for var in single_vars:
                                     if var in inputs_dict:
-                                        formatted_prompt = formatted_prompt.replace(f"{{{var}}}", str(inputs_dict[var]))
+                                        formatted_prompt = formatted_prompt.replace(
+                                            f"{{{var}}}", str(inputs_dict[var])
+                                        )
                                 extra_kwargs["custom_instructions"] = formatted_prompt
 
                             # Execute evaluation — run in thread executor to avoid blocking the event loop
                             import asyncio as _asyncio
+
                             _loop = _asyncio.get_event_loop()
 
                             def _run_eval():
                                 return evaluator.evaluate(
                                     input_query=query,
                                     output=output,
-                                    context=context if isinstance(context, list) else [str(context)] if context else [],
+                                    context=(
+                                        context
+                                        if isinstance(context, list)
+                                        else [str(context)] if context else []
+                                    ),
                                     expected=None,
                                     rubric=rubric_prompt,
-                                    **extra_kwargs
+                                    **extra_kwargs,
                                 )
 
                             res = await _loop.run_in_executor(None, _run_eval)
@@ -1302,6 +1596,7 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                                     f"Attempt {attempt}/3: Invalid JSON from evaluation LLM for trace {trace_id} metric {m_id}. Retrying..."
                                 )
                                 import asyncio
+
                                 await asyncio.sleep(1)
                                 continue
                             else:
@@ -1313,12 +1608,12 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                         eval_result.reason = res.reason
                         eval_result.passed = res.passed
                         eval_result.status = "COMPLETED"
-                        
+
                         meta = dict(res.metadata) if res.metadata else {}
                         meta["trigger_type"] = "batch_eval"
                         meta["batch_id"] = str(batch_id)
                         eval_result.metadata_json = meta
-                        
+
                         db.add(eval_result)
                         await db.commit()
 
@@ -1327,10 +1622,15 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                             scores.append(res.score)
                     else:
                         ex = last_error
-                        logger.error(f"Error evaluating trace {trace_id} with metric {m_id} after retries: {ex}")
+                        logger.error(
+                            f"Error evaluating trace {trace_id} with metric {m_id} after retries: {ex}"
+                        )
                         eval_result.status = "FAILED"
                         eval_result.reason = str(ex)
-                        eval_result.metadata_json = {"trigger_type": "batch_eval", "batch_id": str(batch_id)}
+                        eval_result.metadata_json = {
+                            "trigger_type": "batch_eval",
+                            "batch_id": str(batch_id),
+                        }
                         db.add(eval_result)
                         await db.commit()
                         failed_evals += 1
@@ -1352,7 +1652,10 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
             logger.info(f"Batch evaluation {batch_id} completed successfully.")
 
         except Exception as e:
-            logger.error(f"Batch evaluation {batch_id} failed in background task: {e}", exc_info=True)
+            logger.error(
+                f"Batch evaluation {batch_id} failed in background task: {e}",
+                exc_info=True,
+            )
             batch_eval.status = "FAILED"
             batch_eval.error_message = str(e)
             batch_eval.completed_at = datetime.utcnow()

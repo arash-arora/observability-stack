@@ -135,12 +135,16 @@ export default function ContextHeader() {
             ) : (
                 <SelectItem value="none" disabled className="rounded-lg text-xs">No projects found</SelectItem>
             )}
-            <div className="h-px bg-black/[0.04] my-1" />
-            <SelectItem value="create_new" className="text-[#0071e3] focus:text-[#0071e3] font-semibold rounded-lg cursor-pointer text-xs">
-                <div className="flex items-center gap-2">
-                    <Plus size={13} /> Create Project
-                </div>
-            </SelectItem>
+            {(user?.is_superuser || selectedOrg?.current_user_permissions?.includes('project:create')) && (
+              <>
+                <div className="h-px bg-black/[0.04] my-1" />
+                <SelectItem value="create_new" className="text-[#0071e3] focus:text-[#0071e3] font-semibold rounded-lg cursor-pointer text-xs">
+                    <div className="flex items-center gap-2">
+                        <Plus size={13} /> Create Project
+                    </div>
+                </SelectItem>
+              </>
+            )}
             </SelectContent>
         </Select>
       </div>

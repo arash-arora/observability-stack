@@ -4,6 +4,7 @@ export interface Organization {
     id: string;
     name: string;
     current_user_role?: string;
+    current_user_permissions?: string[];
 }
 
 export interface Project {

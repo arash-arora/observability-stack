@@ -332,7 +332,7 @@ export function MetricRun({ metric }: MetricRunProps) {
           <div className="space-y-4">
               {showQuery && (
                   <div className="space-y-2">
-                      <Label>Input / Query</Label>
+                      <Label className="flex items-center gap-1">Input / Query <span className="text-red-500">*</span></Label>
                       <Textarea
                           className="min-h-25 font-mono"
                           placeholder="User query or input..."
@@ -341,10 +341,10 @@ export function MetricRun({ metric }: MetricRunProps) {
                       />
                   </div>
               )}
-              
+
               {showTrace && (
                    <div className="space-y-2">
-                      <Label>Trace Data (JSON)</Label>
+                      <Label className="flex items-center gap-1">Trace Data (JSON) <span className="text-red-500">*</span></Label>
                       <Textarea
                           className="min-h-[200px] font-mono text-xs"
                           placeholder='{"trace_id": "...", "observations": [...]}'
@@ -356,7 +356,7 @@ export function MetricRun({ metric }: MetricRunProps) {
 
               {showWorkflow && (
                    <div className="space-y-2">
-                      <Label>Workflow Details (JSON)</Label>
+                      <Label className="flex items-center gap-1">Workflow Details (JSON) <span className="text-red-500">*</span></Label>
                       <Textarea
                           className="min-h-[150px] font-mono text-xs"
                           placeholder='{"agents": [...], "tools": [...]}'
@@ -368,7 +368,11 @@ export function MetricRun({ metric }: MetricRunProps) {
 
               {showContext && (
                   <div className="space-y-2">
-                      <Label>Context (Optional - Line separated)</Label>
+                      <Label className="flex items-center gap-1">
+                        Context
+                        <span className="text-red-500">*</span>
+                        <span className="text-xs text-muted-foreground font-normal">(Line separated)</span>
+                      </Label>
                       <Textarea
                           className="min-h-25 font-mono"
                           placeholder="Retrieved context..."
@@ -377,10 +381,10 @@ export function MetricRun({ metric }: MetricRunProps) {
                       />
                   </div>
               )}
-              
+
               {showOutput && (
                   <div className="space-y-2">
-                      <Label>Output / Response</Label>
+                      <Label className="flex items-center gap-1">Output / Response <span className="text-red-500">*</span></Label>
                       <Textarea
                           className="min-h-25 font-mono"
                           placeholder="LLM response..."
@@ -392,7 +396,10 @@ export function MetricRun({ metric }: MetricRunProps) {
 
               {showExpected && (
                   <div className="space-y-2">
-                      <Label>Expected Output (Optional)</Label>
+                      <Label className="flex items-center gap-1">
+                        Expected Output
+                        <span className="text-red-500">*</span>
+                      </Label>
                       <Textarea
                           className="min-h-25 font-mono"
                           placeholder="Ground truth answer..."

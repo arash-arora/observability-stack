@@ -348,7 +348,7 @@ function safeJsonStringify(obj: any, indent = 2) {
                         <>
                           {activeInputs.input && (
                             <div className="space-y-2">
-                              <Label>Input Payload / Query</Label>
+                              <Label className="flex items-center gap-1">Input Payload / Query <span className="text-red-500">*</span></Label>
                               <Textarea
                                   className="font-mono text-xs min-h-[80px]"
                                   value={input}
@@ -360,7 +360,7 @@ function safeJsonStringify(obj: any, indent = 2) {
 
                           {activeInputs.output && (
                             <div className="space-y-2">
-                              <Label>Output / Response</Label>
+                              <Label className="flex items-center gap-1">Output / Response <span className="text-red-500">*</span></Label>
                               <Textarea
                                   className="font-mono text-xs min-h-[80px]"
                                   value={output}
@@ -372,7 +372,8 @@ function safeJsonStringify(obj: any, indent = 2) {
 
                           {activeInputs.context && (
                             <div className="space-y-2">
-                              <Label>Retrieval Context (Split by double newline)</Label>
+                              <Label className="flex items-center gap-1">Retrieval Context <span className="text-red-500">*</span></Label>
+                              <p className="text-xs text-muted-foreground">(Split by double newline)</p>
                               <Textarea
                                   className="font-mono text-xs min-h-[120px]"
                                   value={context}
@@ -384,7 +385,7 @@ function safeJsonStringify(obj: any, indent = 2) {
 
                           {activeInputs.expected && (
                             <div className="space-y-2">
-                              <Label>Expected Output (Optional)</Label>
+                              <Label className="flex items-center gap-1">Expected Output <span className="text-red-500">*</span></Label>
                               <Textarea
                                   className="font-mono text-xs min-h-[60px]"
                                   value={expectedOutput}
@@ -555,45 +556,7 @@ function safeJsonStringify(obj: any, indent = 2) {
                     Tracing is enabled automatically for node/trace evaluations and is attached to this trace context.
                   </p>
                 </div>
-             ) : (
-                <div className="space-y-4 p-4 rounded-lg border bg-muted/10">
-                    <div className="flex items-center justify-between border-b pb-2">
-                        <h3 className="font-semibold text-sm">Tracing</h3>
-                        <label className="flex items-center gap-2 text-xs cursor-pointer">
-                            <input 
-                                type="checkbox" 
-                                checked={observe} 
-                                onChange={(e) => setObserve(e.target.checked)}
-                                className="rounded border-border"
-                            /> Trace this evaluation
-                        </label>
-                    </div>
-                    
-                    {observe && (
-                        <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                            <div className="space-y-1">
-                                <Label className="text-xs">Observix Host</Label>
-                                <Input 
-                                    value={traceHost}
-                                    onChange={(e) => setTraceHost(e.target.value)}
-                                    className="bg-background h-8 text-xs"
-                                    placeholder="http://localhost:8000"
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Observix API Key (Ingest)</Label>
-                                <Input 
-                                    type="password"
-                                    value={traceApiKey}
-                                    onChange={(e) => setTraceApiKey(e.target.value)}
-                                    className="bg-background h-8 text-xs"
-                                    placeholder="sk-observix-..."
-                                />
-                            </div>
-                        </div>
-                    )}
-                 </div>
-             )}
+             ) : null}
 
              {/* Results Section */}
              {error && (

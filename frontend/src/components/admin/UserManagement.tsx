@@ -75,10 +75,11 @@ export default function UserManagement() {
         try {
             await AdminApi.assignUserRole(selectedUser.id, {
                 organization_id: selectedOrgId,
-                role_id: selectedRoleId
+                role_id: selectedRoleId === 'no_permissions' ? null : selectedRoleId
             });
             setAssignModalOpen(false);
-            // Optionally show success toast
+            // Refresh data in UI after assignment
+            await fetchData();
         } catch (err: any) {
             alert(err.response?.data?.detail || 'Failed to assign role');
         }
@@ -172,6 +173,7 @@ export default function UserManagement() {
                                     <SelectValue placeholder="Select Role" />
                                 </SelectTrigger>
                                 <SelectContent>
+                                    <SelectItem value="no_permissions">-</SelectItem>
                                     {roles.filter(role => role.name !== 'admin').map(role => (
                                         <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
                                     ))}

@@ -8,6 +8,7 @@ interface Organization {
   id: string;
   name: string;
   current_user_role?: string;
+  current_user_permissions?: string[];
 }
 
 interface Project {

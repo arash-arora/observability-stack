@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useDashboard } from "@/context/DashboardContext";
+import { useAuth } from '@/context/AuthContext';
 import { format } from "date-fns";
 import {
   Table,
@@ -68,6 +69,7 @@ interface LLMProvider {
 
 export default function AutoEvalView() {
   const { selectedOrg, selectedProject } = useDashboard();
+  const { user } = useAuth();
   const [rules, setRules] = useState<Rule[]>([]);
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
@@ -76,7 +78,7 @@ export default function AutoEvalView() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
   // Check permissions
-  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
+  const canCreate = user?.is_superuser || selectedOrg?.current_user_permissions?.includes('eval:create');
 
   // Form State
   const [newName, setNewName] = useState("");

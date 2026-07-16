@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit, Power, PowerOff, Loader2 } from "lucide-react";
 import AlertRuleModal from "@/components/alerts/AlertRuleModal";
 import { useDashboard } from "@/context/DashboardContext";
+import { useAuth } from '@/context/AuthContext';
 
 interface AlertRule {
   id: string;
@@ -38,13 +39,14 @@ interface AlertRule {
 
 export default function AlertRulesPage() {
   const { selectedProject, selectedOrg } = useDashboard();
+  const { user } = useAuth();
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
 
   // Check permissions
-  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
+  const canCreate = user?.is_superuser || selectedOrg?.current_user_permissions?.includes('app:update');
 
   const fetchRules = async () => {
     if (!selectedProject) {
