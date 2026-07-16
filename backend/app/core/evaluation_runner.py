@@ -39,6 +39,10 @@ def extract_clean_param(val: str, param_type: str) -> str:
     def extract_from_messages(msgs):
         if not isinstance(msgs, list):
             return ""
+        # Support simple list of string messages (flat array format)
+        if msgs and all(isinstance(m, str) for m in msgs):
+            return "\n\n".join(msgs).strip()
+            
         for m in reversed(msgs):
             if not isinstance(m, dict):
                 continue
@@ -71,12 +75,21 @@ def extract_clean_param(val: str, param_type: str) -> str:
             if res: return res
             
         if "args" in data and isinstance(data["args"], list) and data["args"]:
+            # 1. Scan for any list element containing message structures
+            found_msg = False
+            for arg in data["args"]:
+                if isinstance(arg, list):
+                    res = extract_from_messages(arg)
+                    if res:
+                        return res
+            # 2. Join all string arguments found in args
+            string_args = [arg for arg in data["args"] if isinstance(arg, str) and arg.strip()]
+            if string_args:
+                return "\n\n".join(string_args)
+            # 3. Fallback to first argument if it's a string
             first_arg = data["args"][0]
             if isinstance(first_arg, str):
                 return first_arg
-            elif isinstance(first_arg, list):
-                res = extract_from_messages(first_arg)
-                if res: return res
                 
         if "kwargs" in data and isinstance(data["kwargs"], dict):
             kwargs_data = data["kwargs"]
@@ -100,7 +113,12 @@ def extract_clean_param(val: str, param_type: str) -> str:
                     
     elif isinstance(data, list):
         res = extract_from_messages(data)
-        if res: return res
+        if res: 
+            return res
+        # Scan for any string elements at the root level of the list
+        strings = [item for item in data if isinstance(item, str) and item.strip()]
+        if strings:
+            return "\n\n".join(strings).strip()
         
     return val
 

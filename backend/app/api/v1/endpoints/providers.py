@@ -86,25 +86,31 @@ class LLMProviderRead(BaseModel):
         )
 
 
-@router.get("/", response_model=List[LLMProviderRead])
+@router.get("", response_model=List[LLMProviderRead])
 async def list_providers(
-    project_id: uuid.UUID,
+    project_id: Optional[uuid.UUID] = None,
     db: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """
-    List configured providers for a project, filtered by the current user.
+    List configured providers, filtered by the current user.
+    Optionally filters by project_id if provided.
     The api_key field is always masked in the response.
     """
-    stmt = select(LLMProvider).where(
-        LLMProvider.project_id == project_id,
-        (LLMProvider.user_id == current_user.id) | (LLMProvider.is_public == True),
-    )
+    if project_id:
+        stmt = select(LLMProvider).where(
+            LLMProvider.project_id == project_id,
+            (LLMProvider.user_id == current_user.id) | (LLMProvider.is_public == True),
+        )
+    else:
+        stmt = select(LLMProvider).where(
+            (LLMProvider.user_id == current_user.id) | (LLMProvider.is_public == True),
+        )
     result = await db.execute(stmt)
     return [LLMProviderRead.from_db(p) for p in result.scalars().all()]
 
 
-@router.post("/", response_model=LLMProviderRead)
+@router.post("", response_model=LLMProviderRead)
 async def create_provider(
     provider_in: CreateProviderRequest,
     db: AsyncSession = Depends(get_session),
