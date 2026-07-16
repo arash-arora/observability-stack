@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Check, Copy, Plus, Trash2, ShieldAlert, Boxes, Sparkles, Activity, Cpu, Calendar, Clock, Terminal, Layers } from "lucide-react";
 import ApplicationModal from "@/components/applications/ApplicationModal";
 import { useDashboard } from "@/context/DashboardContext";
+import { useAuth } from '@/context/AuthContext';
 import PageHeader from '@/components/PageHeader';
 import {
   Dialog,
@@ -35,6 +36,7 @@ interface Application {
 
 export default function ApplicationsPage() {
   const { projects, selectedProject, selectedOrg } = useDashboard();
+  const { user } = useAuth();
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -42,7 +44,7 @@ export default function ApplicationsPage() {
   const [createdApp, setCreatedApp] = useState<Application | null>(null);
 
   // Check permissions - Admin or Maintainer can create
-  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
+  const canCreate = user?.is_superuser || selectedOrg?.current_user_permissions?.includes('app:create');
 
   const fetchData = async () => {
     setLoading(true);

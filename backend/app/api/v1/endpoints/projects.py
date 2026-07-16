@@ -38,6 +38,81 @@ async def check_permission(
     return True
 
 
+async def get_allowed_application_names(
+    session: AsyncSession, user: User, permission: str = "eval:read"
+) -> List[str]:
+    """
+    Get all application names that the user is allowed to access based on their organization membership
+    and having the specified permission.
+    """
+    if user.is_superuser:
+        stmt = select(Application.name)
+        res = await session.execute(stmt)
+        return res.scalars().all()
+
+    stmt = (
+        select(Application.name, Role.permissions)
+        .join(Project, Application.project_id == Project.id)
+        .join(
+            OrganizationUserLink,
+            Project.organization_id == OrganizationUserLink.organization_id,
+        )
+        .join(Role, OrganizationUserLink.role_id == Role.id)
+        .where(OrganizationUserLink.user_id == user.id)
+    )
+    res = await session.execute(stmt)
+    allowed_apps = []
+    for app_name, permissions in res.all():
+        if permissions and permission in permissions:
+            allowed_apps.append(app_name)
+    return allowed_apps
+
+
+async def check_app_permission_by_name(
+    session: AsyncSession, user: User, app_name: str, permission: str
+) -> bool:
+    """
+    Check if a user has a specific permission for an application by its name.
+    """
+    if user.is_superuser:
+        return True
+
+    stmt = (
+        select(Project.organization_id)
+        .join(Application, Application.project_id == Project.id)
+        .where(Application.name == app_name)
+    )
+    res = await session.execute(stmt)
+    org_id = res.scalars().first()
+    if not org_id:
+        return False
+
+    return await check_permission(session, user.id, org_id, permission)
+
+
+async def check_app_permission_by_id(
+    session: AsyncSession, user: User, app_id: uuid.UUID, permission: str
+) -> bool:
+    """
+    Check if a user has a specific permission for an application by its ID.
+    """
+    if user.is_superuser:
+        return True
+
+    stmt = (
+        select(Project.organization_id)
+        .join(Application, Application.project_id == Project.id)
+        .where(Application.id == app_id)
+    )
+    res = await session.execute(stmt)
+    org_id = res.scalars().first()
+    if not org_id:
+        return False
+
+    return await check_permission(session, user.id, org_id, permission)
+
+
+
 router = APIRouter()
 
 
@@ -50,6 +125,7 @@ class OrgRead(BaseModel):
     id: uuid.UUID
     name: str
     current_user_role: str | None = None
+    current_user_permissions: List[str] = []
 
 
 class ProjectCreate(BaseModel):
@@ -141,7 +217,12 @@ async def create_organization(
     )
     session.add(link)
     await session.commit()
-    return org
+    return OrgRead(
+        id=org.id,
+        name=org.name,
+        current_user_role="admin",
+        current_user_permissions=admin_role.permissions or [],
+    )
 
 
 @router.get("/organizations", response_model=List[OrgRead])
@@ -155,7 +236,7 @@ async def read_organizations(
     # This is a bit complex with SQLModel async relationships, doing a manual join for now
     # Join Organization -> OrganizationUserLink -> Role
     stmt = (
-        select(Organization, Role.name)
+        select(Organization, Role.name, Role.permissions)
         .select_from(Organization)
         .join(OrganizationUserLink)
         .join(Role)
@@ -165,8 +246,13 @@ async def read_organizations(
     rows = result.all()
 
     orgs_with_role = []
-    for org, role_name in rows:
-        org_read = OrgRead(id=org.id, name=org.name, current_user_role=role_name)
+    for org, role_name, permissions in rows:
+        org_read = OrgRead(
+            id=org.id,
+            name=org.name,
+            current_user_role=role_name,
+            current_user_permissions=permissions or [],
+        )
         orgs_with_role.append(org_read)
 
     return orgs_with_role

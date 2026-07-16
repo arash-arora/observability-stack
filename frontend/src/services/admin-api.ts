@@ -17,7 +17,7 @@ export interface Role {
 
 export interface AssignRolePayload {
     organization_id: string;
-    role_id: string;
+    role_id: string | null;
 }
 
 export const AdminApi = {

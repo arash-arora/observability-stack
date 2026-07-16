@@ -1,0 +1,138 @@
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Observations Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 126, in ingest_observations
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+
+Traces Error: 403: Invalid API Key
+Traceback (most recent call last):
+  File "/Users/aarora/Dev/research/observability-app/backend/app/api/v1/endpoints/ingest.py", line 38, in ingest_traces
+    raise HTTPException(status_code=403, detail="Invalid API Key")
+fastapi.exceptions.HTTPException: 403: Invalid API Key
+

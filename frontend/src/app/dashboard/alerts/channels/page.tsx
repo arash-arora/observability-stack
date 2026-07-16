@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit, MessageSquare, Send, Loader2 } from "lucide-react";
 import NotificationChannelModal from "@/components/alerts/NotificationChannelModal";
 import { useDashboard } from "@/context/DashboardContext";
+import { useAuth } from '@/context/AuthContext';
 
 interface NotificationChannel {
   id: string;
@@ -29,12 +30,13 @@ interface NotificationChannel {
 
 export default function NotificationChannelsPage() {
   const { selectedProject, selectedOrg } = useDashboard();
+  const { user } = useAuth();
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null);
 
-  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
+  const canCreate = user?.is_superuser || selectedOrg?.current_user_permissions?.includes('app:update');
 
   const fetchChannels = async () => {
     if (!selectedProject) {

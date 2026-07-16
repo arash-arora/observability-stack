@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import PageHeader from "@/components/PageHeader";
 import { useDashboard } from "@/context/DashboardContext";
+import { useAuth } from '@/context/AuthContext';
 
 // --- Inline Components ---
 const Button = ({
@@ -86,6 +87,7 @@ interface Metric {
 export default function MetricsPage() {
   const router = useRouter();
   const { selectedOrg } = useDashboard();
+  const { user } = useAuth();
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -95,7 +97,7 @@ export default function MetricsPage() {
   const [loading, setLoading] = useState(true);
 
   // Check permissions
-  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
+  const canCreate = user?.is_superuser || selectedOrg?.current_user_permissions?.includes('eval:create');
 
   useEffect(() => {
     const fetchMetrics = async () => {

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useDashboard } from "@/context/DashboardContext";
+import { useAuth } from '@/context/AuthContext';
 import { format } from "date-fns";
 import {
   Table,
@@ -71,6 +72,7 @@ interface BatchEvaluation {
 
 export default function BatchEvalView() {
   const { selectedOrg, selectedProject } = useDashboard();
+  const { user } = useAuth();
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [providers, setProviders] = useState<LLMProvider[]>([]);
@@ -98,7 +100,7 @@ export default function BatchEvalView() {
   const [newApp, setNewApp] = useState("");
   const [customProviders, setCustomProviders] = useState<any[]>([]);
 
-  const canCreate = selectedOrg?.current_user_role === 'admin' || selectedOrg?.current_user_role === 'maintainer';
+  const canCreate = user?.is_superuser || selectedOrg?.current_user_permissions?.includes('eval:create');
 
   const filteredApplications = useMemo(() => {
     if (!selectedProject) {

@@ -213,129 +213,116 @@ async def test_provider(
         # Decrypt the stored api_key before using it
         plaintext_api_key = decrypt_value(provider_config.api_key)
 
-        # Determine provider type and instantiate client
-        client = None
+        # Determine provider type and call via LiteLLM
+        import litellm
 
         if provider_config.provider == "openai":
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(api_key=plaintext_api_key)
-
-            response = await client.chat.completions.create(
+            response = await litellm.acompletion(
                 model=provider_config.model_name,
                 messages=[{"role": "user", "content": request.input_text}],
+                api_key=plaintext_api_key,
             )
             return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "azure":
-            from openai import AsyncAzureOpenAI
-
-            client = AsyncAzureOpenAI(
-                api_key=plaintext_api_key,
-                azure_endpoint=provider_config.base_url,
-                api_version=provider_config.api_version,
-                azure_deployment=provider_config.deployment_name,
-            )
-
-            response = await client.chat.completions.create(
-                model=provider_config.deployment_name or provider_config.model_name,
+            model_str = f"azure/{provider_config.deployment_name or provider_config.model_name}"
+            response = await litellm.acompletion(
+                model=model_str,
                 messages=[{"role": "user", "content": request.input_text}],
+                api_key=plaintext_api_key,
+                api_base=provider_config.base_url,
+                api_version=provider_config.api_version,
             )
             return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "langchain":
-            from langchain_groq import ChatGroq
-
-            chat = ChatGroq(
-                api_key=plaintext_api_key, model_name=provider_config.model_name
-            )
-            from langchain_core.messages import HumanMessage
-
-            response = await chat.ainvoke([HumanMessage(content=request.input_text)])
-            return {"output": response.content}
-
-        elif provider_config.provider == "huggingface":
-            from huggingface_hub import InferenceClient
-
-            config_data = provider_config.provider_config or {}
-            client = InferenceClient(
-                model=config_data.get('inference_endpoint') or provider_config.model_name,
-                token=plaintext_api_key
-            )
-
-            response = client.chat_completion(
+            model_str = provider_config.model_name
+            if not model_str.startswith("groq/"):
+                model_str = f"groq/{model_str}"
+            response = await litellm.acompletion(
+                model=model_str,
                 messages=[{"role": "user", "content": request.input_text}],
-                max_tokens=1024
+                api_key=plaintext_api_key,
             )
             return {"output": response.choices[0].message.content}
 
-        elif provider_config.provider == "bedrock":
-            import boto3
-            import json
-
+        elif provider_config.provider == "huggingface":
             config_data = provider_config.provider_config or {}
+            endpoint = config_data.get('inference_endpoint')
+            
+            call_kwargs = {
+                "model": f"huggingface/{provider_config.model_name}",
+                "messages": [{"role": "user", "content": request.input_text}],
+                "api_key": plaintext_api_key,
+            }
+            if endpoint:
+                call_kwargs["api_base"] = endpoint
 
-            bedrock = boto3.client(
-                'bedrock-runtime',
-                region_name=config_data.get('aws_region'),
+            response = await litellm.acompletion(**call_kwargs)
+            return {"output": response.choices[0].message.content}
+
+        elif provider_config.provider == "bedrock":
+            config_data = provider_config.provider_config or {}
+            model_str = provider_config.model_name
+            if not model_str.startswith("bedrock/"):
+                model_str = f"bedrock/{model_str}"
+
+            response = await litellm.acompletion(
+                model=model_str,
+                messages=[{"role": "user", "content": request.input_text}],
                 aws_access_key_id=config_data.get('aws_access_key_id'),
                 aws_secret_access_key=config_data.get('aws_secret_access_key'),
-                aws_session_token=config_data.get('aws_session_token')
+                aws_session_token=config_data.get('aws_session_token'),
+                aws_region_name=config_data.get('aws_region'),
             )
-
-            # Format body based on model provider (e.g., Anthropic Claude via Bedrock)
-            body = json.dumps({
-                "messages": [{"role": "user", "content": request.input_text}],
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1024
-            })
-
-            response = bedrock.invoke_model(
-                modelId=provider_config.model_name,
-                body=body
-            )
-
-            response_body = json.loads(response['body'].read())
-            return {"output": response_body['content'][0]['text']}
+            return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "vertexai":
-            from google.cloud import aiplatform
-            from google.oauth2 import service_account
-            from vertexai.generative_models import GenerativeModel
             import json
-
             config_data = provider_config.provider_config or {}
-            credentials_json = json.loads(config_data.get('gcp_credentials', '{}'))
-            credentials = service_account.Credentials.from_service_account_info(credentials_json)
+            credentials_json = config_data.get('gcp_credentials', '{}')
+            if isinstance(credentials_json, str):
+                try:
+                    credentials_dict = json.loads(credentials_json)
+                except:
+                    credentials_dict = {}
+            else:
+                credentials_dict = credentials_json
 
-            aiplatform.init(
-                project=config_data.get('gcp_project_id'),
-                location=config_data.get('gcp_location'),
-                credentials=credentials
+            model_str = provider_config.model_name
+            if not model_str.startswith("vertex_ai/"):
+                model_str = f"vertex_ai/{model_str}"
+
+            response = await litellm.acompletion(
+                model=model_str,
+                messages=[{"role": "user", "content": request.input_text}],
+                vertex_credentials=credentials_dict,
+                vertex_project=config_data.get('gcp_project_id'),
+                vertex_location=config_data.get('gcp_location'),
             )
-
-            model = GenerativeModel(provider_config.model_name)
-            response = model.generate_content(request.input_text)
-            return {"output": response.text}
+            return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "anthropic":
-            from anthropic import AsyncAnthropic
-
-            client = AsyncAnthropic(api_key=plaintext_api_key)
-            response = await client.messages.create(
-                model=provider_config.model_name,
-                max_tokens=1024,
+            model_str = provider_config.model_name
+            if not model_str.startswith("anthropic/"):
+                model_str = f"anthropic/{model_str}"
+            response = await litellm.acompletion(
+                model=model_str,
                 messages=[{"role": "user", "content": request.input_text}],
+                api_key=plaintext_api_key,
             )
-            return {"output": response.content[0].text}
+            return {"output": response.choices[0].message.content}
 
         elif provider_config.provider == "google":
-            import google.generativeai as genai
-
-            genai.configure(api_key=plaintext_api_key)
-            model = genai.GenerativeModel(model_name=provider_config.model_name)
-            response = model.generate_content(request.input_text)
-            return {"output": response.text}
+            model_str = provider_config.model_name
+            if not model_str.startswith("gemini/"):
+                model_str = f"gemini/{model_str}"
+            response = await litellm.acompletion(
+                model=model_str,
+                messages=[{"role": "user", "content": request.input_text}],
+                api_key=plaintext_api_key,
+            )
+            return {"output": response.choices[0].message.content}
 
         else:
             raise HTTPException(

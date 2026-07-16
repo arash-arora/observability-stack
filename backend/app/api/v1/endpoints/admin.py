@@ -22,7 +22,7 @@ class UserReadAdmin(BaseModel):
 
 class AssignRoleRequest(BaseModel):
     organization_id: uuid.UUID
-    role_id: uuid.UUID
+    role_id: uuid.UUID | None = None
 
 
 @router.get("/users", response_model=List[UserReadAdmin])
@@ -98,6 +98,19 @@ async def assign_user_role(
     org = await session.get(Organization, data.organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    if data.role_id is None:
+        # Remove user from organization
+        statement = select(OrganizationUserLink).where(
+            OrganizationUserLink.user_id == user_id,
+            OrganizationUserLink.organization_id == data.organization_id,
+        )
+        result = await session.execute(statement)
+        link = result.scalars().first()
+        if link:
+            await session.delete(link)
+            await session.commit()
+        return {"status": "success"}
 
     # Check if role exists
     role = await session.get(Role, data.role_id)
