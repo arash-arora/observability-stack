@@ -11,7 +11,7 @@ const resolveApiBaseUrl = () => {
     return `${normalizeBase(process.env.NEXT_PUBLIC_API_URL)}/api/v1`;
   }
 
-  const port = process.env.NEXT_PUBLIC_API_PORT || '8000';
+  const port = process.env.NEXT_PUBLIC_API_PORT || '8010';
 
   // Fallback for misconfigured NEXT_PUBLIC envs in containerized deployments.
   if (typeof window !== 'undefined') {

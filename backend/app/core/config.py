@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     CLICKHOUSE_USER: str = ""
     CLICKHOUSE_PASSWORD: str = ""
 
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8011,http://10.17.34.14:8011"
-    CORS_ORIGIN_REGEX: str = r"^https?://(localhost|127\.0\.0\.1|10\.17\.34\.14)(:\d+)?$"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8011"
+    CORS_ORIGIN_REGEX: str = r"^https?://.*$"
 
     # Fernet symmetric key for encrypting LLM provider credentials at rest.
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

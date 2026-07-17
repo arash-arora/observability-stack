@@ -138,7 +138,7 @@ export default function ApplicationsPage() {
          {canCreate && (
              <Button 
                onClick={() => setIsModalOpen(true)}
-               disabled={selectedOrg && orgProjects.length === 0}
+               disabled={!!(selectedOrg && orgProjects.length === 0)}
                className="bg-[#0071e3] hover:bg-[#0071e3]/90 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
              >
                <Plus size={14} /> New Application

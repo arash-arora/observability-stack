@@ -16,8 +16,10 @@ COPY . .
 
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_API_PORT
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_PORT=$NEXT_PUBLIC_API_PORT
 
 # Next.js collects completely anonymous telemetry data about general usage.
 # Learn more here: https://nextjs.org/telemetry
