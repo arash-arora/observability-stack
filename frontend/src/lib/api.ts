@@ -11,14 +11,9 @@ const resolveApiBaseUrl = () => {
     return `${normalizeBase(process.env.NEXT_PUBLIC_API_URL)}/api/v1`;
   }
 
-  const port = process.env.NEXT_PUBLIC_API_PORT || '8010';
-
-  // Fallback for misconfigured NEXT_PUBLIC envs in containerized deployments.
-  if (typeof window !== 'undefined') {
-    const { protocol, hostname } = window.location;
-    return `${protocol}//${hostname}:${port}/api/v1`;
-  }
-
+  // Fallback to relative routing. Under Docker standalone mode, the frontend server
+  // will proxy `/api/v1` requests to BACKEND_API_URL (default: http://backend:8000)
+  // at runtime, preventing build-time IP/port configuration issues and CORS.
   return '/api/v1';
 };
 
