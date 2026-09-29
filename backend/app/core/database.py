@@ -43,6 +43,9 @@ async def init_db():
         await conn.execute(text("ALTER TABLE llmprovider ADD COLUMN IF NOT EXISTS provider_config JSON"))
         # Add key_prefix column for ApiKey display support
         await conn.execute(text("ALTER TABLE apikey ADD COLUMN IF NOT EXISTS key_prefix VARCHAR DEFAULT ''"))
+        # Add persona and organization columns for User persona evaluation support
+        await conn.execute(text("ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS persona VARCHAR DEFAULT 'Default'"))
+        await conn.execute(text("ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS organization VARCHAR DEFAULT NULL"))
 
 
     # Seed roles

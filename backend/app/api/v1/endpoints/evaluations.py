@@ -96,6 +96,23 @@ async def list_metrics(
     return filtered_metrics
 
 
+@router.get("/personas")
+async def list_evaluation_personas():
+    """
+    List available evaluation personas and perspective details.
+    """
+    from app.core.evaluation.integrations.prompts import (
+        AVAILABLE_PERSONAS,
+        PERSONA_PERSPECTIVES,
+    )
+
+    return {
+        "personas": AVAILABLE_PERSONAS,
+        "default": "Default",
+        "details": PERSONA_PERSPECTIVES,
+    }
+
+
 class MetricCreate(BaseModel):
     name: str
     description: str
@@ -245,6 +262,35 @@ async def run_evaluation(
                     status_code=403,
                     detail="Not authorized to run evaluations",
                 )
+    # Resolve Persona (defaults to "Default") and Organization
+    persona = (
+        request.persona
+        or inputs.get("persona")
+        or (getattr(current_user, "persona", None) if current_user else None)
+        or "Default"
+    )
+    organization = (
+        request.organization
+        or inputs.get("organization")
+        or (getattr(current_user, "organization", None) if current_user else None)
+    )
+    if not organization and current_user:
+        try:
+            stmt_org = (
+                select(Organization.name)
+                .join(
+                    OrganizationUserLink,
+                    Organization.id == OrganizationUserLink.organization_id,
+                )
+                .where(OrganizationUserLink.user_id == current_user.id)
+            )
+            org_res = await db.execute(stmt_org)
+            org_name = org_res.scalars().first()
+            if org_name:
+                organization = org_name
+        except Exception as e:
+            logger.warning(f"Could not resolve organization for user: {e}")
+
     provider = inputs.get("provider", "openai")
     model = inputs.get("model", "gpt-4o")
 
@@ -510,16 +556,22 @@ async def run_evaluation(
                     "custom_prompt",
                 }
                 extra_kwargs = {k: v for k, v in inputs.items() if k not in mapped_keys}
+                extra_kwargs["persona"] = persona
+                extra_kwargs["organization"] = organization or ""
 
                 if metric_prompt:
                     import re
 
                     formatted_prompt = metric_prompt
                     variables = set(re.findall(r"\{\{([^}]+)\}\}", metric_prompt))
+                    inputs_dict = dict(inputs)
+                    inputs_dict.setdefault("persona", persona)
+                    inputs_dict.setdefault("organization", organization or "")
+
                     for var in variables:
-                        val = inputs.get(var)
+                        val = inputs_dict.get(var)
                         if val is None:
-                            val = inputs.get(var.lower(), "")
+                            val = inputs_dict.get(var.lower(), "")
                         formatted_prompt = formatted_prompt.replace(
                             f"{{{{{var}}}}}", str(val)
                         )
@@ -528,9 +580,9 @@ async def run_evaluation(
                         re.findall(r"(?<!\{)\{([^}]+)\}(?!\})", formatted_prompt)
                     )
                     for var in single_vars:
-                        if var in inputs:
+                        if var in inputs_dict:
                             formatted_prompt = formatted_prompt.replace(
-                                f"{{{var}}}", str(inputs[var])
+                                f"{{{var}}}", str(inputs_dict[var])
                             )
 
                     extra_kwargs["custom_instructions"] = formatted_prompt
@@ -547,6 +599,8 @@ async def run_evaluation(
                     trace=trace_input,
                     rubric=rubric_prompt,
                     trace_enabled=False,  # tracing disabled
+                    persona=persona,
+                    organization=organization,
                     **extra_kwargs,
                 )
                 if inspect.iscoroutine(res):
@@ -1523,6 +1577,19 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                     for attempt in range(1, 4):  # Retry up to 3 times
                         try:
                             extra_kwargs = {}
+                            batch_persona = (
+                                trace_data.get("persona")
+                                or getattr(current_user, "persona", None)
+                                or "Default"
+                            )
+                            batch_org = (
+                                trace_data.get("organization")
+                                or getattr(current_user, "organization", None)
+                                or ""
+                            )
+                            extra_kwargs["persona"] = batch_persona
+                            extra_kwargs["organization"] = batch_org
+
                             if metric_prompt:
                                 import re
 
@@ -1536,6 +1603,8 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                                     "output": output,
                                     "response": output,
                                     "context": context,
+                                    "persona": batch_persona,
+                                    "organization": batch_org,
                                 }
                                 for var in variables:
                                     val = inputs_dict.get(var)
@@ -1573,6 +1642,8 @@ async def run_batch_evaluation_task(batch_id: uuid.UUID):
                                     ),
                                     expected=None,
                                     rubric=rubric_prompt,
+                                    persona=batch_persona,
+                                    organization=batch_org,
                                     **extra_kwargs,
                                 )
 

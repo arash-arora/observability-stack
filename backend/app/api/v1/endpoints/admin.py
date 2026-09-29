@@ -16,6 +16,8 @@ class UserReadAdmin(BaseModel):
     email: str
     full_name: str | None = None
     is_superuser: bool
+    persona: str | None = "Default"
+    organization: str | None = None
     created_at: Any
     roles: List[str] = []
 
@@ -62,11 +64,17 @@ async def list_users(
             f"{org_name}: {role_name}" for org_name, role_name in roles_data
         ]
 
+        org_name = user.organization
+        if not org_name and roles_data:
+            org_name = roles_data[0][0]
+
         user_read = UserReadAdmin(
             id=user.id,
             email=user.email,
             full_name=user.full_name,
             is_superuser=user.is_superuser,
+            persona=user.persona or "Default",
+            organization=org_name,
             created_at=user.created_at,
             roles=roles_formatted,
         )

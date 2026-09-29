@@ -20,6 +20,8 @@ from app.core.evaluation.integrations.prompts import (
     HITL_PROMPT_TEMPLATE,
     WORKFLOW_COMPLETION_PROMPT_TEMPLATE,
     CUSTOM_METRIC_PROMPT_TEMPLATE,
+    format_persona_context,
+    normalize_persona,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,12 @@ class BaseAgentEvaluator(Evaluator):
 
                     trace_data_str = json.dumps(trace_data, indent=2, default=str)
 
+            # Persona and Organization context
+            persona = kwargs.get("persona") or "Default"
+            organization = kwargs.get("organization") or ""
+            canonical_persona = normalize_persona(persona)
+            persona_context_str = format_persona_context(canonical_persona, organization)
+
             # Collect hitl_info if present
             hitl_info = kwargs.get("hitl_info", "None")
             custom_instructions = kwargs.get("custom_instructions") or kwargs.get("criteria", "")
@@ -169,6 +177,9 @@ class BaseAgentEvaluator(Evaluator):
                 "tool_definitions": kwargs.get("tool_definitions", ""),
                 "agent_definitions": kwargs.get("agent_definitions", ""),
                 "HITL_INFO": hitl_info,
+                "persona": canonical_persona,
+                "organization": organization or "Standard / Not Specified",
+                "persona_context": persona_context_str,
             }
 
             # Standard evaluation template substitution
@@ -180,7 +191,8 @@ class BaseAgentEvaluator(Evaluator):
             if custom_instructions and self.prompt_template == CUSTOM_METRIC_PROMPT_TEMPLATE:
                 formatted_prompt = self.prompt_template.format(
                     **{k: v for k, v in prompt_kwargs.items() if k in (
-                        "trace_data", "agents", "tools", "custom_instructions"
+                        "trace_data", "agents", "tools", "custom_instructions",
+                        "persona_context", "persona", "organization"
                     )}
                 )
             else:
@@ -191,7 +203,17 @@ class BaseAgentEvaluator(Evaluator):
                         **prompt_kwargs,
                     )
                 except KeyError:
+                    # In case of missing keys or unmatched placeholders, safely replace known placeholders
                     formatted_prompt = self.prompt_template
+                    all_substitutions = {
+                        "standard_evaluation": standard_eval_text,
+                        "rubric_score_guidelines": rubric_guidelines,
+                        **prompt_kwargs,
+                    }
+                    for k, v in all_substitutions.items():
+                        placeholder = f"{{{k}}}"
+                        if placeholder in formatted_prompt:
+                            formatted_prompt = formatted_prompt.replace(placeholder, str(v))
 
             # LLM call — use JSON mode only for openai/azure
             if self.provider in ("openai", "azure"):
@@ -246,6 +268,8 @@ class BaseAgentEvaluator(Evaluator):
                     "feedbacks": main_data.get("feedbacks", main_data.get("feedback", [])),
                     "evaluator_input": input_query,
                     "evaluator_output": output,
+                    "persona": canonical_persona,
+                    "organization": organization,
                 }
 
                 return EvaluationResult(
@@ -264,7 +288,11 @@ class BaseAgentEvaluator(Evaluator):
                     score=score,
                     passed=score >= 0.5,
                     reason=cleaned_response[:500],
-                    metadata={"raw_response": cleaned_response},
+                    metadata={
+                        "raw_response": cleaned_response,
+                        "persona": canonical_persona,
+                        "organization": organization,
+                    },
                 )
 
         except Exception as exc:

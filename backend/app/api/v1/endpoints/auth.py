@@ -18,6 +18,8 @@ class UserCreate(BaseModel):
     email: str
     password: str
     full_name: str | None = None
+    persona: str | None = "Default"
+    organization: str | None = None
 
 
 class UserRead(BaseModel):
@@ -25,6 +27,8 @@ class UserRead(BaseModel):
     email: str
     full_name: str | None = None
     is_superuser: bool = False
+    persona: str | None = "Default"
+    organization: str | None = None
 
 
 class Token(BaseModel):
@@ -58,6 +62,8 @@ async def create_user(
         hashed_password=security.get_password_hash(user_in.password),
         full_name=user_in.full_name,
         is_superuser=is_superuser,
+        persona=user_in.persona or "Default",
+        organization=user_in.organization,
     )
     session.add(user)
     await session.commit()

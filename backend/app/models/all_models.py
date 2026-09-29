@@ -31,6 +31,8 @@ class User(SQLModel, table=True):
     hashed_password: str
     full_name: Optional[str] = None
     is_superuser: bool = Field(default=False)
+    persona: Optional[str] = Field(default="Default")
+    organization: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     organizations: List["Organization"] = Relationship(

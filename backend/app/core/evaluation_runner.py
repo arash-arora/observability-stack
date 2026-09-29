@@ -439,6 +439,7 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                         if app_res and app_res.rubric_prompt:
                             rubric_prompt = app_res.rubric_prompt
 
+                    rule_persona = getattr(rule, "persona", None) or "Default"
                     async def _execute_eval():
                         res = evaluator.evaluate(
                             input_query=query,
@@ -449,7 +450,8 @@ async def run_triggered_evaluation(rule_id: int, trace_data: dict):
                             trace=trace,
                             agents=workflow_details.get("agents", []) if workflow_details else [],
                             tools=workflow_details.get("tools", []) if workflow_details else [],
-                            workflow_details=workflow_details
+                            workflow_details=workflow_details,
+                            persona=rule_persona,
                         )
                         if inspect.iscoroutine(res):
                             res = await res

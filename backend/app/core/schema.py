@@ -17,6 +17,8 @@ class EvaluationRequest(BaseModel):
     metric_id: str
     inputs: Dict[str, Any] 
     trace_id: Optional[str] = None
+    persona: Optional[str] = None
+    organization: Optional[str] = None
 
 class EvaluationResponse(BaseModel):
     score: float
