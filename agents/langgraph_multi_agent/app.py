@@ -1,7 +1,8 @@
 """
 Streamlit Multi-Agent Chat Application with Persona-Tailored Evaluations.
-Built with LangGraph (3 Agents: SupervisorAgent, AnalyticsAgent, ReporterAgent).
-Supports toggling between Dummy Responses & Evaluations and Real-time Groq LLM Calls.
+Built with LangGraph (SupervisorAgent, AnalyticsAgent, ReporterAgent).
+Supports authentication via dynamic user JSON (email_id: persona mapping), automated per-persona evaluations,
+and toggling between Dummy Responses/Evaluations and Real-time Groq LLM Calls.
 """
 import os
 import sys
@@ -39,10 +40,67 @@ from agents.langgraph_multi_agent.graph import run_multi_agent_workflow
 from agents.langgraph_multi_agent.eval_client import (
     get_available_personas,
     evaluate_chat_response,
-    DEFAULT_PERSONAS,
 )
 
-DEFAULT_GROQ_MODEL = "groq/llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "groq/openai/gpt-oss-20b"
+USERS_FILE = os.path.join(os.path.dirname(__file__), "users.json")
+
+
+def load_users_mapping() -> dict:
+    """Load email_id to persona mapping directly from JSON file on each execution."""
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    # Fallback to 3 canonical personas: sales, marketing, IT
+    return {
+        "sales@company.com": "sales",
+        "marketing@company.com": "marketing",
+        "it@company.com": "IT",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Persona Metadata Definition & Flexible Lookup
+# ---------------------------------------------------------------------------
+PERSONA_META = {
+    "sales": {
+        "title": "Sales",
+        "icon": "💼",
+        "description": "Commercial viability, quarterly revenue, quota attainment, pipeline velocity, client-ready clarity.",
+        "example": "Highlights $4.85M revenue, 107.8% quota, $8.2M pipeline, and deal momentum.",
+    },
+    "marketing": {
+        "title": "Marketing",
+        "icon": "📢",
+        "description": "Audience engagement, campaign performance, lead acquisition channels, brand reach, CAC/ROAS.",
+        "example": "Evaluates MQL/SQL counts, channel attribution, and demand generation ROI.",
+    },
+    "it": {
+        "title": "IT",
+        "icon": "🖥️",
+        "description": "System architecture, infrastructure reliability, database performance, latency (p50/p95), error rates, API contracts.",
+        "example": "Demands p50/p95 latency metrics, database partitions, and query reproducibility.",
+    },
+}
+
+
+def get_persona_info(persona_name: str) -> dict:
+    """Normalize persona lookup to support any case or custom persona dynamically."""
+    key = str(persona_name).strip().lower()
+    if key in PERSONA_META:
+        return PERSONA_META[key]
+    return {
+        "title": persona_name,
+        "icon": "👤",
+        "description": f"Domain-specific operational criteria and performance metrics for {persona_name}.",
+        "example": f"Evaluates factual accuracy, directness, and relevance tailored to {persona_name}.",
+    }
+
 
 # ---------------------------------------------------------------------------
 # Custom CSS for Premium Design
@@ -89,7 +147,7 @@ st.markdown(
         border: 1px solid rgba(16, 185, 129, 0.4);
     }
     .persona-card {
-        padding: 1.2rem;
+        padding: 1.5rem;
         border-radius: 12px;
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -119,13 +177,16 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
-# Session State Initialization
+# Session State Initialization & Dynamic JSON Sync
 # ---------------------------------------------------------------------------
-if "session_started" not in st.session_state:
-    st.session_state.session_started = False
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
 
 if "persona" not in st.session_state:
-    st.session_state.persona = "Sales"
+    st.session_state.persona = "sales"
 
 if "organization" not in st.session_state:
     st.session_state.organization = "Acme Global"
@@ -134,56 +195,141 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "backend_url" not in st.session_state:
-    st.session_state.backend_url = "http://localhost:8000"
+    st.session_state.backend_url = "http://localhost:8010"
 
 if "realtime_mode" not in st.session_state:
-    st.session_state.realtime_mode = False  # Default to Dummy Mode
+    st.session_state.realtime_mode = True  # Real-time Groq LLM calls active by default
 
 st.session_state.llm_model = DEFAULT_GROQ_MODEL
 st.session_state.llm_api_key = os.getenv("GROQ_API_KEY", "")
 
-available_personas = get_available_personas(st.session_state.backend_url)
+# Dynamically load the user mapping on every run
+users_mapping = load_users_mapping()
 
-PERSONA_META = {
-    "Sales": {
-        "icon": "💼",
-        "description": "Commercial viability, quarterly revenue, quota attainment, pipeline velocity, client-ready clarity.",
-        "example": "Highlights $4.85M revenue, 107.8% quota, $8.2M pipeline, and deal momentum.",
-    },
-    "Developer": {
-        "icon": "💻",
-        "description": "Technical precision, database schemas, query latency (p50/p95), error rates, API contracts.",
-        "example": "Demands p50/p95 latency metrics, database partitions, and query reproducibility.",
-    },
-    "Marketing": {
-        "icon": "📢",
-        "description": "Audience engagement, campaign performance, lead acquisition channels, brand reach, CAC/ROAS.",
-        "example": "Evaluates MQL/SQL counts, channel attribution, and demand generation ROI.",
-    },
-    "Product team": {
-        "icon": "🚀",
-        "description": "User experience (UX), product adoption, DAU/MAU engagement, retention, roadmap prioritization.",
-        "example": "Focuses on 88.2% 30d retention, feature health, and user dropoff points.",
-    },
-    "Default": {
-        "icon": "⚖️",
-        "description": "Standard objective evaluation assessing factual accuracy, completeness, and overall answer clarity.",
-        "example": "Evaluates general truthfulness, directness, and factual balance.",
-    },
-}
+# If user is currently logged in, sync active persona automatically with latest JSON content
+if st.session_state.logged_in and st.session_state.user_email:
+    clean_user = st.session_state.user_email.strip().lower()
+    for u_email, p_name in users_mapping.items():
+        if u_email.strip().lower() == clean_user:
+            st.session_state.persona = p_name
+            break
 
 # ---------------------------------------------------------------------------
-# Sidebar (Left Bar): Mode Switcher & Configuration (Always Available)
+# View 1: Login Screen (Shown First When Not Logged In)
 # ---------------------------------------------------------------------------
+if not st.session_state.logged_in:
+    # Login View Left Sidebar
+    with st.sidebar:
+        st.markdown('<div class="main-header" style="font-size: 1.5rem;">🤖 Enterprise Agent</div>', unsafe_allow_html=True)
+        st.caption("Please log in to continue")
+        st.markdown("---")
+        st.markdown("### 🎛️ Execution Mode")
+        st.session_state.realtime_mode = st.toggle(
+            "⚡ Real-time LLM Calls",
+            value=st.session_state.realtime_mode,
+            key="login_mode_toggle",
+            help="Switch between Dummy responses & evaluations (no API key needed) and live Real-time Groq LLM calls.",
+        )
+        if st.session_state.realtime_mode:
+            env_key = os.getenv("GROQ_API_KEY", "")
+            st.session_state.llm_api_key = st.text_input(
+                "Groq API Key:",
+                value=st.session_state.get("llm_api_key") or env_key,
+                type="password",
+                key="login_groq_key_input",
+            )
+
+    st.markdown('<div class="main-header">🔐 Enterprise AI Assistant Login</div>', unsafe_allow_html=True)
+    st.write("Sign in with your corporate email to access your persona-tailored workspace.")
+
+    col_l1, col_l2 = st.columns([1.2, 1], gap="large")
+
+    with col_l1:
+        st.markdown('<div class="persona-card">', unsafe_allow_html=True)
+        st.markdown("### Sign In")
+        with st.form("login_form"):
+            email_input = st.text_input(
+                "Corporate Email ID",
+                placeholder="e.g. sales@company.com",
+                key="input_email",
+            )
+            pwd_input = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Enter any password (demo mode)",
+                key="input_password",
+            )
+            st.caption("ℹ️ *Password can be anything for demo purposes.*")
+
+            submit_login = st.form_submit_button("🚀 Sign In", type="primary", use_container_width=True)
+
+            if submit_login:
+                clean_email = email_input.strip().lower()
+                matched_persona = None
+                for u_email, p_name in users_mapping.items():
+                    if u_email.strip().lower() == clean_email:
+                        matched_persona = p_name
+                        break
+
+                if matched_persona:
+                    st.session_state.logged_in = True
+                    st.session_state.user_email = email_input.strip()
+                    st.session_state.persona = matched_persona
+                    st.session_state.organization = "Acme Global"
+                    p_info = get_persona_info(matched_persona)
+                    st.success(f"Welcome! Authenticated as {email_input.strip()} ({p_info['icon']} {matched_persona}).")
+                    time.sleep(0.3)
+                    st.rerun()
+                else:
+                    if not clean_email:
+                        st.error("Please enter an email address.")
+                    else:
+                        st.error("Email not recognized. Please use one of the authorized accounts.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_l2:
+        st.markdown("### 👥 Quick Sign-In Accounts")
+        st.caption("Click any account below to log in instantly:")
+
+        seen_emails = set()
+        for u_email, p_name in users_mapping.items():
+            if u_email.lower() in seen_emails:
+                continue
+            seen_emails.add(u_email.lower())
+            p_info = get_persona_info(p_name)
+            btn_label = f"{p_info['icon']} {p_name} — {u_email}"
+            if st.button(btn_label, use_container_width=True, key=f"quick_btn_{u_email}"):
+                st.session_state.logged_in = True
+                st.session_state.user_email = u_email
+                st.session_state.persona = p_name
+                st.session_state.organization = "Acme Global"
+                st.rerun()
+
+    st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Sidebar (Left Bar): Logged-in User, Persona, and Execution Mode Only
+# ---------------------------------------------------------------------------
+active_p_info = get_persona_info(st.session_state.persona)
+
 with st.sidebar:
-    st.markdown('<div class="main-header" style="font-size: 1.5rem;">🤖 LangGraph Agent</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header" style="font-size: 1.5rem;">🤖 Multi-Agent Chat</div>', unsafe_allow_html=True)
+
+    # 1. Logged in user info & Persona
+    st.markdown("### 👤 User Profile")
     st.markdown(
-        f'<div class="persona-badge">Perspective: {st.session_state.persona}</div> '
-        f'<span style="font-size:0.85rem; color:#94A3B8;">({st.session_state.organization})</span>',
+        f'<div style="padding: 12px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 15px;">'
+        f'<div style="font-size: 0.72rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Logged in User</div>'
+        f'<div style="font-weight: 600; font-size: 0.95rem; color: #F8FAFC; word-break: break-all; margin-top: 2px;">{st.session_state.user_email}</div>'
+        f'<div style="margin-top: 8px;">'
+        f'<span class="persona-badge">{active_p_info["icon"]} Persona: {st.session_state.persona}</span>'
+        f'</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("---")
+    # 2. Execution Mode Switcher
     st.markdown("### 🎛️ Execution Mode")
     mode_toggle = st.toggle(
         "⚡ Real-time LLM Calls",
@@ -197,7 +343,7 @@ with st.sidebar:
         env_key = os.getenv("GROQ_API_KEY", "")
         st.markdown(
             f'<div style="padding: 10px 14px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); margin-bottom: 10px;">'
-            f'<span style="color: #34D399; font-weight: 700; font-size: 0.9rem;">🟢 Real-time Groq LLM Active</span><br>'
+            f'<span style="color: #34D399; font-weight: 700; font-size: 0.88rem;">🟢 Real-time Groq LLM Active</span><br>'
             f'<span style="font-weight: 400; font-size: 0.78rem; color: #A7F3D0;">Engine: <b>Groq (llama-3.3-70b-versatile)</b></span>'
             f'</div>',
             unsafe_allow_html=True,
@@ -212,106 +358,22 @@ with st.sidebar:
     else:
         st.markdown(
             '<div style="padding: 10px 14px; border-radius: 8px; background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); margin-bottom: 12px;">'
-            '<span style="color: #818CF8; font-weight: 700; font-size: 0.9rem;">⚪ Dummy Mode Active</span><br>'
+            '<span style="color: #818CF8; font-weight: 700; font-size: 0.88rem;">⚪ Dummy Mode Active</span><br>'
             '<span style="font-weight: 400; font-size: 0.78rem; color: #C7D2FE;">Fast deterministic responses & mock evaluations without API consumption.</span>'
             '</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown("---")
-    if st.session_state.session_started:
-        if st.button("🔄 Change Persona / New Session", use_container_width=True):
-            st.session_state.session_started = False
-            st.session_state.messages = []
-            st.rerun()
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.user_email = ""
+        st.session_state.messages = []
+        st.rerun()
 
-    st.markdown("### 🧩 Multi-Agent Architecture")
-    st.markdown(
-        """
-        - 🧠 **SupervisorAgent**
-          *Decomposes query & orchestrates plan*
-        - 🔬 **AnalyticsAgent**
-          *Executes Sales, Telemetry & Marketing tools*
-        - 📝 **ReporterAgent**
-          *Synthesizes findings into verified report*
-        """
-    )
-
-    if st.session_state.session_started:
-        st.markdown("---")
-        st.markdown("### 💡 Quick Test Prompts")
-        quick_prompts = [
-            "What is the sales this quarter?",
-            "Show me API latency and query performance metrics.",
-            "What are our top customer acquisition channels and CAC?",
-            "What is our DAU/MAU and feature adoption rate?",
-        ]
-        for qp in quick_prompts:
-            if st.button(qp, use_container_width=True, key=f"quick_{qp}"):
-                st.session_state.input_prompt = qp
-
-        st.markdown("---")
-        st.session_state.backend_url = st.text_input("Backend API URL", value=st.session_state.backend_url)
-        if st.button("🗑️ Clear Chat History", use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
-
-
-# ---------------------------------------------------------------------------
-# View 1: Before Session Start (Persona Selection Screen)
-# ---------------------------------------------------------------------------
-if not st.session_state.session_started:
-    st.markdown('<div class="main-header">🤖 Enterprise Multi-Agent System</div>', unsafe_allow_html=True)
-    st.markdown("### Step 1: Select Session Persona & Organization")
-    st.write(
-        "Before beginning your chat session, select the target **Persona** and **Organization**. "
-        "The multi-agent workflow and downstream evaluations will be tailored to this perspective."
-    )
-
-    mode_notice = (
-        "🟢 **Mode:** Real-time Groq LLM active (`groq/llama-3.3-70b-versatile`)"
-        if st.session_state.realtime_mode
-        else "⚪ **Mode:** Dummy responses & evaluations (Fast / Zero API cost)"
-    )
-    st.caption(f"Current execution setting: {mode_notice}. You can switch this anytime using the toggle in the left bar.")
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.markdown("#### Choose Persona:")
-        chosen_persona = st.radio(
-            "Select Persona for this session:",
-            options=available_personas,
-            index=available_personas.index("Sales") if "Sales" in available_personas else 0,
-            format_func=lambda p: f"{PERSONA_META.get(p, {}).get('icon', '👤')} {p} — {PERSONA_META.get(p, {}).get('description', '')}",
-        )
-
-        org_input = st.text_input(
-            "Organization Name:",
-            value=st.session_state.organization,
-            help="The organization context passed to agents and evaluation metric prompts.",
-        )
-
-        if st.button("🚀 Start Session with Selected Persona", type="primary", use_container_width=True):
-            st.session_state.persona = chosen_persona
-            st.session_state.organization = org_input.strip() or "Acme Global"
-            st.session_state.session_started = True
-            st.rerun()
-
-    with col2:
-        st.markdown("#### Selected Persona Perspective:")
-        info = PERSONA_META.get(chosen_persona, PERSONA_META["Default"])
-        st.info(
-            f"**{info['icon']} {chosen_persona} Perspective**\n\n"
-            f"**Focus Areas:**\n{info['description']}\n\n"
-            f"**Evaluation Standard:**\n{info['example']}"
-        )
-        st.caption(
-            "💡 *Tip:* You can toggle between Dummy responses and Real-time Groq LLM calls at any time "
-            "using the switch in the left sidebar."
-        )
-
-    st.stop()
+    if st.button("🗑️ Clear Chat History", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +385,8 @@ col_h1, col_h2 = st.columns([2, 2])
 with col_h1:
     st.markdown('<div class="main-header">Enterprise Multi-Agent Chat</div>', unsafe_allow_html=True)
     st.caption(
-        f"Active Session: **{st.session_state.persona}** perspective | Organization: **{st.session_state.organization}** | "
-        "Agents instrumented: Supervisor, Analytics, Reporter"
+        f"User: **{st.session_state.user_email}** | Persona: **{st.session_state.persona}** | "
+        f"Organization: **{st.session_state.organization}**"
     )
 with col_h2:
     mode_badge_html = (
@@ -335,11 +397,36 @@ with col_h2:
     st.markdown(
         f'<div style="text-align: right; margin-top: 10px;">'
         f'{mode_badge_html} &nbsp; '
-        f'<span class="persona-badge">Perspective: {st.session_state.persona}</span></div>',
+        f'<span class="persona-badge">{active_p_info["icon"]} Persona: {st.session_state.persona}</span></div>',
         unsafe_allow_html=True,
     )
 
 st.markdown("---")
+
+# Empty state welcome card and prompt suggestions
+if not st.session_state.messages:
+    st.markdown(
+        f'<div class="persona-card">'
+        f'<h4>{active_p_info["icon"]} Welcome, {st.session_state.persona} Perspective!</h4>'
+        f'<p style="color: #94A3B8; margin-bottom: 0.8rem;">{active_p_info["description"]}</p>'
+        f'<div style="font-size: 0.85rem; color: #818CF8;">🎯 <b>Your Persona Evaluation Standard:</b> {active_p_info["example"]}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("##### 💡 Try asking a question:")
+    sample_col1, sample_col2, sample_col3 = st.columns(3)
+    with sample_col1:
+        if st.button("💼 What is the sales this quarter?", use_container_width=True):
+            st.session_state.input_prompt = "What is the sales this quarter?"
+            st.rerun()
+    with sample_col2:
+        if st.button("📢 Top acquisition channels & CAC?", use_container_width=True):
+            st.session_state.input_prompt = "What are our top customer acquisition channels and CAC?"
+            st.rerun()
+    with sample_col3:
+        if st.button("🖥️ API latency & query telemetry?", use_container_width=True):
+            st.session_state.input_prompt = "Show me API latency and query performance metrics."
+            st.rerun()
 
 # Render message history
 for msg_idx, message in enumerate(st.session_state.messages):
@@ -356,7 +443,7 @@ for msg_idx, message in enumerate(st.session_state.messages):
 
         st.markdown(message["content"])
 
-        # If assistant message, render Trace Inspector and Optional Evaluation
+        # If assistant message, render Trace Inspector and Default Automated Evaluation
         if message["role"] == "assistant" and "trace" in message:
             trace = message["trace"]
             obs = trace.get("observations", [])
@@ -395,135 +482,101 @@ for msg_idx, message in enumerate(st.session_state.messages):
                             st.caption("**Output:**")
                             st.json(item.get("output"), expanded=False)
 
-            # 2. Evaluation Section
-            eval_mode_desc = (
-                "⚡ Real-time Groq LLM Evaluation"
-                if st.session_state.realtime_mode
-                else "⚪ Dummy Persona Evaluation"
-            )
-            st.markdown(f"##### ⚖️ Evaluate this Response *({eval_mode_desc})*")
-            eval_col1, eval_col2, eval_col3 = st.columns([2, 1, 1])
-
-            with eval_col1:
-                eval_persona = st.selectbox(
-                    "Persona for evaluation:",
-                    options=available_personas,
-                    index=available_personas.index(st.session_state.persona) if st.session_state.persona in available_personas else 0,
-                    key=f"eval_persona_{msg_idx}",
-                    help="Select which perspective to evaluate this response with.",
-                )
-
-            with eval_col2:
-                st.write("")
-                st.write("")
-                run_eval_btn = st.button("Run Evaluation", key=f"eval_btn_{msg_idx}", type="secondary")
-
-            with eval_col3:
-                st.write("")
-                st.write("")
-                compare_all_btn = st.button("Compare All 5", key=f"compare_btn_{msg_idx}", help="Evaluate against all 5 personas side-by-side")
-
-            # Store evaluations in message state if not present
+            # 2. Automated Evaluation Section (Default run for user's persona only; no persona selector or comparison)
             if "evaluations" not in message:
                 message["evaluations"] = {}
 
-            # Execute single evaluation
-            if run_eval_btn:
-                eval_spinner_msg = (
-                    f"Running real-time Groq LLM evaluation for {eval_persona} perspective..."
-                    if st.session_state.realtime_mode
-                    else f"Evaluating response from perspective of {eval_persona} (Dummy mode)..."
-                )
-                with st.spinner(eval_spinner_msg):
-                    eval_result = evaluate_chat_response(
+            user_persona = st.session_state.persona
+            if user_persona not in message["evaluations"]:
+                with st.spinner(f"Evaluating response for {user_persona} persona..."):
+                    eval_res = evaluate_chat_response(
                         query=message.get("query", ""),
                         output=message["content"],
                         trace=trace,
-                        persona=eval_persona,
+                        persona=user_persona,
                         organization=st.session_state.organization,
                         backend_url=st.session_state.backend_url,
                         api_key=st.session_state.llm_api_key,
                         execution_mode="realtime" if st.session_state.realtime_mode else "dummy",
                         model_name=DEFAULT_GROQ_MODEL,
                     )
-                    message["evaluations"][eval_persona] = eval_result
+                    message["evaluations"][user_persona] = eval_res
 
-            # Execute compare all
-            if compare_all_btn:
-                compare_spinner_msg = (
-                    "Running real-time Groq LLM evaluations across all 5 personas..."
-                    if st.session_state.realtime_mode
-                    else "Evaluating across all 5 personas (Sales, Developer, Marketing, Product team, Default)..."
-                )
-                with st.spinner(compare_spinner_msg):
-                    for p in available_personas:
-                        eval_res = evaluate_chat_response(
-                            query=message.get("query", ""),
-                            output=message["content"],
-                            trace=trace,
-                            persona=p,
-                            organization=st.session_state.organization,
-                            backend_url=st.session_state.backend_url,
-                            api_key=st.session_state.llm_api_key,
-                            execution_mode="realtime" if st.session_state.realtime_mode else "dummy",
-                            model_name=DEFAULT_GROQ_MODEL,
-                        )
-                        message["evaluations"][p] = eval_res
+            res = message["evaluations"][user_persona]
+            eval_mode_desc = (
+                "⚡ Live Groq LLM Evaluation"
+                if res.get("mode") in ("realtime_llm", "realtime_backend_api")
+                else "⚪ Dummy Persona Evaluation"
+            )
+            st.markdown(f"##### ⚖️ Automated Evaluation Result *({user_persona} Perspective — {eval_mode_desc})*")
 
-            # Render Evaluation Results if available
-            if message["evaluations"]:
-                st.markdown("---")
-                st.markdown("#### 📊 Evaluation Results")
+            c_score, c_meta = st.columns([1, 3])
+            score_val = res.get("score", 0.0)
+            passed = res.get("passed", score_val >= 60.0)
+            res_mode = res.get("mode", "dummy")
 
-                eval_keys = list(message["evaluations"].keys())
-                tabs = st.tabs([f"Perspective: {k}" for k in eval_keys])
+            with c_score:
+                badge_class = "score-badge-pass" if passed else "score-badge-fail"
+                status_text = "PASSED" if passed else "NEEDS REVIEW"
+                st.markdown(f'<div class="{badge_class}">{score_val} / 100</div>', unsafe_allow_html=True)
+                st.caption(f"Status: **{status_text}**")
+                st.caption(f"Evaluator Lens: **{user_persona}**")
+                if res_mode in ("realtime_llm", "realtime_backend_api"):
+                    st.markdown('<span class="mode-badge-realtime">⚡ Live Groq LLM</span>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<span class="mode-badge-dummy">⚪ Dummy Evaluation</span>', unsafe_allow_html=True)
 
-                for tab_idx, tab in enumerate(tabs):
-                    p_key = eval_keys[tab_idx]
-                    res = message["evaluations"][p_key]
-                    with tab:
-                        c_score, c_meta = st.columns([1, 3])
-                        score_val = res.get("score", 0.0)
-                        passed = res.get("passed", score_val >= 60.0)
-                        res_mode = res.get("mode", "dummy")
+            with c_meta:
+                st.markdown(f"**Reasoning ({user_persona} Lens):**")
+                st.write(res.get("reasoning", ""))
 
-                        with c_score:
-                            badge_class = "score-badge-pass" if passed else "score-badge-fail"
-                            status_text = "PASSED" if passed else "NEEDS REVIEW"
-                            st.markdown(f'<div class="{badge_class}">{score_val} / 100</div>', unsafe_allow_html=True)
-                            st.caption(f"Status: **{status_text}**")
-                            st.caption(f"Evaluator Lens: **{p_key}**")
-                            if res_mode in ("realtime_llm", "realtime_backend_api"):
-                                st.markdown('<span class="mode-badge-realtime">⚡ Live Groq LLM</span>', unsafe_allow_html=True)
-                            else:
-                                st.markdown('<span class="mode-badge-dummy">⚪ Dummy Evaluation</span>', unsafe_allow_html=True)
+            evidences = res.get("evidences", {})
+            if evidences.get("supporting") or evidences.get("contradicting"):
+                e_c1, e_c2 = st.columns(2)
+                with e_c1:
+                    if evidences.get("supporting"):
+                        st.markdown("✅ **Supporting Evidence:**")
+                        for item in evidences["supporting"]:
+                            st.markdown(f"- {item}")
+                with e_c2:
+                    if evidences.get("contradicting"):
+                        st.markdown("⚠️ **Contradicting / Missing Evidence:**")
+                        for item in evidences["contradicting"]:
+                            st.markdown(f"- {item}")
 
-                        with c_meta:
-                            st.markdown(f"**Reasoning ({p_key} Perspective):**")
-                            st.write(res.get("reasoning", ""))
+            feedbacks = res.get("feedbacks", [])
+            if feedbacks:
+                st.markdown(f"💡 **Actionable Feedback for {user_persona}:**")
+                for fb in feedbacks:
+                    st.markdown(f"- {fb}")
 
-                        evidences = res.get("evidences", {})
-                        if evidences.get("supporting") or evidences.get("contradicting"):
-                            e_c1, e_c2 = st.columns(2)
-                            with e_c1:
-                                if evidences.get("supporting"):
-                                    st.markdown("✅ **Supporting Evidence:**")
-                                    for item in evidences["supporting"]:
-                                        st.markdown(f"- {item}")
-                            with e_c2:
-                                if evidences.get("contradicting"):
-                                    st.markdown("⚠️ **Contradicting / Missing Evidence:**")
-                                    for item in evidences["contradicting"]:
-                                        st.markdown(f"- {item}")
+            # 3. Observability App Trace Link (Direct Link to Traces in Observix)
+            trace_id = trace.get("trace_id", "")
+            trace_url = trace.get("trace_url") or f"http://localhost:8011/dashboard/traces?trace_id={trace_id}"
+            trace_tree_url = trace.get("trace_tree_url") or f"http://localhost:8011/dashboard/traces/{trace_id}"
 
-                        feedbacks = res.get("feedbacks", [])
-                        if feedbacks:
-                            st.markdown(f"💡 **Actionable Feedback for {p_key}:**")
-                            for fb in feedbacks:
-                                st.markdown(f"- {fb}")
+            st.markdown(
+                f"""
+                <div style="margin-top: 14px; padding: 12px 16px; border-radius: 10px; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <span style="font-weight: 700; color: #818CF8; font-size: 0.95rem;">📊 Observability Trace Captured</span><br>
+                        <span style="font-size: 0.8rem; color: #94A3B8;">Trace ID: <code>{trace_id}</code> &bull; Ingested into Observix ClickHouse</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <a href="{trace_url}" target="_blank" style="text-decoration: none; padding: 7px 14px; border-radius: 8px; background: #6366F1; color: white; font-weight: 600; font-size: 0.83rem; display: inline-flex; align-items: center; gap: 6px;">
+                            🔗 View Trace in Observability App ↗
+                        </a>
+                        <a href="{trace_tree_url}" target="_blank" style="text-decoration: none; padding: 7px 14px; border-radius: 8px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #E2E8F0; font-weight: 600; font-size: 0.83rem; display: inline-flex; align-items: center; gap: 6px;">
+                            🌳 Full Trace Tree ↗
+                        </a>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 # ---------------------------------------------------------------------------
-# Chat Input & Multi-Agent Execution
+# Chat Input & Multi-Agent Execution with Default Persona Evaluation
 # ---------------------------------------------------------------------------
 user_prompt = st.chat_input("Ask a question (e.g., 'What is the sales this quarter?')...")
 if "input_prompt" in st.session_state and st.session_state.input_prompt:
@@ -540,17 +593,17 @@ if user_prompt:
     with st.chat_message("assistant"):
         exec_mode = "realtime" if st.session_state.realtime_mode else "dummy"
         status_label = (
-            "🚀 Multi-Agent Workflow Executing (⚡ Real-time Groq LLM)..."
+            "🚀 Executing Multi-Agent Workflow & Persona Evaluation (⚡ Real-time Groq LLM)..."
             if st.session_state.realtime_mode
-            else "🚀 Multi-Agent Workflow Executing (⚪ Dummy Mode)..."
+            else "🚀 Executing Multi-Agent Workflow & Persona Evaluation (⚪ Dummy Mode)..."
         )
         status_box = st.status(status_label, expanded=True)
 
         with status_box:
             st.write("🧠 **SupervisorAgent:** Analyzing query & formulating plan...")
-            time.sleep(0.2)
+            time.sleep(0.15)
             st.write("🔬 **AnalyticsAgent:** Invoking domain tools (Sales, Telemetry, Marketing, Product)...")
-            time.sleep(0.2)
+            time.sleep(0.15)
             st.write(f"📝 **ReporterAgent:** Synthesizing facts tailored to {st.session_state.persona} perspective...")
 
             # Run LangGraph workflow with mode configuration
@@ -561,6 +614,7 @@ if user_prompt:
                 execution_mode=exec_mode,
                 model_name=DEFAULT_GROQ_MODEL,
                 api_key=st.session_state.llm_api_key,
+                user_email=st.session_state.user_email,
             )
 
             if result.get("error"):
@@ -569,7 +623,24 @@ if user_prompt:
                     "A fallback simulated response was generated. You can verify your GROQ_API_KEY in .env."
                 )
 
-            status_box.update(label="✅ Multi-Agent Workflow Completed!", state="complete", expanded=False)
+            st.write(f"⚖️ **Automated Evaluator:** Running default evaluation for {st.session_state.persona} persona...")
+            eval_result = evaluate_chat_response(
+                query=user_prompt,
+                output=result["output"],
+                trace=result["trace"],
+                persona=st.session_state.persona,
+                organization=st.session_state.organization,
+                backend_url=st.session_state.backend_url,
+                api_key=st.session_state.llm_api_key,
+                execution_mode=exec_mode,
+                model_name=DEFAULT_GROQ_MODEL,
+            )
+
+            status_box.update(
+                label=f"✅ Multi-Agent Workflow & {st.session_state.persona} Evaluation Complete!",
+                state="complete",
+                expanded=False,
+            )
 
         final_answer = result["output"]
         trace = result["trace"]
@@ -582,7 +653,7 @@ if user_prompt:
         st.markdown(f'<div style="margin-bottom: 6px;">{tag_badge}</div>', unsafe_allow_html=True)
         st.markdown(final_answer)
 
-        # Store in session messages
+        # Store in session messages with evaluation pre-populated for user's persona
         st.session_state.messages.append({
             "role": "assistant",
             "content": final_answer,
@@ -590,6 +661,6 @@ if user_prompt:
             "trace": trace,
             "mode": result.get("mode", "dummy"),
             "model": result.get("model", DEFAULT_GROQ_MODEL),
-            "evaluations": {},
+            "evaluations": {st.session_state.persona: eval_result},
         })
         st.rerun()

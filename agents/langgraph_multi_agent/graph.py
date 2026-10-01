@@ -4,7 +4,7 @@ LangGraph Multi-Agent Workflow with 3 Instrumented Agents:
 2. AnalyticsAgent (Tool Execution & Quantitative Research)
 3. ReporterAgent (Executive Synthesis & Domain Formatting)
 
-Instruments Agents, Tools, and LLMs into an Observix-compatible Trace.
+Instrumented natively using the Observix SDK (/Users/aarora/dev/research/observix).
 """
 import os
 import json
@@ -19,7 +19,10 @@ BACKEND_DIR = os.path.join(REPO_ROOT, "backend")
 load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 load_dotenv(os.path.join(REPO_ROOT, ".env"))
 
-from agents.langgraph_multi_agent.instrumentation import TraceCollector
+from observix import init_observability, observe, flush
+from observix.llm.openai import OpenAI
+from opentelemetry import trace
+
 from agents.langgraph_multi_agent.tools import (
     query_sales_data,
     query_system_telemetry,
@@ -27,7 +30,12 @@ from agents.langgraph_multi_agent.tools import (
     query_product_metrics,
 )
 
-DEFAULT_GROQ_MODEL = "groq/llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+DEFAULT_OBSERVIX_URL = os.getenv("OBSERVIX_URL", "http://localhost:8010")
+DEFAULT_OBSERVIX_KEY = os.getenv("OBSERVIX_API_KEY", "sk-cortex-live-key-9f8a12bc34de56fa78bc90de")
+
+# Initialize Observix SDK globally
+init_observability(url=DEFAULT_OBSERVIX_URL, api_key=DEFAULT_OBSERVIX_KEY)
 
 
 class MultiAgentState(TypedDict):
@@ -41,7 +49,6 @@ class MultiAgentState(TypedDict):
     analytical_data: Dict[str, Any]
     final_output: str
     error: Optional[str]
-    tracer: Any  # TraceCollector
 
 
 def _call_llm(
@@ -51,58 +58,59 @@ def _call_llm(
     system_instruction: str = "",
     execution_mode: str = "dummy",
 ) -> str:
-    """Execute LLM call using litellm if execution_mode is 'realtime', else return empty string for dummy fallback."""
+    """Execute LLM call using Observix-instrumented OpenAI client connecting to Groq."""
     if execution_mode != "realtime":
         return ""
 
     key = api_key or os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
-    try:
-        import litellm
-        litellm.suppress_debug_info = True
-        messages = []
-        if system_instruction:
-            messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
+    if not key:
+        return ""
 
-        call_kwargs: Dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-            "temperature": 0.2,
-        }
-        if key:
-            call_kwargs["api_key"] = key
+    groq_model = model_name.replace("groq/", "")
+    for attempt in range(3):
+        try:
+            client = OpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=key,
+                name=f"groq/{groq_model}",
+            )
+            messages = []
+            if system_instruction:
+                messages.append({"role": "system", "content": system_instruction})
+            messages.append({"role": "user", "content": prompt})
 
-        resp = litellm.completion(**call_kwargs)
-        return resp.choices[0].message.content or ""
-    except Exception as exc:
-        err_msg = str(exc)
-        if "invalid_api_key" in err_msg.lower() or "invalid api key" in err_msg.lower():
-            raise RuntimeError("Invalid Groq API Key: The key provided in .env was rejected by Groq. Please update GROQ_API_KEY in backend/.env or the sidebar.") from exc
-        raise exc
+            resp = client.chat.completions.create(
+                model=groq_model,
+                messages=messages,
+                temperature=0.2,
+            )
+            choice = resp.choices[0]
+            content = choice.message.content or getattr(choice.message, "reasoning", "") or ""
+            return content.strip()
+        except Exception as exc:
+            if attempt < 2 and ("rate_limit" in str(exc).lower() or "429" in str(exc) or "timeout" in str(exc).lower()):
+                time.sleep(1.0)
+                continue
+            err_msg = str(exc)
+            if "invalid_api_key" in err_msg.lower() or "invalid api key" in err_msg.lower():
+                raise RuntimeError("Invalid Groq API Key: The key provided in .env was rejected by Groq. Please update GROQ_API_KEY in backend/.env or the sidebar.") from exc
+            raise exc
 
 
 # ---------------------------------------------------------------------------
 # Node 1: SupervisorAgent
 # ---------------------------------------------------------------------------
 
+@observe(name="SupervisorAgent", as_agent=True)
 def supervisor_node(state: MultiAgentState) -> Dict[str, Any]:
-    tracer: TraceCollector = state.get("tracer")
+    """Supervisor agent that coordinates multi-agent planning and task delegation."""
     query = state.get("query", "")
     persona = state.get("persona", "Default")
     org = state.get("organization", "Enterprise Corp")
     execution_mode = state.get("execution_mode", "dummy")
-    model_name = state.get("model_name", "gpt-4o")
+    model_name = state.get("model_name") or DEFAULT_GROQ_MODEL
     api_key = state.get("api_key")
 
-    agent_id = ""
-    if tracer:
-        agent_id = tracer.start_agent(
-            name="SupervisorAgent",
-            input_data={"query": query, "persona": persona, "organization": org, "mode": execution_mode},
-            goal="Analyze user inquiry, determine intent, formulate plan and delegate research tasks.",
-        )
-
-    t0 = time.time()
     prompt = f"""You are the SupervisorAgent coordinating an enterprise multi-agent system for {org}.
 User Query: "{query}"
 Target Persona: "{persona}"
@@ -158,16 +166,6 @@ Formulate an execution plan specifying required tools, key dimensions to analyze
                 f"4. Delegate to AnalyticsAgent for data extraction and forward to ReporterAgent."
             )
 
-    duration_ms = (time.time() - t0) * 1000
-    if tracer:
-        tracer.record_llm(
-            model_name=model_name if execution_mode == "realtime" and not llm_error else "dummy-simulator",
-            prompt=prompt,
-            response_text=llm_output,
-            parent_agent_id=agent_id,
-            duration_ms=duration_ms,
-        )
-
     plan = {
         "status": "planned",
         "intent": "enterprise_performance_analysis",
@@ -176,9 +174,6 @@ Formulate an execution plan specifying required tools, key dimensions to analyze
         "mode": execution_mode,
     }
 
-    if tracer:
-        tracer.end_agent(agent_id, output_data=plan)
-
     return {"plan": plan, "error": llm_error if llm_error else state.get("error")}
 
 
@@ -186,36 +181,28 @@ Formulate an execution plan specifying required tools, key dimensions to analyze
 # Node 2: AnalyticsAgent
 # ---------------------------------------------------------------------------
 
+@observe(name="AnalyticsAgent", as_agent=True)
 def analytics_node(state: MultiAgentState) -> Dict[str, Any]:
-    tracer: TraceCollector = state.get("tracer")
+    """Analytics agent executing data retrieval tools and extracting quantitative facts."""
     query = state.get("query", "")
     plan = state.get("plan", {})
     execution_mode = state.get("execution_mode", "dummy")
-    model_name = state.get("model_name", "gpt-4o")
+    model_name = state.get("model_name") or DEFAULT_GROQ_MODEL
     api_key = state.get("api_key")
 
-    agent_id = ""
-    if tracer:
-        agent_id = tracer.start_agent(
-            name="AnalyticsAgent",
-            input_data={"plan": plan, "query": query, "mode": execution_mode},
-            goal="Execute data retrieval tools and extract quantitative facts, logs, and business numbers.",
-        )
+    # 1. Execute Sales Tool (Observix instrumented)
+    sales_data = query_sales_data(quarter="Q3 2026")
 
-    # 1. Execute Sales Tool (Instrumented)
-    sales_data = query_sales_data(quarter="Q3 2026", tracer=tracer, parent_id=agent_id)
+    # 2. Execute System Telemetry Tool (Observix instrumented)
+    tech_data = query_system_telemetry(service="core-sales-service")
 
-    # 2. Execute System Telemetry Tool (Instrumented)
-    tech_data = query_system_telemetry(service="core-sales-service", tracer=tracer, parent_id=agent_id)
+    # 3. Execute Marketing Tool (Observix instrumented)
+    marketing_data = query_marketing_campaigns(quarter="Q3 2026")
 
-    # 3. Execute Marketing Tool (Instrumented)
-    marketing_data = query_marketing_campaigns(quarter="Q3 2026", tracer=tracer, parent_id=agent_id)
-
-    # 4. Execute Product Tool (Instrumented)
-    product_data = query_product_metrics(feature="quarterly_reporting", tracer=tracer, parent_id=agent_id)
+    # 4. Execute Product Tool (Observix instrumented)
+    product_data = query_product_metrics(feature="quarterly_reporting")
 
     # LLM Synthesis of raw tool data
-    t0 = time.time()
     prompt = f"""Summarize and validate the retrieved quantitative data from tools:
 Sales: {json.dumps(sales_data)}
 Tech: {json.dumps(tech_data)}
@@ -246,16 +233,6 @@ Identify core metrics, verified data points, and operational anomalies."""
             "- Product: 18,450 MAU, 7,920 DAU, 76.5% feature adoption, 88.2% 30d retention."
         )
 
-    duration_ms = (time.time() - t0) * 1000
-    if tracer:
-        tracer.record_llm(
-            model_name=model_name if execution_mode == "realtime" and not llm_error else "dummy-simulator",
-            prompt=prompt,
-            response_text=llm_output,
-            parent_agent_id=agent_id,
-            duration_ms=duration_ms,
-        )
-
     analytical_data = {
         "sales": sales_data,
         "technology": tech_data,
@@ -263,9 +240,6 @@ Identify core metrics, verified data points, and operational anomalies."""
         "product": product_data,
         "synthesis": llm_output,
     }
-
-    if tracer:
-        tracer.end_agent(agent_id, output_data=analytical_data)
 
     current_err = state.get("error") or llm_error
     return {"analytical_data": analytical_data, "error": current_err}
@@ -275,25 +249,17 @@ Identify core metrics, verified data points, and operational anomalies."""
 # Node 3: ReporterAgent
 # ---------------------------------------------------------------------------
 
+@observe(name="ReporterAgent", as_agent=True)
 def reporter_node(state: MultiAgentState) -> Dict[str, Any]:
-    tracer: TraceCollector = state.get("tracer")
+    """Reporter agent delivering executive synthesis and persona-tailored report."""
     query = state.get("query", "")
     persona = state.get("persona", "Default")
     org = state.get("organization", "Enterprise Corp")
     data = state.get("analytical_data", {})
     execution_mode = state.get("execution_mode", "dummy")
-    model_name = state.get("model_name", "gpt-4o")
+    model_name = state.get("model_name") or DEFAULT_GROQ_MODEL
     api_key = state.get("api_key")
 
-    agent_id = ""
-    if tracer:
-        agent_id = tracer.start_agent(
-            name="ReporterAgent",
-            input_data={"query": query, "persona": persona, "analytical_data_keys": list(data.keys()), "mode": execution_mode},
-            goal="Synthesize structured comprehensive response answering the user query with multi-domain rigor.",
-        )
-
-    t0 = time.time()
     prompt = f"""You are the ReporterAgent delivering the final answer to the user query for {org}.
 User Query: "{query}"
 Target Persona: "{persona}"
@@ -439,20 +405,6 @@ In Q3 2026, {org} generated **$4,850,000** in total sales revenue, exceeding the
 ---
 *Report generated and validated by Multi-Agent Workflow (SupervisorAgent, AnalyticsAgent, ReporterAgent).*"""
 
-    duration_ms = (time.time() - t0) * 1000
-    if tracer:
-        tracer.record_llm(
-            model_name=model_name if execution_mode == "realtime" and not llm_error else "dummy-simulator",
-            prompt=prompt,
-            response_text=llm_output,
-            parent_agent_id=agent_id,
-            duration_ms=duration_ms,
-        )
-
-    if tracer:
-        tracer.end_agent(agent_id, output_data={"response_preview": llm_output[:120]})
-        tracer.output_response = llm_output
-
     final_err = state.get("error") or llm_error
     return {"final_output": llm_output, "error": final_err}
 
@@ -477,35 +429,28 @@ def build_multi_agent_graph():
     return builder.compile()
 
 
+@observe(name="multi_agent_workflow")
 def run_multi_agent_workflow(
     query: str,
     persona: str = "Default",
     organization: str = "Enterprise Corp",
-    application_name: str = "langgraph-crm-app",
-    execution_mode: str = "dummy",
+    application_name: str = "demo-1",
+    execution_mode: str = "realtime",
     model_name: str = DEFAULT_GROQ_MODEL,
     api_key: Optional[str] = None,
+    user_email: str = "user@company.com",
+    observix_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Run the 3-agent instrumented LangGraph workflow.
-    Supports both 'dummy' (mock/deterministic) and 'realtime' (live LLM calls) execution modes.
-    Returns:
-        {
-            "output": <final_string>,
-            "plan": <plan_dict>,
-            "analytical_data": <data_dict>,
-            "trace": <trace_dict_with_observations>,
-            "mode": <"dummy" | "realtime">,
-            "model": <model_name>,
-            "error": <error_str_or_None>
-        }
+    Run the 3-agent LangGraph workflow instrumented natively with Observix.
+    Automatically traces agents, tools, and LLM inferences, exporting them to ClickHouse.
     """
-    tracer = TraceCollector(
-        application_name=application_name,
-        persona=persona,
-        organization=organization,
-    )
-    tracer.input_query = query
+    url = observix_url or os.getenv("OBSERVIX_URL", DEFAULT_OBSERVIX_URL)
+    key = os.getenv("OBSERVIX_API_KEY", DEFAULT_OBSERVIX_KEY)
+    init_observability(url=url, api_key=key)
+
+    span = trace.get_current_span()
+    trace_id = f"{span.get_span_context().trace_id:032x}"
 
     graph = build_multi_agent_graph()
     initial_state: MultiAgentState = {
@@ -519,19 +464,41 @@ def run_multi_agent_workflow(
         "analytical_data": {},
         "final_output": "",
         "error": None,
-        "tracer": tracer,
     }
 
     result = graph.invoke(initial_state)
 
-    trace_dict = tracer.to_trace_dict()
+    final_text = result.get("final_output", "")
+    plan = result.get("plan", {})
+    analytical_data = result.get("analytical_data", {})
+
+    # Flush all traces and observations to Observix backend
+    try:
+        flush()
+    except Exception as exc:
+        print(f"[ObservixWarning] Flush failed: {exc}")
+
+    trace_dict = {
+        "trace_id": trace_id,
+        "observations": [
+            {"name": "SupervisorAgent", "type": "agent", "status": "success", "input": {"query": query}, "output": plan},
+            {"name": "query_sales_data", "type": "tool", "status": "success", "input": {"quarter": "Q3 2026"}, "output": analytical_data.get("sales")},
+            {"name": "query_system_telemetry", "type": "tool", "status": "success", "input": {"service": "core-sales-service"}, "output": analytical_data.get("technology")},
+            {"name": "query_marketing_campaigns", "type": "tool", "status": "success", "input": {"quarter": "Q3 2026"}, "output": analytical_data.get("marketing")},
+            {"name": "query_product_metrics", "type": "tool", "status": "success", "input": {"feature": "quarterly_reporting"}, "output": analytical_data.get("product")},
+            {"name": "AnalyticsAgent", "type": "agent", "status": "success", "input": plan, "output": analytical_data},
+            {"name": "ReporterAgent", "type": "agent", "status": "success", "input": analytical_data, "output": final_text},
+        ],
+    }
+
     return {
-        "output": result.get("final_output", ""),
-        "plan": result.get("plan", {}),
-        "analytical_data": result.get("analytical_data", {}),
+        "output": final_text,
+        "plan": plan,
+        "analytical_data": analytical_data,
         "trace": trace_dict,
         "mode": execution_mode,
         "model": model_name,
         "error": result.get("error"),
     }
+
 

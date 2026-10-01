@@ -1,21 +1,18 @@
 """
 Domain Tools for Multi-Agent Enterprise Operations.
-Tools are instrumented to log observations to the active TraceCollector.
+Instrumented automatically via Observix (@observe with as_tool=True).
 """
-import time
-import json
 from typing import Dict, Any, Optional
-from agents.langgraph_multi_agent.instrumentation import TraceCollector
+from observix import observe
 
 
+@observe(name="query_sales_data", as_tool=True)
 def query_sales_data(
     quarter: str = "Q3 2026",
-    tracer: Optional[TraceCollector] = None,
-    parent_id: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """Retrieve quarterly commercial performance, revenue, quota, and sales metrics."""
-    t0 = time.time()
-    result = {
+    return {
         "status": "success",
         "quarter": quarter,
         "revenue_actual": "$4,850,000",
@@ -29,27 +26,15 @@ def query_sales_data(
         "top_performing_region": "North America (118% quota)",
         "win_rate_pct": 31.4,
     }
-    duration_ms = (time.time() - t0) * 1000
-
-    if tracer:
-        tracer.record_tool(
-            tool_name="query_sales_data",
-            tool_input={"quarter": quarter},
-            tool_output=result,
-            parent_agent_id=parent_id,
-            duration_ms=duration_ms,
-        )
-    return result
 
 
+@observe(name="query_system_telemetry", as_tool=True)
 def query_system_telemetry(
     service: str = "core-sales-service",
-    tracer: Optional[TraceCollector] = None,
-    parent_id: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """Retrieve technical infrastructure telemetry, latencies, schemas, and query performance."""
-    t0 = time.time()
-    result = {
+    return {
         "status": "healthy",
         "service": service,
         "p50_latency_ms": 28.4,
@@ -67,27 +52,15 @@ def query_system_telemetry(
         "api_endpoint": "GET /api/v2/analytics/quarterly-metrics",
         "cache_hit_ratio_pct": 89.4,
     }
-    duration_ms = (time.time() - t0) * 1000
-
-    if tracer:
-        tracer.record_tool(
-            tool_name="query_system_telemetry",
-            tool_input={"service": service},
-            tool_output=result,
-            parent_agent_id=parent_id,
-            duration_ms=duration_ms,
-        )
-    return result
 
 
+@observe(name="query_marketing_campaigns", as_tool=True)
 def query_marketing_campaigns(
     quarter: str = "Q3 2026",
-    tracer: Optional[TraceCollector] = None,
-    parent_id: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """Retrieve marketing campaign ROI, lead acquisition channels, and brand reach metrics."""
-    t0 = time.time()
-    result = {
+    return {
         "status": "success",
         "quarter": quarter,
         "mql_generated": 3480,
@@ -102,27 +75,15 @@ def query_marketing_campaigns(
         "brand_impressions": "1.4M",
         "customer_sentiment_score": 8.7,
     }
-    duration_ms = (time.time() - t0) * 1000
-
-    if tracer:
-        tracer.record_tool(
-            tool_name="query_marketing_campaigns",
-            tool_input={"quarter": quarter},
-            tool_output=result,
-            parent_agent_id=parent_id,
-            duration_ms=duration_ms,
-        )
-    return result
 
 
+@observe(name="query_product_metrics", as_tool=True)
 def query_product_metrics(
     feature: str = "quarterly_reporting",
-    tracer: Optional[TraceCollector] = None,
-    parent_id: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """Retrieve product usage metrics, feature adoption, user journey completion, and retention."""
-    t0 = time.time()
-    result = {
+    return {
         "status": "success",
         "feature": feature,
         "monthly_active_users": 18450,
@@ -135,14 +96,3 @@ def query_product_metrics(
         "average_time_to_value_minutes": 8.2,
         "user_dropoff_points": ["complex SQL custom export modal (11% dropoff)"],
     }
-    duration_ms = (time.time() - t0) * 1000
-
-    if tracer:
-        tracer.record_tool(
-            tool_name="query_product_metrics",
-            tool_input={"feature": feature},
-            tool_output=result,
-            parent_agent_id=parent_id,
-            duration_ms=duration_ms,
-        )
-    return result

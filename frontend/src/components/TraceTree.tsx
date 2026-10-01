@@ -638,12 +638,39 @@ export default function TraceTree({ spans, observations, traceId }: { spans: any
     });
 
     // 3. Identify Replacements (Span -> Obs) and Merge Attributes
+    const usedObsIds = new Set<string>();
+
+    // Pass 3a: Explicit observation_id in span attributes or matching ID
     spans.forEach((span) => {
-      const obsId = span.attributes?.["observation_id"];
+      let obsId = span.attributes?.["observation_id"];
+      if (!obsId && nodeMap.has(span.span_id) && nodeMap.get(span.span_id)?.is_obs) {
+        obsId = span.span_id;
+      }
       if (obsId && nodeMap.has(String(obsId))) {
         spanToObsMap.set(span.span_id, String(obsId));
+        usedObsIds.add(String(obsId));
+      }
+    });
 
-        // Merge Span attributes into Obs attributes
+    // Pass 3b: Fallback matching by name for unmapped spans
+    if (spanToObsMap.size < spans.length && observations.length > 0) {
+      spans.forEach((span) => {
+        if (!spanToObsMap.has(span.span_id)) {
+          const match = observations.find(
+            (o) => String(o.name) === String(span.name) && !usedObsIds.has(String(o.id))
+          );
+          if (match) {
+            spanToObsMap.set(span.span_id, String(match.id));
+            usedObsIds.add(String(match.id));
+          }
+        }
+      });
+    }
+
+    // Merge Span attributes into Obs attributes
+    spans.forEach((span) => {
+      const obsId = spanToObsMap.get(span.span_id);
+      if (obsId && nodeMap.has(String(obsId))) {
         const obsNode = nodeMap.get(String(obsId));
         if (obsNode) {
             const currentAttrs = (typeof obsNode.attributes === 'object' && obsNode.attributes !== null)
