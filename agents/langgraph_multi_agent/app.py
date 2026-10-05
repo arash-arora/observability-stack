@@ -36,13 +36,17 @@ try:
 except Exception:
     pass
 
-from agents.langgraph_multi_agent.graph import run_multi_agent_workflow
+from agents.langgraph_multi_agent.graph import (
+    run_multi_agent_workflow,
+    is_chitchat_query,
+)
+from agents.langgraph_multi_agent.llm_config import (
+    get_active_provider_info,
+)
 from agents.langgraph_multi_agent.eval_client import (
     get_available_personas,
     evaluate_chat_response,
 )
-
-DEFAULT_GROQ_MODEL = "groq/openai/gpt-oss-20b"
 USERS_FILE = os.path.join(os.path.dirname(__file__), "users.json")
 
 
@@ -198,10 +202,11 @@ if "backend_url" not in st.session_state:
     st.session_state.backend_url = "http://localhost:8010"
 
 if "realtime_mode" not in st.session_state:
-    st.session_state.realtime_mode = True  # Real-time Groq LLM calls active by default
+    st.session_state.realtime_mode = True  # Real-time LLM calls active when provider configured in .env
 
-st.session_state.llm_model = DEFAULT_GROQ_MODEL
-st.session_state.llm_api_key = os.getenv("GROQ_API_KEY", "")
+provider_info = get_active_provider_info()
+st.session_state.llm_model = provider_info["model_name"]
+st.session_state.llm_api_key = provider_info.get("api_key") or ""
 
 # Dynamically load the user mapping on every run
 users_mapping = load_users_mapping()
@@ -223,21 +228,30 @@ if not st.session_state.logged_in:
         st.markdown('<div class="main-header" style="font-size: 1.5rem;">🤖 Enterprise Agent</div>', unsafe_allow_html=True)
         st.caption("Please log in to continue")
         st.markdown("---")
-        st.markdown("### 🎛️ Execution Mode")
+        st.markdown("### 🎛️ Execution Engine")
         st.session_state.realtime_mode = st.toggle(
             "⚡ Real-time LLM Calls",
             value=st.session_state.realtime_mode,
             key="login_mode_toggle",
-            help="Switch between Dummy responses & evaluations (no API key needed) and live Real-time Groq LLM calls.",
+            help="Switch between Simulated responses (no API key needed) and live Real-time LLM calls via .env (Azure OpenAI or Groq).",
         )
         if st.session_state.realtime_mode:
-            env_key = os.getenv("GROQ_API_KEY", "")
-            st.session_state.llm_api_key = st.text_input(
-                "Groq API Key:",
-                value=st.session_state.get("llm_api_key") or env_key,
-                type="password",
-                key="login_groq_key_input",
-            )
+            if provider_info["configured"]:
+                st.markdown(
+                    f'<div style="padding: 10px 14px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); margin-bottom: 10px;">'
+                    f'<span style="color: #34D399; font-weight: 700; font-size: 0.88rem;">{provider_info["display_badge"]}</span><br>'
+                    f'<span style="font-size: 0.73rem; color: #A7F3D0;">Active from <code>.env</code></span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div style="padding: 10px 14px; border-radius: 8px; background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.3); margin-bottom: 10px;">'
+                    '<span style="color: #94A3B8; font-weight: 700; font-size: 0.85rem;">⚪ Simulated Mode</span><br>'
+                    '<span style="font-size: 0.73rem; color: #CBD5E1;">Add <code>AZURE_OPENAI_API_KEY</code> & <code>AZURE_OPENAI_ENDPOINT</code> or <code>GROQ_API_KEY</code> to <code>.env</code>.</span>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
 
     st.markdown('<div class="main-header">🔐 Enterprise AI Assistant Login</div>', unsafe_allow_html=True)
     st.write("Sign in with your corporate email to access your persona-tailored workspace.")
@@ -330,39 +344,50 @@ with st.sidebar:
     )
 
     # 2. Execution Mode Switcher
-    st.markdown("### 🎛️ Execution Mode")
+    st.markdown("### 🎛️ Execution Engine")
     mode_toggle = st.toggle(
         "⚡ Real-time LLM Calls",
         value=st.session_state.realtime_mode,
         key="mode_toggle_switch",
-        help="Switch between Dummy responses & evaluations (no API key needed) and live Real-time Groq LLM calls.",
+        help="Switch between Simulated responses & evaluations and live Real-time LLM calls (Azure OpenAI or Groq configured via .env).",
     )
     st.session_state.realtime_mode = mode_toggle
 
+    current_provider = get_active_provider_info()
     if mode_toggle:
-        env_key = os.getenv("GROQ_API_KEY", "")
-        st.markdown(
-            f'<div style="padding: 10px 14px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); margin-bottom: 10px;">'
-            f'<span style="color: #34D399; font-weight: 700; font-size: 0.88rem;">🟢 Real-time Groq LLM Active</span><br>'
-            f'<span style="font-weight: 400; font-size: 0.78rem; color: #A7F3D0;">Engine: <b>Groq (llama-3.3-70b-versatile)</b></span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.session_state.llm_api_key = st.text_input(
-            "Groq API Key (from .env):",
-            value=st.session_state.get("llm_api_key") or env_key,
-            type="password",
-            help="Default loaded from .env (GROQ_API_KEY). You can update it here if your key is invalid or changed.",
-            key="groq_key_input",
-        )
+        if current_provider["configured"]:
+            st.markdown(
+                f'<div style="padding: 10px 14px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); margin-bottom: 10px;">'
+                f'<span style="color: #34D399; font-weight: 700; font-size: 0.88rem;">{current_provider["display_badge"]}</span><br>'
+                f'<span style="font-weight: 400; font-size: 0.78rem; color: #A7F3D0;">Configured via <code>.env</code></span><br>'
+                f'<span style="font-size: 0.73rem; color: #94A3B8;">{current_provider["details"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div style="padding: 10px 14px; border-radius: 8px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); margin-bottom: 10px;">'
+                '<span style="color: #FBBF24; font-weight: 700; font-size: 0.88rem;">⚠️ No LLM Key in .env</span><br>'
+                '<span style="font-weight: 400; font-size: 0.76rem; color: #FDE68A;">Add <code>AZURE_OPENAI_API_KEY</code> & <code>AZURE_OPENAI_ENDPOINT</code> or <code>GROQ_API_KEY</code> to <code>.env</code>. Falling back to deterministic mode.</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
     else:
         st.markdown(
             '<div style="padding: 10px 14px; border-radius: 8px; background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); margin-bottom: 12px;">'
-            '<span style="color: #818CF8; font-weight: 700; font-size: 0.88rem;">⚪ Dummy Mode Active</span><br>'
-            '<span style="font-weight: 400; font-size: 0.78rem; color: #C7D2FE;">Fast deterministic responses & mock evaluations without API consumption.</span>'
+            '<span style="color: #818CF8; font-weight: 700; font-size: 0.88rem;">⚪ Simulated Mode Active</span><br>'
+            '<span style="font-weight: 400; font-size: 0.78rem; color: #C7D2FE;">Fast deterministic responses querying SQLite3 <code>enterprise_data.db</code>.</span>'
             '</div>',
             unsafe_allow_html=True,
         )
+
+    st.markdown(
+        '<div style="padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 12px;">'
+        '<span style="font-size: 0.78rem; color: #94A3B8;">🗄️ Database: <b>SQLite3 (enterprise_data.db)</b></span><br>'
+        '<span style="font-size: 0.72rem; color: #64748B;">Tables: <code>domain_margins</code>, <code>revenue_drivers</code></span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
     if st.button("🚪 Logout", use_container_width=True):
@@ -389,10 +414,11 @@ with col_h1:
         f"Organization: **{st.session_state.organization}**"
     )
 with col_h2:
+    provider_info = get_active_provider_info()
     mode_badge_html = (
-        '<span class="mode-badge-realtime">⚡ Live Groq LLM</span>'
+        f'<span class="mode-badge-realtime">⚡ Live {provider_info["provider_name"]}</span>'
         if st.session_state.realtime_mode
-        else '<span class="mode-badge-dummy">⚪ Dummy Mode</span>'
+        else '<span class="mode-badge-dummy">⚪ Simulated Mode</span>'
     )
     st.markdown(
         f'<div style="text-align: right; margin-top: 10px;">'
@@ -413,19 +439,23 @@ if not st.session_state.messages:
         f'</div>',
         unsafe_allow_html=True,
     )
-    st.markdown("##### 💡 Try asking a question:")
-    sample_col1, sample_col2, sample_col3 = st.columns(3)
+    st.markdown("##### 💡 Try asking a question (Answers differ by persona):")
+    sample_col1, sample_col2, sample_col3, sample_col4 = st.columns(4)
     with sample_col1:
-        if st.button("💼 What is the sales this quarter?", use_container_width=True):
-            st.session_state.input_prompt = "What is the sales this quarter?"
+        if st.button("📊 Margin Performance", use_container_width=True, help="Different domain lens on gross margins & cost controls"):
+            st.session_state.input_prompt = "What is our margin performance across domains?"
             st.rerun()
     with sample_col2:
-        if st.button("📢 Top acquisition channels & CAC?", use_container_width=True):
-            st.session_state.input_prompt = "What are our top customer acquisition channels and CAC?"
+        if st.button("🚀 Revenue Drivers", use_container_width=True, help="Different domain drivers causing sales and growth"):
+            st.session_state.input_prompt = "What are the key drivers causing our sales and revenue growth?"
             st.rerun()
     with sample_col3:
-        if st.button("🖥️ API latency & query telemetry?", use_container_width=True):
-            st.session_state.input_prompt = "Show me API latency and query performance metrics."
+        if st.button("⚡ Operational Health", use_container_width=True, help="Operational efficiency metrics tailored to this persona"):
+            st.session_state.input_prompt = "How are our operational efficiency and core performance metrics looking?"
+            st.rerun()
+    with sample_col4:
+        if st.button("👋 Say Hi", use_container_width=True, help="Conversational greeting without unprompted commercial data"):
+            st.session_state.input_prompt = "Hi"
             st.rerun()
 
 # Render message history
@@ -434,10 +464,11 @@ for msg_idx, message in enumerate(st.session_state.messages):
         # Header tag showing generation mode
         if message["role"] == "assistant":
             m_mode = message.get("mode", "dummy")
+            provider_info = get_active_provider_info()
             tag_badge = (
-                '<span class="mode-badge-realtime" style="font-size:0.75rem;">⚡ Real-time Groq LLM</span>'
+                f'<span class="mode-badge-realtime" style="font-size:0.75rem;">⚡ Real-time {provider_info["provider_name"]}</span>'
                 if m_mode == "realtime"
-                else '<span class="mode-badge-dummy" style="font-size:0.75rem;">⚪ Dummy Response</span>'
+                else '<span class="mode-badge-dummy" style="font-size:0.75rem;">⚪ Simulated Response</span>'
             )
             st.markdown(f'<div style="margin-bottom: 6px;">{tag_badge}</div>', unsafe_allow_html=True)
 
@@ -482,73 +513,77 @@ for msg_idx, message in enumerate(st.session_state.messages):
                             st.caption("**Output:**")
                             st.json(item.get("output"), expanded=False)
 
-            # 2. Automated Evaluation Section (Default run for user's persona only; no persona selector or comparison)
+            # 2. Automated Evaluation Section (Strictly evaluates user persona lens only)
             if "evaluations" not in message:
                 message["evaluations"] = {}
 
             user_persona = st.session_state.persona
-            if user_persona not in message["evaluations"]:
-                with st.spinner(f"Evaluating response for {user_persona} persona..."):
+            eval_persona = user_persona
+
+            if eval_persona not in message["evaluations"]:
+                with st.spinner(f"Evaluating response for {eval_persona} persona..."):
                     eval_res = evaluate_chat_response(
                         query=message.get("query", ""),
                         output=message["content"],
                         trace=trace,
-                        persona=user_persona,
+                        persona=eval_persona,
                         organization=st.session_state.organization,
                         backend_url=st.session_state.backend_url,
-                        api_key=st.session_state.llm_api_key,
                         execution_mode="realtime" if st.session_state.realtime_mode else "dummy",
-                        model_name=DEFAULT_GROQ_MODEL,
                     )
-                    message["evaluations"][user_persona] = eval_res
+                    message["evaluations"][eval_persona] = eval_res
 
-            res = message["evaluations"][user_persona]
-            eval_mode_desc = (
-                "⚡ Live Groq LLM Evaluation"
-                if res.get("mode") in ("realtime_llm", "realtime_backend_api")
-                else "⚪ Dummy Persona Evaluation"
-            )
-            st.markdown(f"##### ⚖️ Automated Evaluation Result *({user_persona} Perspective — {eval_mode_desc})*")
-
-            c_score, c_meta = st.columns([1, 3])
+            res = message["evaluations"][eval_persona]
             score_val = res.get("score", 0.0)
             passed = res.get("passed", score_val >= 60.0)
-            res_mode = res.get("mode", "dummy")
+            status_text = "PASSED" if passed else "NEEDS REVIEW"
+            provider_info = get_active_provider_info()
 
-            with c_score:
-                badge_class = "score-badge-pass" if passed else "score-badge-fail"
-                status_text = "PASSED" if passed else "NEEDS REVIEW"
-                st.markdown(f'<div class="{badge_class}">{score_val} / 100</div>', unsafe_allow_html=True)
-                st.caption(f"Status: **{status_text}**")
-                st.caption(f"Evaluator Lens: **{user_persona}**")
-                if res_mode in ("realtime_llm", "realtime_backend_api"):
-                    st.markdown('<span class="mode-badge-realtime">⚡ Live Groq LLM</span>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<span class="mode-badge-dummy">⚪ Dummy Evaluation</span>', unsafe_allow_html=True)
+            with st.expander(f"⚖️ Automated Persona Evaluation ({user_persona} Lens — {score_val} / 100 • {status_text})", expanded=False):
+                eval_mode_desc = (
+                    f"⚡ Live {provider_info['provider_name']} Evaluation"
+                    if res.get("mode") in ("realtime_llm", "realtime_backend_api")
+                    else "⚪ Simulated Persona Evaluation"
+                )
 
-            with c_meta:
-                st.markdown(f"**Reasoning ({user_persona} Lens):**")
-                st.write(res.get("reasoning", ""))
+                st.markdown(f"##### ⚖️ Evaluation Analysis *({user_persona} Perspective — {eval_mode_desc})*")
 
-            evidences = res.get("evidences", {})
-            if evidences.get("supporting") or evidences.get("contradicting"):
-                e_c1, e_c2 = st.columns(2)
-                with e_c1:
-                    if evidences.get("supporting"):
-                        st.markdown("✅ **Supporting Evidence:**")
-                        for item in evidences["supporting"]:
-                            st.markdown(f"- {item}")
-                with e_c2:
-                    if evidences.get("contradicting"):
-                        st.markdown("⚠️ **Contradicting / Missing Evidence:**")
-                        for item in evidences["contradicting"]:
-                            st.markdown(f"- {item}")
+                c_score, c_meta = st.columns([1, 3])
+                res_mode = res.get("mode", "dummy")
 
-            feedbacks = res.get("feedbacks", [])
-            if feedbacks:
-                st.markdown(f"💡 **Actionable Feedback for {user_persona}:**")
-                for fb in feedbacks:
-                    st.markdown(f"- {fb}")
+                with c_score:
+                    badge_class = "score-badge-pass" if passed else "score-badge-fail"
+                    st.markdown(f'<div class="{badge_class}">{score_val} / 100</div>', unsafe_allow_html=True)
+                    st.caption(f"Status: **{status_text}**")
+                    st.caption(f"Evaluator Lens: **{user_persona}** (User Persona)")
+                    if res_mode in ("realtime_llm", "realtime_backend_api"):
+                        st.markdown(f'<span class="mode-badge-realtime">⚡ Live {provider_info["provider_name"]}</span>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<span class="mode-badge-dummy">⚪ Simulated Evaluation</span>', unsafe_allow_html=True)
+
+                with c_meta:
+                    st.markdown(f"**Reasoning ({user_persona} Lens):**")
+                    st.write(res.get("reasoning", ""))
+
+                evidences = res.get("evidences", {})
+                if evidences.get("supporting") or evidences.get("contradicting"):
+                    e_c1, e_c2 = st.columns(2)
+                    with e_c1:
+                        if evidences.get("supporting"):
+                            st.markdown("✅ **Supporting Evidence:**")
+                            for item in evidences["supporting"]:
+                                st.markdown(f"- {item}")
+                    with e_c2:
+                        if evidences.get("contradicting"):
+                            st.markdown("⚠️ **Contradicting / Missing Evidence:**")
+                            for item in evidences["contradicting"]:
+                                st.markdown(f"- {item}")
+
+                feedbacks = res.get("feedbacks", [])
+                if feedbacks:
+                    st.markdown(f"💡 **Actionable Feedback for {eval_persona}:**")
+                    for fb in feedbacks:
+                        st.markdown(f"- {fb}")
 
             # 3. Observability App Trace Link (Direct Link to Traces in Observix)
             trace_id = trace.get("trace_id", "")
@@ -592,19 +627,44 @@ if user_prompt:
     # Multi-agent execution container
     with st.chat_message("assistant"):
         exec_mode = "realtime" if st.session_state.realtime_mode else "dummy"
+        active_llm = get_active_provider_info()
         status_label = (
-            "🚀 Executing Multi-Agent Workflow & Persona Evaluation (⚡ Real-time Groq LLM)..."
-            if st.session_state.realtime_mode
-            else "🚀 Executing Multi-Agent Workflow & Persona Evaluation (⚪ Dummy Mode)..."
+            f"🚀 Executing Multi-Agent Workflow & Persona Evaluation (⚡ {active_llm['provider_name']})..."
+            if st.session_state.realtime_mode and active_llm["configured"]
+            else "🚀 Executing Multi-Agent Workflow & Persona Evaluation (⚪ Simulated Mode)..."
         )
         status_box = st.status(status_label, expanded=True)
 
+        is_chitchat = is_chitchat_query(user_prompt)
+        q_lower = user_prompt.lower()
+        is_margin = any(k in q_lower for k in ["margin", "margins", "profitability", "gross margin", "ebitda", "cogs"])
+        is_drivers = any(k in q_lower for k in ["driver", "drivers", "causing", "causes", "why sales", "why revenue", "growth driver"])
+
         with status_box:
-            st.write("🧠 **SupervisorAgent:** Analyzing query & formulating plan...")
-            time.sleep(0.15)
-            st.write("🔬 **AnalyticsAgent:** Invoking domain tools (Sales, Telemetry, Marketing, Product)...")
-            time.sleep(0.15)
-            st.write(f"📝 **ReporterAgent:** Synthesizing facts tailored to {st.session_state.persona} perspective...")
+            if is_chitchat:
+                st.write("🧠 **SupervisorAgent:** Identified conversational greeting. Routing to greeting response...")
+                time.sleep(0.12)
+                st.write("🔬 **AnalyticsAgent:** Tool execution bypassed (no quantitative data required for greeting)...")
+                time.sleep(0.12)
+                st.write(f"📝 **ReporterAgent:** Composing friendly greeting tailored to {st.session_state.persona} perspective...")
+            elif is_margin:
+                st.write("🧠 **SupervisorAgent:** Formulating execution plan for margin-based cross-domain analysis...")
+                time.sleep(0.15)
+                st.write("🔬 **AnalyticsAgent:** Querying SQLite3 `enterprise_data.db` (`domain_margins` table) across Sales, IT, Marketing, Product, and Finance...")
+                time.sleep(0.15)
+                st.write(f"📝 **ReporterAgent:** Synthesizing cross-domain margin perspectives tailored to {st.session_state.persona} lens...")
+            elif is_drivers:
+                st.write("🧠 **SupervisorAgent:** Formulating execution plan for sales and revenue growth catalysts...")
+                time.sleep(0.15)
+                st.write("🔬 **AnalyticsAgent:** Querying SQLite3 `enterprise_data.db` (`revenue_drivers` table) for departmental attribution...")
+                time.sleep(0.15)
+                st.write(f"📝 **ReporterAgent:** Synthesizing multi-domain revenue driver attribution tailored to {st.session_state.persona} lens...")
+            else:
+                st.write("🧠 **SupervisorAgent:** Analyzing query & formulating plan...")
+                time.sleep(0.15)
+                st.write("🔬 **AnalyticsAgent:** Querying SQLite3 database & domain tools (Sales, Telemetry, Marketing, Product)...")
+                time.sleep(0.15)
+                st.write(f"📝 **ReporterAgent:** Synthesizing facts tailored to {st.session_state.persona} perspective...")
 
             # Run LangGraph workflow with mode configuration
             result = run_multi_agent_workflow(
@@ -612,15 +672,13 @@ if user_prompt:
                 persona=st.session_state.persona,
                 organization=st.session_state.organization,
                 execution_mode=exec_mode,
-                model_name=DEFAULT_GROQ_MODEL,
-                api_key=st.session_state.llm_api_key,
                 user_email=st.session_state.user_email,
             )
 
             if result.get("error"):
                 st.warning(
-                    f"⚠️ Real-time Groq LLM notice: {result['error']}. "
-                    "A fallback simulated response was generated. You can verify your GROQ_API_KEY in .env."
+                    f"⚠️ Live LLM notice: {result['error']}. "
+                    "A fallback simulated response was generated from the SQLite3 database."
                 )
 
             st.write(f"⚖️ **Automated Evaluator:** Running default evaluation for {st.session_state.persona} persona...")
@@ -631,9 +689,7 @@ if user_prompt:
                 persona=st.session_state.persona,
                 organization=st.session_state.organization,
                 backend_url=st.session_state.backend_url,
-                api_key=st.session_state.llm_api_key,
                 execution_mode=exec_mode,
-                model_name=DEFAULT_GROQ_MODEL,
             )
 
             status_box.update(
@@ -646,9 +702,9 @@ if user_prompt:
         trace = result["trace"]
 
         tag_badge = (
-            '<span class="mode-badge-realtime" style="font-size:0.75rem;">⚡ Real-time Groq LLM</span>'
-            if result.get("mode") == "realtime"
-            else '<span class="mode-badge-dummy" style="font-size:0.75rem;">⚪ Dummy Response</span>'
+            f'<span class="mode-badge-realtime" style="font-size:0.75rem;">⚡ {active_llm["provider_name"]} ({result.get("model", "live")})</span>'
+            if result.get("mode") == "realtime" and active_llm["configured"]
+            else '<span class="mode-badge-dummy" style="font-size:0.75rem;">⚪ Simulated Response (SQLite3)</span>'
         )
         st.markdown(f'<div style="margin-bottom: 6px;">{tag_badge}</div>', unsafe_allow_html=True)
         st.markdown(final_answer)
@@ -660,7 +716,7 @@ if user_prompt:
             "query": user_prompt,
             "trace": trace,
             "mode": result.get("mode", "dummy"),
-            "model": result.get("model", DEFAULT_GROQ_MODEL),
+            "model": result.get("model", active_llm.get("model_name")),
             "evaluations": {st.session_state.persona: eval_result},
         })
         st.rerun()

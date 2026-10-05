@@ -2,8 +2,9 @@
 Domain Tools for Multi-Agent Enterprise Operations.
 Instrumented automatically via Observix (@observe with as_tool=True).
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from observix import observe
+from agents.langgraph_multi_agent.db import get_margin_records, get_revenue_driver_records
 
 
 @observe(name="query_sales_data", as_tool=True)
@@ -95,4 +96,46 @@ def query_product_metrics(
         "csat_score": 4.6,
         "average_time_to_value_minutes": 8.2,
         "user_dropoff_points": ["complex SQL custom export modal (11% dropoff)"],
+    }
+
+
+@observe(name="query_domain_margins", as_tool=True)
+def query_domain_margins(
+    domain: str = "all",
+    quarter: str = "Q3 2026",
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Retrieve margin metrics and domain-specific perspectives from the SQLite3 database
+    (domain_margins table) across Sales, IT, Marketing, Product, and Finance.
+    """
+    records = get_margin_records(domain=domain, quarter=quarter)
+    return {
+        "status": "success",
+        "source": "sqlite3:enterprise_data.db:domain_margins",
+        "quarter": quarter,
+        "domain_filter": domain,
+        "record_count": len(records),
+        "records": records,
+    }
+
+
+@observe(name="query_revenue_drivers", as_tool=True)
+def query_revenue_drivers(
+    domain: str = "all",
+    quarter: str = "Q3 2026",
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Retrieve drivers causing sales and revenue growth from the SQLite3 database
+    (revenue_drivers table) across Sales, IT, Marketing, and Product perspectives.
+    """
+    records = get_revenue_driver_records(domain=domain, quarter=quarter)
+    return {
+        "status": "success",
+        "source": "sqlite3:enterprise_data.db:revenue_drivers",
+        "quarter": quarter,
+        "domain_filter": domain,
+        "record_count": len(records),
+        "records": records,
     }
