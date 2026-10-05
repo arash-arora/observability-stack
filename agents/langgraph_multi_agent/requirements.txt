@@ -1,0 +1,28 @@
+# Streamlit Multi-Agent Chat Application Dependencies
+# Install with: pip install -r requirements.txt
+
+# Streamlit UI
+streamlit>=1.38.0
+
+# Multi-Agent Orchestration
+langgraph>=0.2.0
+langchain-core>=0.3.0
+
+# LLM Inference & Providers (Groq / Azure OpenAI / LiteLLM)
+litellm>=1.50.0
+openai>=1.40.0
+
+# Config & HTTP
+python-dotenv>=1.0.1
+requests>=2.31.0
+httpx>=0.27.0
+pydantic>=2.7.0
+
+# Tracing / OpenTelemetry
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+
+# Note on Observix SDK:
+# The application includes built-in graceful fallbacks if 'observix' is not installed.
+# If your server has access to the Observix private repository, you can optionally install it via:
+# pip install git+https://github.com/arash-arora/observix.git

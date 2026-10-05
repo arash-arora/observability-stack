@@ -23,8 +23,31 @@ BACKEND_DIR = os.path.join(REPO_ROOT, "backend")
 load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 load_dotenv(os.path.join(REPO_ROOT, ".env"))
 
-from observix import init_observability, observe, flush
-from opentelemetry import trace
+import uuid
+
+try:
+    from observix import init_observability, observe, flush
+except ImportError:
+    def init_observability(url: str = "", api_key: str = "", **kwargs: Any) -> None:
+        """No-op fallback when observix SDK is not installed."""
+        pass
+
+    def flush(*args: Any, **kwargs: Any) -> None:
+        """No-op fallback when observix SDK is not installed."""
+        pass
+
+    def observe(*dargs: Any, **dkwargs: Any):
+        """No-op decorator fallback when observix SDK is not installed."""
+        def decorator(fn):
+            return fn
+        if len(dargs) == 1 and callable(dargs[0]) and not dkwargs:
+            return dargs[0]
+        return decorator
+
+try:
+    from opentelemetry import trace
+except ImportError:
+    trace = None
 
 from agents.langgraph_multi_agent.llm_config import (
     call_llm,
@@ -42,8 +65,11 @@ from agents.langgraph_multi_agent.tools import (
 DEFAULT_OBSERVIX_URL = os.getenv("OBSERVIX_URL", "http://localhost:8010")
 DEFAULT_OBSERVIX_KEY = os.getenv("OBSERVIX_API_KEY", "sk-cortex-live-key-9f8a12bc34de56fa78bc90de")
 
-# Initialize Observix SDK globally
-init_observability(url=DEFAULT_OBSERVIX_URL, api_key=DEFAULT_OBSERVIX_KEY)
+# Initialize Observix SDK globally (no-op if observix is not installed)
+try:
+    init_observability(url=DEFAULT_OBSERVIX_URL, api_key=DEFAULT_OBSERVIX_KEY)
+except Exception as exc:
+    print(f"[ObservixWarning] Initialization skipped: {exc}")
 
 CHITCHAT_EXACT = {
     "hi", "hello", "hey", "hiya", "howdy", "greetings", "yo", "hola",
@@ -975,8 +1001,18 @@ def run_multi_agent_workflow(
     provider_info = get_active_provider_info()
     effective_model = model_name or provider_info["model_name"]
 
-    span = trace.get_current_span()
-    trace_id = f"{span.get_span_context().trace_id:032x}"
+    trace_id = None
+    if trace:
+        try:
+            span = trace.get_current_span()
+            if span:
+                ctx = span.get_span_context()
+                if ctx and ctx.trace_id:
+                    trace_id = f"{ctx.trace_id:032x}"
+        except Exception:
+            pass
+    if not trace_id or trace_id == "0" * 32:
+        trace_id = uuid.uuid4().hex
 
     graph = build_multi_agent_graph()
     initial_state: MultiAgentState = {

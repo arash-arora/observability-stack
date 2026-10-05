@@ -3,7 +3,18 @@ Domain Tools for Multi-Agent Enterprise Operations.
 Instrumented automatically via Observix (@observe with as_tool=True).
 """
 from typing import Dict, Any, Optional, List
-from observix import observe
+
+try:
+    from observix import observe
+except ImportError:
+    def observe(*dargs: Any, **dkwargs: Any):
+        """No-op decorator fallback when observix SDK is not installed."""
+        def decorator(fn):
+            return fn
+        if len(dargs) == 1 and callable(dargs[0]) and not dkwargs:
+            return dargs[0]
+        return decorator
+
 from agents.langgraph_multi_agent.db import get_margin_records, get_revenue_driver_records
 
 
