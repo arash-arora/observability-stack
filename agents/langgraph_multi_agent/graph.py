@@ -131,25 +131,34 @@ class MultiAgentState(TypedDict):
 # Node 1: SupervisorAgent
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Stage 1 (Node 1): SupervisorAgent — Decide Which Data is Required
+# ---------------------------------------------------------------------------
+
 @observe(name="SupervisorAgent", as_agent=True)
 def supervisor_node(state: MultiAgentState) -> Dict[str, Any]:
-    """Supervisor agent that coordinates multi-agent planning and task delegation."""
+    """
+    Step 1: Based on the user's question, decide which data is required to answer it.
+    - If chitchat: marks intent as chitchat and skips data retrieval.
+    - If analytical: decides the exact SQLite tables and domain filters required.
+    """
     query = state.get("query", "")
     persona = state.get("persona", "Default")
     org = state.get("organization", "Enterprise Corp")
     execution_mode = state.get("execution_mode", "dummy")
 
-    # 1. Chitchat handling
+    # 1. Chitchat handling: No database data required
     if is_chitchat_query(query):
         plan_summary = (
-            f"Execution Plan for '{query}':\n"
-            f"1. Query is recognized as a conversational greeting / pleasantry.\n"
-            f"2. Domain data retrieval tools bypassed (no quantitative data required).\n"
-            f"3. Delegate directly to ReporterAgent to provide a polite, professional greeting and introduce available system capabilities."
+            f"Step 1 (Data Decision): Query '{query}' recognized as conversational greeting / pleasantry.\n"
+            f"- Required Database Tables: None (bypassed for greeting).\n"
+            f"- Action: Route directly to ReporterAgent to provide a polite greeting and outline available enterprise data."
         )
         plan = {
             "status": "planned",
             "intent": "chitchat",
+            "requires_database": False,
+            "required_tables": [],
             "required_tools": [],
             "plan_summary": plan_summary,
             "mode": execution_mode,
@@ -157,99 +166,115 @@ def supervisor_node(state: MultiAgentState) -> Dict[str, Any]:
         return {"plan": plan, "error": state.get("error")}
 
     q_lower = query.lower()
+    persona_domain = persona.lower().strip()
+    target_domain = persona_domain if persona_domain in ("sales", "it", "marketing", "product", "finance") else "all"
 
-    # Determine intent and required tools
+    # Step 1 Analysis: Based on the question, decide which data tables and metrics are required
     if any(k in q_lower for k in ["margin", "margins", "profitability", "gross margin", "ebitda", "cogs"]):
         intent = "margin_analysis"
+        required_tables = ["domain_margins"]
         required_tools = ["query_domain_margins"]
+        data_rationale = (
+            f"Question asks about margins and profitability. "
+            f"Required data: `domain_margins` table in SQLite3 (`enterprise_data.db`) for domain '{target_domain}'."
+        )
         plan_summary = (
-            f"Execution Plan for Margin Analysis ('{query}'):\n"
-            f"1. Query SQLite3 database (`domain_margins` table) for domain-tailored margin records.\n"
-            f"2. Analyze cross-domain margin perspectives:\n"
-            f"   - Sales: Deal gross margins (74.2%), software vs services split, and discount discipline.\n"
-            f"   - IT / Tech: Cloud hosting COGS (11.8%) and compute cost per active user ($0.042/user-mo).\n"
-            f"   - Marketing: Customer acquisition margin, LTV:CAC (4.6x), and organic vs paid channel yields.\n"
-            f"   - Product: Self-serve PLG margin (89.2%) vs enterprise dedicated tier (64.8%), support cost savings.\n"
-            f"   - Finance: Consolidated corporate gross margin (68.4%) and EBITDA margin (28.5%).\n"
-            f"3. Forward retrieved records to AnalyticsAgent and ReporterAgent tailored to the {persona} perspective."
+            f"Step 1 (Data Decision for '{query}'):\n"
+            f"1. Decided Data Required: SQLite3 `domain_margins` table.\n"
+            f"2. Scope: Domain-tailored gross margin, cloud COGS ratio, LTV:CAC, unit economics, and corporate EBITDA.\n"
+            f"3. Next Step: Pull `domain_margins` records from database for domain '{target_domain}'."
         )
     elif any(k in q_lower for k in ["driver", "drivers", "causing", "causes", "why sales", "why revenue", "growth driver", "drove sales", "drove revenue", "reasons for sales", "reasons for revenue"]):
         intent = "revenue_drivers_analysis"
+        required_tables = ["revenue_drivers"]
         required_tools = ["query_revenue_drivers"]
+        data_rationale = (
+            f"Question asks for causes and growth drivers of sales/revenue. "
+            f"Required data: `revenue_drivers` table in SQLite3 (`enterprise_data.db`) for domain '{target_domain}'."
+        )
         plan_summary = (
-            f"Execution Plan for Revenue Drivers Analysis ('{query}'):\n"
-            f"1. Query SQLite3 database (`revenue_drivers` table) for commercial performance catalysts.\n"
-            f"2. Analyze multi-domain revenue driver attribution:\n"
-            f"   - Sales: Direct contract execution ($520K marquee deal), regional quota (118% NA), and 114% NRR expansion.\n"
-            f"   - Marketing: Inbound funnel velocity ($1.42M, 3,480 MQLs -> 612 SQLs), webinars ($1.85M), and brand authority.\n"
-            f"   - IT: 99.98% platform uptime preserving $340K, sub-50ms API latency, automated SSO/SAML shortening onboarding by 12 days ($780K).\n"
-            f"   - Product: Feature-led upgrades ($480K from quarterly reporting), churn defense ($680K preserved), and viral PLG loops.\n"
-            f"3. Synthesize quantitative attribution via AnalyticsAgent and ReporterAgent."
+            f"Step 1 (Data Decision for '{query}'):\n"
+            f"1. Decided Data Required: SQLite3 `revenue_drivers` table.\n"
+            f"2. Scope: Departmental catalysts across Direct Sales ($520K marquee deal), Marketing Funnels ($1.42M MQL/SQL), IT 99.98% SLA, and Product PLG.\n"
+            f"3. Next Step: Pull `revenue_drivers` records from database for domain '{target_domain}'."
         )
     elif any(k in q_lower for k in ["latency", "telemetry", "p50", "p95", "tech", "performance", "api", "query"]):
         intent = "system_telemetry_analysis"
+        required_tables = ["system_telemetry"]
         required_tools = ["query_system_telemetry"]
+        data_rationale = "Question asks about infrastructure speed and telemetry. Required data: `system_telemetry` table in SQLite3."
         plan_summary = (
-            f"Execution Plan for '{query}':\n"
-            f"1. Query system telemetry service ('core-sales-service') for p50/p95/p99 latency, error rates, and uptime.\n"
-            f"2. Inspect database partition query timings (`enterprise_orders_partition_2026_q3`).\n"
-            f"3. Check replica health and cache hit ratio across cloud clusters.\n"
-            f"4. Forward technical telemetry to AnalyticsAgent and ReporterAgent."
+            f"Step 1 (Data Decision for '{query}'):\n"
+            f"1. Decided Data Required: SQLite3 `system_telemetry` table for service 'core-sales-service'.\n"
+            f"2. Scope: API latency percentiles (p50/p95/p99), platform availability, and ClickHouse/Postgres query timings.\n"
+            f"3. Next Step: Pull `system_telemetry` records from database."
         )
     elif any(k in q_lower for k in ["marketing", "cac", "mql", "sql", "roas", "channel", "campaign"]):
         intent = "marketing_analysis"
+        required_tables = ["marketing_campaigns"]
         required_tools = ["query_marketing_campaigns"]
+        data_rationale = "Question asks about marketing campaigns and acquisition. Required data: `marketing_campaigns` table in SQLite3."
         plan_summary = (
-            f"Execution Plan for '{query}':\n"
-            f"1. Query marketing campaign attribution database for Q3 2026.\n"
-            f"2. Extract MQL and SQL conversion volumes and blended CAC.\n"
-            f"3. Analyze channel ROI (Technical Inbound Blog vs Enterprise Webinars vs Paid Social).\n"
-            f"4. Delegate to AnalyticsAgent and format for ReporterAgent."
+            f"Step 1 (Data Decision for '{query}'):\n"
+            f"1. Decided Data Required: SQLite3 `marketing_campaigns` table for Q3 2026.\n"
+            f"2. Scope: MQL/SQL volume, blended CAC, ROAS, channel contribution yields, and brand reach.\n"
+            f"3. Next Step: Pull `marketing_campaigns` records from database."
         )
     elif any(k in q_lower for k in ["dau", "mau", "retention", "adoption", "product", "csat"]):
         intent = "product_analysis"
+        required_tables = ["product_metrics"]
         required_tools = ["query_product_metrics"]
+        data_rationale = "Question asks about product usage and retention. Required data: `product_metrics` table in SQLite3."
         plan_summary = (
-            f"Execution Plan for '{query}':\n"
-            f"1. Query product analytics platform for active user metrics (MAU/DAU).\n"
-            f"2. Pull 30-day cohort retention curve and monthly customer churn rate.\n"
-            f"3. Retrieve feature adoption data for quarterly reporting modal and CSAT ratings.\n"
-            f"4. Synthesize findings via AnalyticsAgent and ReporterAgent."
+            f"Step 1 (Data Decision for '{query}'):\n"
+            f"1. Decided Data Required: SQLite3 `product_metrics` table for feature 'quarterly_reporting'.\n"
+            f"2. Scope: MAU, DAU, DAU/MAU ratio, 30-day cohort retention, churn rate, and feature adoption.\n"
+            f"3. Next Step: Pull `product_metrics` records from database."
         )
     elif any(k in q_lower for k in ["operational efficiency", "operational health", "efficiency", "sla", "health"]):
         intent = "operational_health_analysis"
+        required_tables = ["sales_performance", "system_telemetry", "marketing_campaigns", "product_metrics"]
         required_tools = ["query_sales_data", "query_system_telemetry", "query_marketing_campaigns", "query_product_metrics"]
+        data_rationale = "Question asks for operational health across domains. Required data: Cross-domain operational tables in SQLite3."
         plan_summary = (
-            f"Execution Plan for Operational Health & Efficiency Analysis ('{query}'):\n"
-            f"1. Query domain telemetry and operational efficiency metrics for {org}.\n"
-            f"2. Tailor focus strictly to '{persona}' operational responsibilities and KPIs.\n"
-            f"3. Synthesize operational insights via AnalyticsAgent and ReporterAgent."
+            f"Step 1 (Data Decision for Operational Health '{query}'):\n"
+            f"1. Decided Data Required: `sales_performance`, `system_telemetry`, `marketing_campaigns`, `product_metrics` from SQLite3.\n"
+            f"2. Scope: End-to-end operational KPIs tailored to {persona} perspective.\n"
+            f"3. Next Step: Pull cross-domain records from database."
         )
     else:
         intent = "enterprise_performance_analysis"
+        required_tables = ["sales_performance", "domain_margins", "revenue_drivers", "system_telemetry"]
         required_tools = ["query_sales_data", "query_domain_margins", "query_revenue_drivers", "query_system_telemetry"]
+        data_rationale = "Broad enterprise performance query. Required data: Sales, Margins, Drivers, and Telemetry tables in SQLite3."
         plan_summary = (
-            f"Execution Plan for '{query}':\n"
-            f"1. Query commercial sales database (actual vs target, quota attainment, pipeline).\n"
-            f"2. Query SQLite3 database for cross-domain margins and revenue drivers.\n"
-            f"3. Pull system telemetry (API latency, query duration, schema contracts) for verification.\n"
-            f"4. Delegate to AnalyticsAgent for data extraction and forward to ReporterAgent."
+            f"Step 1 (Data Decision for '{query}'):\n"
+            f"1. Decided Data Required: Multi-table pull (`sales_performance`, `domain_margins`, `revenue_drivers`, `system_telemetry`).\n"
+            f"2. Scope: Actual revenue vs target, deal margins, growth catalysts, and infrastructure reliability.\n"
+            f"3. Next Step: Pull required records from database."
         )
 
-    # Optional Realtime LLM Planning
+    # Optional Real-time LLM Planning
     llm_error = None
     if execution_mode == "realtime":
         try:
-            prompt = f"""You are the SupervisorAgent coordinating an enterprise multi-agent system for {org}.
+            prompt = f"""You are the SupervisorAgent coordinating Step 1 of an enterprise intelligence system for {org}.
 User Query: "{query}"
 Target Persona: "{persona}"
-Identified Intent: {intent}
-Required Tools: {json.dumps(required_tools)}
 
-Formulate a concise execution plan specifying required tools, key dimensions to analyze, and downstream requirements."""
+AVAILABLE SQLITE3 TABLES (enterprise_data.db):
+1. `domain_margins`: Gross margins, software vs services split, cloud COGS ratio, LTV:CAC, feature module economics, consolidated EBITDA.
+2. `revenue_drivers`: Attributed catalysts of sales/revenue growth across direct sales, marketing funnels, IT 99.98% platform reliability, and product PLG loops.
+3. `sales_performance`: Overall Q3 revenue ($4.85M vs $4.5M), quota attainment (107.8%), deals closed (142), average deal size, pipeline ($8.2M), win rate.
+4. `system_telemetry`: API p50/p95/p99 latencies, 99.98% uptime SLA, error rate, ClickHouse/Postgres partition query time (14.8ms).
+5. `marketing_campaigns`: MQLs (3,480), SQLs (612), blended CAC ($1,420), ROAS (3.8x), channel contribution margins.
+6. `product_metrics`: MAU (18,450), DAU (7,920), 42.9% DAU/MAU, 88.2% retention, 1.4% churn, 76.5% feature adoption.
+
+YOUR TASK:
+Based on the question, decide which data is required to answer it. State the required tables, target filters, and key metrics to extract."""
             llm_res = call_llm(
                 prompt=prompt,
-                system_instruction="You are a senior supervisor agent orchestrating complex analytical tasks.",
+                system_instruction="You are a senior supervisor agent analyzing questions and deciding data requirements.",
                 execution_mode="realtime",
             )
             if llm_res:
@@ -260,7 +285,11 @@ Formulate a concise execution plan specifying required tools, key dimensions to 
     plan = {
         "status": "planned",
         "intent": intent,
+        "requires_database": True,
+        "required_tables": required_tables,
         "required_tools": required_tools,
+        "domain_filter": target_domain,
+        "data_rationale": data_rationale,
         "plan_summary": plan_summary,
         "mode": execution_mode,
     }
@@ -269,43 +298,113 @@ Formulate a concise execution plan specifying required tools, key dimensions to 
 
 
 # ---------------------------------------------------------------------------
-# Node 2: AnalyticsAgent
+# Stage 2 (Node 2): AnalyticsAgent — Pull That Data from the Database
 # ---------------------------------------------------------------------------
 
 @observe(name="AnalyticsAgent", as_agent=True)
 def analytics_node(state: MultiAgentState) -> Dict[str, Any]:
-    """Analytics agent executing data retrieval tools and extracting quantitative facts."""
+    """
+    Step 2: Pull the data decided in Step 1 directly from the SQLite3 database (enterprise_data.db).
+    """
     query = state.get("query", "")
     persona = state.get("persona", "Default")
     plan = state.get("plan", {})
     execution_mode = state.get("execution_mode", "dummy")
     intent = plan.get("intent", "enterprise_performance_analysis")
 
-    if intent == "chitchat" or is_chitchat_query(query):
+    # If chitchat: bypass database retrieval
+    if intent == "chitchat" or is_chitchat_query(query) or not plan.get("requires_database", True):
         analytical_data = {
             "type": "chitchat",
-            "synthesis": "Conversational greeting acknowledged. Analytical data tools bypassed.",
+            "retrieved_tables": [],
+            "retrieved_data": {},
+            "synthesis": "Conversational greeting acknowledged. Database retrieval bypassed (no quantitative data required).",
         }
         return {"analytical_data": analytical_data, "error": state.get("error")}
 
-    domain_key = persona.lower() if persona.lower() in ("sales", "it", "marketing", "product") else "all"
+    required_tools = plan.get("required_tools", [])
+    required_tables = plan.get("required_tables", [])
+    domain_filter = plan.get("domain_filter", "all")
 
-    # Query SQLite3 DB for margin and driver records
-    domain_margins = query_domain_margins(domain=domain_key, quarter="Q3 2026")
-    all_margins = query_domain_margins(domain="all", quarter="Q3 2026")
+    pulled_records = {}
+    pulled_descriptions = []
 
-    revenue_drivers = query_revenue_drivers(domain=domain_key, quarter="Q3 2026")
-    all_drivers = query_revenue_drivers(domain="all", quarter="Q3 2026")
+    # 1. Pull domain margins from SQLite3 if required
+    if "query_domain_margins" in required_tools or "domain_margins" in required_tables or intent == "enterprise_performance_analysis":
+        domain_margins = query_domain_margins(domain=domain_filter, quarter="Q3 2026")
+        all_margins = query_domain_margins(domain="all", quarter="Q3 2026")
+        pulled_records["domain_margins"] = domain_margins
+        pulled_records["all_margins"] = all_margins
+        pulled_descriptions.append(
+            f"`domain_margins` table: {len(domain_margins.get('records', []))} records pulled for domain '{domain_filter}'"
+        )
+    else:
+        domain_margins = {"records": []}
+        all_margins = {"records": []}
 
-    # Domain tools
-    sales_data = query_sales_data(quarter="Q3 2026")
-    tech_data = query_system_telemetry(service="core-sales-service")
-    marketing_data = query_marketing_campaigns(quarter="Q3 2026")
-    product_data = query_product_metrics(feature="quarterly_reporting")
+    # 2. Pull revenue drivers from SQLite3 if required
+    if "query_revenue_drivers" in required_tools or "revenue_drivers" in required_tables or intent == "enterprise_performance_analysis":
+        revenue_drivers = query_revenue_drivers(domain=domain_filter, quarter="Q3 2026")
+        all_drivers = query_revenue_drivers(domain="all", quarter="Q3 2026")
+        pulled_records["revenue_drivers"] = revenue_drivers
+        pulled_records["all_drivers"] = all_drivers
+        pulled_descriptions.append(
+            f"`revenue_drivers` table: {len(revenue_drivers.get('records', []))} records pulled for domain '{domain_filter}'"
+        )
+    else:
+        revenue_drivers = {"records": []}
+        all_drivers = {"records": []}
+
+    # 3. Pull sales performance from SQLite3 if required
+    if "query_sales_data" in required_tools or "sales_performance" in required_tables or intent == "enterprise_performance_analysis":
+        sales_data = query_sales_data(quarter="Q3 2026")
+        pulled_records["sales_performance"] = sales_data
+        pulled_descriptions.append(
+            f"`sales_performance` table: Revenue {sales_data.get('revenue_actual')} vs target {sales_data.get('revenue_target')} ({sales_data.get('quota_attainment_pct')}% quota)"
+        )
+    else:
+        sales_data = query_sales_data(quarter="Q3 2026")
+
+    # 4. Pull system telemetry from SQLite3 if required
+    if "query_system_telemetry" in required_tools or "system_telemetry" in required_tables or intent == "enterprise_performance_analysis":
+        tech_data = query_system_telemetry(service="core-sales-service")
+        pulled_records["system_telemetry"] = tech_data
+        pulled_descriptions.append(
+            f"`system_telemetry` table: Status {tech_data.get('status')}, p50={tech_data.get('p50_latency_ms')}ms, uptime 99.98%"
+        )
+    else:
+        tech_data = query_system_telemetry(service="core-sales-service")
+
+    # 5. Pull marketing campaigns from SQLite3 if required
+    if "query_marketing_campaigns" in required_tools or "marketing_campaigns" in required_tables:
+        marketing_data = query_marketing_campaigns(quarter="Q3 2026")
+        pulled_records["marketing_campaigns"] = marketing_data
+        pulled_descriptions.append(
+            f"`marketing_campaigns` table: {marketing_data.get('mql_generated')} MQLs, {marketing_data.get('sql_converted')} SQLs, CAC ${marketing_data.get('cac_dollars')}"
+        )
+    else:
+        marketing_data = query_marketing_campaigns(quarter="Q3 2026")
+
+    # 6. Pull product metrics from SQLite3 if required
+    if "query_product_metrics" in required_tools or "product_metrics" in required_tables:
+        product_data = query_product_metrics(feature="quarterly_reporting")
+        pulled_records["product_metrics"] = product_data
+        pulled_descriptions.append(
+            f"`product_metrics` table: {product_data.get('monthly_active_users')} MAU, {product_data.get('feature_adoption_rate_pct')}% adoption"
+        )
+    else:
+        product_data = query_product_metrics(feature="quarterly_reporting")
+
+    synthesis_summary = (
+        "Step 2: Successfully pulled required data from SQLite3 `enterprise_data.db`:\n"
+        + "\n".join(f"- {d}" for d in pulled_descriptions)
+    )
 
     analytical_data = {
         "intent": intent,
         "persona": persona,
+        "retrieved_tables": required_tables,
+        "retrieved_data": pulled_records,
         "sales": sales_data,
         "technology": tech_data,
         "marketing": marketing_data,
@@ -314,38 +413,25 @@ def analytics_node(state: MultiAgentState) -> Dict[str, Any]:
         "all_margins": all_margins,
         "revenue_drivers": revenue_drivers,
         "all_drivers": all_drivers,
+        "synthesis": synthesis_summary,
     }
 
-    # Real-time LLM validation
+    # Real-time LLM validation of pulled data
     llm_error = None
     if execution_mode == "realtime":
         try:
-            prompt = f"""Summarize and validate the retrieved quantitative data from SQLite3 DB and domain tools for intent '{intent}':
-Margins: {json.dumps(domain_margins)}
-Revenue Drivers: {json.dumps(revenue_drivers)}
-Sales: {json.dumps(sales_data)}
-Tech: {json.dumps(tech_data)}
-Identify core metrics, verified data points, and operational anomalies."""
+            prompt = f"""Summarize and validate the retrieved quantitative data pulled from the SQLite3 database for query '{query}':
+{json.dumps(pulled_records, default=str)}
+Identify key metrics, verified numbers, and domain-specific perspectives."""
             llm_res = call_llm(
                 prompt=prompt,
-                system_instruction="You are a data validation and quantitative research agent.",
+                system_instruction="You are a data validation and quantitative research agent verifying database records.",
                 execution_mode="realtime",
             )
             if llm_res:
                 analytical_data["synthesis"] = llm_res
         except Exception as exc:
             llm_error = str(exc)
-
-    if "synthesis" not in analytical_data:
-        analytical_data["synthesis"] = (
-            "Data Extraction Summary:\n"
-            f"- Margin Data: {len(domain_margins.get('records', []))} records retrieved from SQLite3 (Gross margin: 68.4%, EBITDA: 28.5%).\n"
-            f"- Revenue Drivers: {len(revenue_drivers.get('records', []))} growth drivers extracted across commercial and technical domains.\n"
-            "- Sales: $4.85M revenue vs $4.50M target (107.8% quota, +24.3% YoY). 142 deals closed, $8.2M pipeline.\n"
-            "- Tech: Core sales API p50=28.4ms, p95=112.6ms, 0.02% error rate. 99.98% platform uptime.\n"
-            "- Marketing: 3,480 MQLs, 612 SQLs, blended CAC $1,420, ROAS 3.8x.\n"
-            "- Product: 18,450 MAU, 7,920 DAU, 76.5% feature adoption, 88.2% 30d retention."
-        )
 
     current_err = state.get("error") or llm_error
     return {"analytical_data": analytical_data, "error": current_err}

@@ -53,15 +53,103 @@ def init_db() -> None:
         )
     """)
 
-    # Check if already seeded
+    # Table 3: Sales Performance
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sales_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quarter TEXT NOT NULL,
+            revenue_actual TEXT NOT NULL,
+            revenue_target TEXT NOT NULL,
+            quota_attainment_pct REAL NOT NULL,
+            growth_yoy_pct REAL NOT NULL,
+            deals_closed INTEGER NOT NULL,
+            average_deal_size TEXT NOT NULL,
+            top_deal TEXT NOT NULL,
+            pipeline_remaining TEXT NOT NULL,
+            top_performing_region TEXT NOT NULL,
+            win_rate_pct REAL NOT NULL
+        )
+    """)
+
+    # Table 4: System Telemetry
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_telemetry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            service TEXT NOT NULL,
+            status TEXT NOT NULL,
+            p50_latency_ms REAL NOT NULL,
+            p95_latency_ms REAL NOT NULL,
+            p99_latency_ms REAL NOT NULL,
+            error_rate_pct REAL NOT NULL,
+            active_replicas INTEGER NOT NULL,
+            db_engine TEXT NOT NULL,
+            db_query_time_avg_ms REAL NOT NULL,
+            db_table_queried TEXT NOT NULL,
+            api_endpoint TEXT NOT NULL,
+            cache_hit_ratio_pct REAL NOT NULL
+        )
+    """)
+
+    # Table 5: Marketing Campaigns
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS marketing_campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quarter TEXT NOT NULL,
+            mql_generated INTEGER NOT NULL,
+            sql_converted INTEGER NOT NULL,
+            conversion_rate_pct REAL NOT NULL,
+            cac_dollars INTEGER NOT NULL,
+            blended_roas REAL NOT NULL,
+            brand_impressions TEXT NOT NULL,
+            customer_sentiment_score REAL NOT NULL,
+            top_channels_json TEXT NOT NULL
+        )
+    """)
+
+    # Table 6: Product Metrics
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS product_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quarter TEXT NOT NULL,
+            feature TEXT NOT NULL,
+            monthly_active_users INTEGER NOT NULL,
+            daily_active_users INTEGER NOT NULL,
+            dau_mau_ratio REAL NOT NULL,
+            feature_adoption_rate_pct REAL NOT NULL,
+            retention_30d_pct REAL NOT NULL,
+            churn_rate_pct REAL NOT NULL,
+            csat_score REAL NOT NULL,
+            time_to_value_minutes REAL NOT NULL,
+            user_dropoff_points TEXT NOT NULL
+        )
+    """)
+
+    # Check and seed each table
     cursor.execute("SELECT COUNT(*) AS cnt FROM domain_margins")
-    margin_count = cursor.fetchone()["cnt"]
-
-    if margin_count == 0:
+    if cursor.fetchone()["cnt"] == 0:
         _seed_domain_margins(cursor)
-        _seed_revenue_drivers(cursor)
-        conn.commit()
 
+    cursor.execute("SELECT COUNT(*) AS cnt FROM revenue_drivers")
+    if cursor.fetchone()["cnt"] == 0:
+        _seed_revenue_drivers(cursor)
+
+    cursor.execute("SELECT COUNT(*) AS cnt FROM sales_performance")
+    if cursor.fetchone()["cnt"] == 0:
+        _seed_sales_performance(cursor)
+
+    cursor.execute("SELECT COUNT(*) AS cnt FROM system_telemetry")
+    if cursor.fetchone()["cnt"] == 0:
+        _seed_system_telemetry(cursor)
+
+    cursor.execute("SELECT COUNT(*) AS cnt FROM marketing_campaigns")
+    if cursor.fetchone()["cnt"] == 0:
+        _seed_marketing_campaigns(cursor)
+
+    cursor.execute("SELECT COUNT(*) AS cnt FROM product_metrics")
+    if cursor.fetchone()["cnt"] == 0:
+        _seed_product_metrics(cursor)
+
+    conn.commit()
     conn.close()
 
 
@@ -351,6 +439,195 @@ def get_revenue_driver_records(domain: Optional[str] = None, quarter: str = "Q3 
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
+
+
+def _seed_sales_performance(cursor: sqlite3.Cursor) -> None:
+    """Seed data for Sales Performance in Q3 2026."""
+    cursor.execute("""
+        INSERT INTO sales_performance (
+            quarter, revenue_actual, revenue_target, quota_attainment_pct,
+            growth_yoy_pct, deals_closed, average_deal_size, top_deal,
+            pipeline_remaining, top_performing_region, win_rate_pct
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        "Q3 2026", "$4,850,000", "$4,500,000", 107.8,
+        24.3, 142, "$34,154", "Global Logistics Corp Enterprise License ($520,000)",
+        "$8,200,000", "North America (118% quota)", 31.4
+    ))
+
+
+def _seed_system_telemetry(cursor: sqlite3.Cursor) -> None:
+    """Seed data for System Telemetry & Infrastructure Performance."""
+    cursor.execute("""
+        INSERT INTO system_telemetry (
+            service, status, p50_latency_ms, p95_latency_ms, p99_latency_ms,
+            error_rate_pct, active_replicas, db_engine, db_query_time_avg_ms,
+            db_table_queried, api_endpoint, cache_hit_ratio_pct
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        "core-sales-service", "healthy", 28.4, 112.6, 245.1,
+        0.02, 6, "PostgreSQL 16.2 / ClickHouse 24.3", 14.8,
+        "enterprise_orders_partition_2026_q3", "GET /api/v2/analytics/quarterly-metrics", 89.4
+    ))
+
+
+def _seed_marketing_campaigns(cursor: sqlite3.Cursor) -> None:
+    """Seed data for Marketing Campaigns & Customer Acquisition."""
+    import json
+    channels = [
+        {"channel": "Inbound Organic / Technical Blog", "conversions": 240, "cac": "$780", "contribution_margin": "84.2%"},
+        {"channel": "Enterprise Product Webinars", "conversions": 195, "cac": "$1,120", "contribution_margin": "72.1%"},
+        {"channel": "Paid Search & LinkedIn Ads", "conversions": 177, "cac": "$2,240", "contribution_margin": "58.6%"}
+    ]
+    cursor.execute("""
+        INSERT INTO marketing_campaigns (
+            quarter, mql_generated, sql_converted, conversion_rate_pct,
+            cac_dollars, blended_roas, brand_impressions, customer_sentiment_score,
+            top_channels_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        "Q3 2026", 3480, 612, 17.6,
+        1420, 3.8, "1.42M", 8.7, json.dumps(channels)
+    ))
+
+
+def _seed_product_metrics(cursor: sqlite3.Cursor) -> None:
+    """Seed data for Product Metrics & Feature Adoption."""
+    cursor.execute("""
+        INSERT INTO product_metrics (
+            quarter, feature, monthly_active_users, daily_active_users,
+            dau_mau_ratio, feature_adoption_rate_pct, retention_30d_pct,
+            churn_rate_pct, csat_score, time_to_value_minutes, user_dropoff_points
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        "Q3 2026", "quarterly_reporting", 18450, 7920,
+        0.429, 76.5, 88.2,
+        1.4, 4.6, 8.2, "complex SQL custom export modal (11% dropoff)"
+    ))
+
+
+def get_sales_records(quarter: str = "Q3 2026") -> Dict[str, Any]:
+    """Retrieve sales performance metrics directly from SQLite3 database."""
+    init_db()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM sales_performance WHERE quarter = ? LIMIT 1", (quarter,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {
+        "quarter": quarter,
+        "revenue_actual": "$4,850,000",
+        "revenue_target": "$4,500,000",
+        "quota_attainment_pct": 107.8,
+        "growth_yoy_pct": 24.3,
+        "deals_closed": 142,
+        "average_deal_size": "$34,154",
+        "top_deal": "Global Logistics Corp Enterprise License ($520,000)",
+        "pipeline_remaining": "$8,200,000",
+        "top_performing_region": "North America (118% quota)",
+        "win_rate_pct": 31.4,
+    }
+
+
+def get_telemetry_records(service: str = "core-sales-service") -> Dict[str, Any]:
+    """Retrieve system telemetry and query metrics directly from SQLite3 database."""
+    init_db()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM system_telemetry WHERE service = ? LIMIT 1", (service,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        d["database"] = {
+            "engine": d.get("db_engine", "PostgreSQL 16.2 / ClickHouse 24.3"),
+            "query_time_avg_ms": d.get("db_query_time_avg_ms", 14.8),
+            "table_queried": d.get("db_table_queried", "enterprise_orders_partition_2026_q3"),
+            "schema_version": "v3.1.2",
+            "indexes_used": ["idx_quarter_status_amount", "idx_org_timestamp"],
+        }
+        return d
+    return {
+        "status": "healthy",
+        "service": service,
+        "p50_latency_ms": 28.4,
+        "p95_latency_ms": 112.6,
+        "p99_latency_ms": 245.1,
+        "error_rate_pct": 0.02,
+        "active_replicas": 6,
+        "database": {
+            "engine": "PostgreSQL 16.2 / ClickHouse 24.3",
+            "query_time_avg_ms": 14.8,
+            "table_queried": "enterprise_orders_partition_2026_q3",
+            "schema_version": "v3.1.2",
+            "indexes_used": ["idx_quarter_status_amount", "idx_org_timestamp"],
+        },
+        "api_endpoint": "GET /api/v2/analytics/quarterly-metrics",
+        "cache_hit_ratio_pct": 89.4,
+    }
+
+
+def get_marketing_records(quarter: str = "Q3 2026") -> Dict[str, Any]:
+    """Retrieve marketing campaign metrics directly from SQLite3 database."""
+    import json
+    init_db()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM marketing_campaigns WHERE quarter = ? LIMIT 1", (quarter,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        try:
+            d["top_acquisition_channels"] = json.loads(d.get("top_channels_json", "[]"))
+        except Exception:
+            d["top_acquisition_channels"] = []
+        return d
+    return {
+        "status": "success",
+        "quarter": quarter,
+        "mql_generated": 3480,
+        "sql_converted": 612,
+        "cac_dollars": 1420,
+        "blended_roas": 3.8,
+        "brand_impressions": "1.4M",
+        "customer_sentiment_score": 8.7,
+        "top_acquisition_channels": [
+            {"channel": "Inbound Organic / Technical Blog", "conversions": 240, "cac": "$780"},
+            {"channel": "Enterprise Product Webinars", "conversions": 195, "cac": "$1,120"},
+            {"channel": "Paid Search & LinkedIn Ads", "conversions": 177, "cac": "$2,240"},
+        ],
+    }
+
+
+def get_product_records(feature: str = "quarterly_reporting", quarter: str = "Q3 2026") -> Dict[str, Any]:
+    """Retrieve product metrics directly from SQLite3 database."""
+    init_db()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM product_metrics WHERE feature = ? AND quarter = ? LIMIT 1", (feature, quarter))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        dropoff = d.get("user_dropoff_points", "")
+        d["user_dropoff_points"] = [dropoff] if dropoff else []
+        return d
+    return {
+        "status": "success",
+        "feature": feature,
+        "monthly_active_users": 18450,
+        "daily_active_users": 7920,
+        "dau_mau_ratio": 0.429,
+        "feature_adoption_rate_pct": 76.5,
+        "30d_retention_rate_pct": 88.2,
+        "churn_rate_pct": 1.4,
+        "csat_score": 4.6,
+        "average_time_to_value_minutes": 8.2,
+        "user_dropoff_points": ["complex SQL custom export modal (11% dropoff)"],
+    }
 
 
 def query_enterprise_db(sql: str, params: tuple = ()) -> List[Dict[str, Any]]:

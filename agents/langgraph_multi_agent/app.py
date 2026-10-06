@@ -642,29 +642,29 @@ if user_prompt:
 
         with status_box:
             if is_chitchat:
-                st.write("🧠 **SupervisorAgent:** Identified conversational greeting. Routing to greeting response...")
+                st.write("🧠 **Step 1 (SupervisorAgent):** Identified conversational greeting. Database retrieval bypassed.")
                 time.sleep(0.12)
-                st.write("🔬 **AnalyticsAgent:** Tool execution bypassed (no quantitative data required for greeting)...")
+                st.write("🔬 **Step 2 (AnalyticsAgent):** No database data required for greeting.")
                 time.sleep(0.12)
-                st.write(f"📝 **ReporterAgent:** Composing friendly greeting tailored to {st.session_state.persona} perspective...")
+                st.write(f"📝 **Step 3 (ReporterAgent):** Composing friendly greeting tailored to {st.session_state.persona} perspective...")
             elif is_margin:
-                st.write("🧠 **SupervisorAgent:** Formulating execution plan for margin-based cross-domain analysis...")
+                st.write("🧠 **Step 1 (SupervisorAgent):** Deciding data required based on question -> SQLite3 `domain_margins` table...")
                 time.sleep(0.15)
-                st.write("🔬 **AnalyticsAgent:** Querying SQLite3 `enterprise_data.db` (`domain_margins` table) across Sales, IT, Marketing, Product, and Finance...")
+                st.write("🔬 **Step 2 (AnalyticsAgent):** Pulling margin records from SQLite3 `enterprise_data.db` across domain perspectives...")
                 time.sleep(0.15)
-                st.write(f"📝 **ReporterAgent:** Synthesizing cross-domain margin perspectives tailored to {st.session_state.persona} lens...")
+                st.write(f"📝 **Step 3 (ReporterAgent):** Generating answer using pulled margin data tailored to {st.session_state.persona} lens...")
             elif is_drivers:
-                st.write("🧠 **SupervisorAgent:** Formulating execution plan for sales and revenue growth catalysts...")
+                st.write("🧠 **Step 1 (SupervisorAgent):** Deciding data required based on question -> SQLite3 `revenue_drivers` table...")
                 time.sleep(0.15)
-                st.write("🔬 **AnalyticsAgent:** Querying SQLite3 `enterprise_data.db` (`revenue_drivers` table) for departmental attribution...")
+                st.write("🔬 **Step 2 (AnalyticsAgent):** Pulling revenue driver attribution from SQLite3 `enterprise_data.db`...")
                 time.sleep(0.15)
-                st.write(f"📝 **ReporterAgent:** Synthesizing multi-domain revenue driver attribution tailored to {st.session_state.persona} lens...")
+                st.write(f"📝 **Step 3 (ReporterAgent):** Generating answer using pulled driver data tailored to {st.session_state.persona} lens...")
             else:
-                st.write("🧠 **SupervisorAgent:** Analyzing query & formulating plan...")
+                st.write("🧠 **Step 1 (SupervisorAgent):** Deciding which data is required to answer the question...")
                 time.sleep(0.15)
-                st.write("🔬 **AnalyticsAgent:** Querying SQLite3 database & domain tools (Sales, Telemetry, Marketing, Product)...")
+                st.write("🔬 **Step 2 (AnalyticsAgent):** Pulling required records from SQLite3 `enterprise_data.db`...")
                 time.sleep(0.15)
-                st.write(f"📝 **ReporterAgent:** Synthesizing facts tailored to {st.session_state.persona} perspective...")
+                st.write(f"📝 **Step 3 (ReporterAgent):** Generating answer using pulled database data tailored to {st.session_state.persona}...")
 
             # Run LangGraph workflow with mode configuration
             result = run_multi_agent_workflow(
