@@ -10,6 +10,9 @@ if [ ! -f "$PYTHON" ]; then
     PYTHON="python3"
 fi
 
+export OBSERVIX_URL="${OBSERVIX_URL:-http://localhost:8010}"
+export OBSERVIX_HOST="${OBSERVIX_HOST:-http://localhost:8010}"
+
 echo "Starting Streamlit Multi-Agent Chat Application..."
 echo "Open your browser at: http://localhost:8501"
 

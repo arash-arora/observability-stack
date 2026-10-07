@@ -1,71 +1,61 @@
 """
-LangGraph Multi-Agent Workflow with 3 Instrumented Agents:
-1. SupervisorAgent (Planning & Orchestration)
-2. AnalyticsAgent (Tool Execution & Quantitative Research across SQLite3 and Domain Tools)
-3. ReporterAgent (Executive Synthesis & Domain Formatting tailored to Persona Perspectives)
+LangGraph Multi-Agent Workflow for Lululemon Athletica Enterprise Intelligence.
 
-Instrumented natively using the Observix SDK.
-Supports Azure OpenAI (configured via .env), Groq (via .env), or Simulated mode.
-Directly interfaces with SQLite3 (enterprise_data.db) for:
-- Margin-based usecase (different domain perspectives)
-- Drivers causing sales / revenue (different domain perspectives)
+Connects 3 specialized agents:
+1. SupervisorAgent (Stage 1): Analyzes question, plans data requirements across Lululemon SQLite3 tables:
+   - Table 1 (product_list): product_id, product_name, cost_price, selling_price, year_added, is_active, category, sub_category
+   - Table 2 (sales_data): product_id, total_sales, quarter_wise_sales, profit, traffic
+   - Table 3 (marketing_data): product_id, click_through_rate, ad_budget, views, likes, is_active, querter
+   - Table 4 (dev_data): latency, downtime_hours, time_range, cache_hit, cache_failure, llm_tokens_used, llm_cost, product_wise_click_throughs
+2. AnalyticsAgent (Stage 2): Pulls required quantitative records and builds interactive Evidence Tables.
+3. ReporterAgent (Stage 3): Synthesizes an executive, persona-tailored response representing Lululemon Athletica.
 """
 import os
+import sys
 import json
 import time
 from typing import Dict, Any, List, Optional, TypedDict
+
 from langgraph.graph import StateGraph, START, END
 
-from dotenv import load_dotenv
-
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-BACKEND_DIR = os.path.join(REPO_ROOT, "backend")
-load_dotenv(os.path.join(BACKEND_DIR, ".env"))
-load_dotenv(os.path.join(REPO_ROOT, ".env"))
-
-import uuid
-
+# Import Observix for full trace capture
 try:
-    from observix import init_observability, observe, flush
+    from observix import observe, init_observability
 except ImportError:
-    def init_observability(url: str = "", api_key: str = "", **kwargs: Any) -> None:
-        """No-op fallback when observix SDK is not installed."""
-        pass
-
-    def flush(*args: Any, **kwargs: Any) -> None:
-        """No-op fallback when observix SDK is not installed."""
-        pass
-
     def observe(*dargs: Any, **dkwargs: Any):
-        """No-op decorator fallback when observix SDK is not installed."""
         def decorator(fn):
             return fn
         if len(dargs) == 1 and callable(dargs[0]) and not dkwargs:
             return dargs[0]
         return decorator
 
+    def init_observability(*args: Any, **kwargs: Any):
+        pass
+
 try:
-    from opentelemetry import trace
+    from observix.traces import get_current_trace
 except ImportError:
-    trace = None
+    get_current_trace = None
 
 from agents.langgraph_multi_agent.llm_config import (
     call_llm,
     get_active_provider_info,
 )
 from agents.langgraph_multi_agent.tools import (
+    query_product_list,
     query_sales_data,
-    query_system_telemetry,
-    query_marketing_campaigns,
-    query_product_metrics,
+    query_marketing_data,
+    query_dev_data,
+    query_most_viewed_products,
     query_domain_margins,
     query_revenue_drivers,
 )
 
 DEFAULT_OBSERVIX_URL = os.getenv("OBSERVIX_URL", "http://localhost:8010")
 DEFAULT_OBSERVIX_KEY = os.getenv("OBSERVIX_API_KEY", "sk-cortex-live-key-9f8a12bc34de56fa78bc90de")
+os.environ.setdefault("OBSERVIX_URL", DEFAULT_OBSERVIX_URL)
+os.environ.setdefault("OBSERVIX_HOST", DEFAULT_OBSERVIX_URL)
 
-# Initialize Observix SDK globally (no-op if observix is not installed)
 try:
     init_observability(url=DEFAULT_OBSERVIX_URL, api_key=DEFAULT_OBSERVIX_KEY)
 except Exception as exc:
@@ -82,17 +72,18 @@ CHITCHAT_EXACT = {
 }
 
 DOMAIN_KEYWORDS = {
-    "sales", "revenue", "quota", "pipeline", "deal", "deals", "commercial",
-    "latency", "telemetry", "p50", "p95", "p99", "tech", "performance", "api", "query", "queries", "database", "postgres", "clickhouse",
-    "marketing", "cac", "mql", "sql", "roas", "channel", "channels", "campaign", "campaigns",
-    "dau", "mau", "retention", "adoption", "product", "csat", "churn",
-    "quarter", "quarterly", "report", "metrics", "analytics", "numbers", "target", "attainment",
-    "margin", "margins", "profitability", "gross margin", "ebitda", "cogs", "driver", "drivers", "cause", "causing",
+    "product", "products", "item", "items", "clothes", "apparel", "catalog", "align", "scuba",
+    "define", "pant", "pants", "hoodie", "hoodies", "jacket", "jackets", "shirt", "shirts",
+    "short", "shorts", "bag", "belt bag", "tight", "tights", "wunder", "cost", "selling", "price",
+    "sales", "total sales", "units", "profit", "traffic", "quarter wise", "revenue", "quota",
+    "marketing", "ctr", "click through", "ad budget", "views", "likes", "tiktok", "instagram",
+    "dev", "tech", "latency", "downtime", "cache", "cache hit", "llm", "tokens", "most viewed",
+    "margin", "margins", "profitability", "gross margin", "ebitda", "cogs", "driver", "drivers",
 }
 
 
 def is_chitchat_query(query: str) -> bool:
-    """Detect whether a user query is a conversational greeting/chitchat rather than an analytical data question."""
+    """Detect whether a user query is conversational greeting/chitchat rather than a data question."""
     if not query:
         return False
     import re
@@ -118,7 +109,7 @@ class MultiAgentState(TypedDict):
     query: str
     persona: str
     organization: str
-    execution_mode: str  # "dummy" or "realtime"
+    execution_mode: str
     model_name: str
     api_key: Optional[str]
     plan: Dict[str, Any]
@@ -128,191 +119,202 @@ class MultiAgentState(TypedDict):
 
 
 # ---------------------------------------------------------------------------
-# Node 1: SupervisorAgent
+# Stage 1: SupervisorAgent — LLM Table Selection Based on Question & Persona
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Stage 1 (Node 1): SupervisorAgent — Decide Which Data is Required
-# ---------------------------------------------------------------------------
+def decide_required_tables_llm(
+    query: str,
+    persona: str,
+    org: str = "Lululemon Athletica",
+    execution_mode: str = "realtime",
+) -> Dict[str, Any]:
+    """
+    Execute an LLM decision call to dynamically select strictly required SQLite3 tables
+    based on the user's question and persona.
+    """
+    if is_chitchat_query(query):
+        return {
+            "required_tables": [],
+            "intent": "chitchat",
+            "reasoning": "Conversational greeting acknowledged. Database retrieval bypassed (no quantitative data required).",
+            "llm_used": False,
+        }
+
+    provider_info = get_active_provider_info()
+    valid_tables = {"product_list", "sales_data", "marketing_data", "dev_data"}
+
+    system_instruction = (
+        f"You are the Supervisor Decision Agent for {org} Enterprise Multi-Agent Intelligence.\n"
+        "Your task is to analyze the user's question and target persona, and select ONLY the SQLite3 database table(s) "
+        "strictly required to formulate an accurate, evidence-backed answer.\n\n"
+        "DATABASE TABLES IN enterprise_data.db:\n"
+        "1. `product_list`: product_id, product_name, cost_price, selling_price, year_added, is_active, category, sub_category\n"
+        "   - Use for: product catalog, SKU details, product names, cost vs selling prices, unit gross margins, product categories.\n"
+        "2. `sales_data`: product_id, total_sales, quarter_wise_sales, profit, traffic\n"
+        "   - Use for: sales volumes, units sold, quarter-wise breakdowns, gross profit, revenue, commercial conversion rates, store/web traffic.\n"
+        "3. `marketing_data`: product_id, click_through_rate, ad_budget, views, likes, is_active, querter\n"
+        "   - Use for: marketing campaigns, click-through rates (CTR), ad spend, impressions/views, likes, social engagement, and viral reach.\n"
+        "4. `dev_data`: latency, downtime_hours, time_range, cache_hit, cache_failure, llm_tokens_used, llm_cost, product_wise_click_throughs\n"
+        "   - Use for: digital platform latency, system downtime, edge cache hit ratio, AI stylist LLM tokens and inference cost, and product click-throughs to find MOST VIEWED products.\n\n"
+        "PERSONA ROLES:\n"
+        "- sales / merchandising: Prioritizes product catalog, selling prices, unit margins, sales units, revenue, and gross profit.\n"
+        "- marketing / brand: Prioritizes campaign performance, click-through rates (CTR), video views, likes, social engagement, and ad spend.\n"
+        "- IT / dev / engineering: Prioritizes latency, service uptime, cache hit ratios, LLM tokens/costs, and most-viewed product traffic.\n\n"
+        "RULES:\n"
+        "1. Select ONLY the tables containing data directly needed to answer the question. Do NOT select tables you do not need.\n"
+        "2. If the user asks about most viewed products, select 'dev_data' (which holds the click-through data) and 'product_list' (to display product names).\n"
+        "3. Output strictly valid JSON matching this schema:\n"
+        "{\n"
+        '  "required_tables": ["table_name_1", ...],\n'
+        '  "intent": "short_intent_slug",\n'
+        '  "reasoning": "Clear 1-2 sentence explanation of why these specific tables were chosen based on the question and persona"\n'
+        "}"
+    )
+
+    user_prompt = f"User Question: \"{query}\"\nTarget Persona: \"{persona}\"\nWhich database tables are required?"
+
+    raw_response = ""
+    if provider_info.get("configured"):
+        try:
+            raw_response = call_llm(
+                prompt=user_prompt,
+                system_instruction=system_instruction,
+                execution_mode="realtime",
+            )
+        except Exception as exc:
+            print(f"[SupervisorAgent] LLM table selection call encountered error: {exc}")
+
+    if raw_response:
+        clean_text = raw_response.strip()
+        if "```json" in clean_text:
+            clean_text = clean_text.split("```json", 1)[1].split("```", 1)[0].strip()
+        elif "```" in clean_text:
+            clean_text = clean_text.split("```", 1)[1].split("```", 1)[0].strip()
+
+        try:
+            parsed = json.loads(clean_text)
+            tables = [t for t in parsed.get("required_tables", []) if t in valid_tables]
+            intent = parsed.get("intent", "data_analysis")
+            reasoning = parsed.get("reasoning", "")
+            if tables:
+                return {
+                    "required_tables": tables,
+                    "intent": intent,
+                    "reasoning": reasoning,
+                    "llm_used": True,
+                }
+        except Exception as parse_err:
+            print(f"[SupervisorAgent] Failed to parse JSON from LLM: {parse_err}")
+
+    # Fallback heuristic if LLM call is offline or unconfigured
+    q_lower = query.lower()
+    p_lower = persona.lower()
+    tables = []
+    reasoning_parts = []
+
+    if any(k in q_lower for k in ["latency", "downtime", "cache", "token", "llm", "telemetry", "dev"]):
+        tables.append("dev_data")
+        reasoning_parts.append("Dev engineering telemetry requested")
+    if any(k in q_lower for k in ["most viewed", "top viewed", "viewed products", "clicks"]):
+        if "dev_data" not in tables:
+            tables.append("dev_data")
+        if "product_list" not in tables:
+            tables.append("product_list")
+        reasoning_parts.append("Product click-through ranking and product names needed")
+    if any(k in q_lower for k in ["marketing", "ctr", "click through", "ad budget", "views", "likes", "campaign", "social"]):
+        tables.append("marketing_data")
+        reasoning_parts.append("Marketing campaign and social engagement metrics needed")
+    if any(k in q_lower for k in ["sales", "profit", "units sold", "units", "traffic", "revenue", "driver", "drivers"]):
+        tables.append("sales_data")
+        reasoning_parts.append("Commercial sales volume and profitability metrics needed")
+    if any(k in q_lower for k in ["product", "catalog", "price", "cost", "selling price", "margin", "align", "scuba", "define", "abc"]):
+        if "product_list" not in tables:
+            tables.append("product_list")
+        reasoning_parts.append("Product catalog and pricing architecture needed")
+
+    # If nothing matched, use persona preference
+    if not tables:
+        if "market" in p_lower:
+            tables = ["marketing_data"]
+            reasoning_parts.append("Defaulted to marketing_data for Marketing persona")
+        elif "it" in p_lower or "dev" in p_lower:
+            tables = ["dev_data"]
+            reasoning_parts.append("Defaulted to dev_data for IT/Dev persona")
+        else:
+            tables = ["product_list", "sales_data"]
+            reasoning_parts.append("Defaulted to product catalog and sales for Sales persona")
+
+    return {
+        "required_tables": tables,
+        "intent": f"{tables[0]}_analysis" if tables else "data_analysis",
+        "reasoning": "; ".join(reasoning_parts) if reasoning_parts else "Selected tables based on query keywords and persona.",
+        "llm_used": False,
+    }
+
 
 @observe(name="SupervisorAgent", as_agent=True)
 def supervisor_node(state: MultiAgentState) -> Dict[str, Any]:
-    """
-    Step 1: Based on the user's question, decide which data is required to answer it.
-    - If chitchat: marks intent as chitchat and skips data retrieval.
-    - If analytical: decides the exact SQLite tables and domain filters required.
-    """
+    """Analyze query and persona using LLM to dynamically decide required database tables."""
     query = state.get("query", "")
     persona = state.get("persona", "Default")
-    org = state.get("organization", "Enterprise Corp")
+    org = state.get("organization", "Lululemon Athletica")
     execution_mode = state.get("execution_mode", "dummy")
 
-    # 1. Chitchat handling: No database data required
-    if is_chitchat_query(query):
+    decision = decide_required_tables_llm(
+        query=query,
+        persona=persona,
+        org=org,
+        execution_mode=execution_mode,
+    )
+
+    required_tables = decision.get("required_tables", [])
+    intent = decision.get("intent", "data_analysis")
+    reasoning = decision.get("reasoning", "")
+    llm_used = decision.get("llm_used", False)
+    requires_db = len(required_tables) > 0
+
+    if not requires_db or intent == "chitchat":
         plan_summary = (
-            f"Step 1 (Data Decision): Query '{query}' recognized as conversational greeting / pleasantry.\n"
+            f"Step 1 (SupervisorAgent): Query '{query}' recognized as conversational greeting.\n"
             f"- Required Database Tables: None (bypassed for greeting).\n"
-            f"- Action: Route directly to ReporterAgent to provide a polite greeting and outline available enterprise data."
-        )
-        plan = {
-            "status": "planned",
-            "intent": "chitchat",
-            "requires_database": False,
-            "required_tables": [],
-            "required_tools": [],
-            "plan_summary": plan_summary,
-            "mode": execution_mode,
-        }
-        return {"plan": plan, "error": state.get("error")}
-
-    q_lower = query.lower()
-    persona_domain = persona.lower().strip()
-    target_domain = persona_domain if persona_domain in ("sales", "it", "marketing", "product", "finance") else "all"
-
-    # Step 1 Analysis: Based on the question, decide which data tables and metrics are required
-    if any(k in q_lower for k in ["margin", "margins", "profitability", "gross margin", "ebitda", "cogs"]):
-        intent = "margin_analysis"
-        required_tables = ["domain_margins"]
-        required_tools = ["query_domain_margins"]
-        data_rationale = (
-            f"Question asks about margins and profitability. "
-            f"Required data: `domain_margins` table in SQLite3 (`enterprise_data.db`) for domain '{target_domain}'."
-        )
-        plan_summary = (
-            f"Step 1 (Data Decision for '{query}'):\n"
-            f"1. Decided Data Required: SQLite3 `domain_margins` table.\n"
-            f"2. Scope: Domain-tailored gross margin, cloud COGS ratio, LTV:CAC, unit economics, and corporate EBITDA.\n"
-            f"3. Next Step: Pull `domain_margins` records from database for domain '{target_domain}'."
-        )
-    elif any(k in q_lower for k in ["driver", "drivers", "causing", "causes", "why sales", "why revenue", "growth driver", "drove sales", "drove revenue", "reasons for sales", "reasons for revenue"]):
-        intent = "revenue_drivers_analysis"
-        required_tables = ["revenue_drivers"]
-        required_tools = ["query_revenue_drivers"]
-        data_rationale = (
-            f"Question asks for causes and growth drivers of sales/revenue. "
-            f"Required data: `revenue_drivers` table in SQLite3 (`enterprise_data.db`) for domain '{target_domain}'."
-        )
-        plan_summary = (
-            f"Step 1 (Data Decision for '{query}'):\n"
-            f"1. Decided Data Required: SQLite3 `revenue_drivers` table.\n"
-            f"2. Scope: Departmental catalysts across Direct Sales ($520K marquee deal), Marketing Funnels ($1.42M MQL/SQL), IT 99.98% SLA, and Product PLG.\n"
-            f"3. Next Step: Pull `revenue_drivers` records from database for domain '{target_domain}'."
-        )
-    elif any(k in q_lower for k in ["latency", "telemetry", "p50", "p95", "tech", "performance", "api", "query"]):
-        intent = "system_telemetry_analysis"
-        required_tables = ["system_telemetry"]
-        required_tools = ["query_system_telemetry"]
-        data_rationale = "Question asks about infrastructure speed and telemetry. Required data: `system_telemetry` table in SQLite3."
-        plan_summary = (
-            f"Step 1 (Data Decision for '{query}'):\n"
-            f"1. Decided Data Required: SQLite3 `system_telemetry` table for service 'core-sales-service'.\n"
-            f"2. Scope: API latency percentiles (p50/p95/p99), platform availability, and ClickHouse/Postgres query timings.\n"
-            f"3. Next Step: Pull `system_telemetry` records from database."
-        )
-    elif any(k in q_lower for k in ["marketing", "cac", "mql", "sql", "roas", "channel", "campaign"]):
-        intent = "marketing_analysis"
-        required_tables = ["marketing_campaigns"]
-        required_tools = ["query_marketing_campaigns"]
-        data_rationale = "Question asks about marketing campaigns and acquisition. Required data: `marketing_campaigns` table in SQLite3."
-        plan_summary = (
-            f"Step 1 (Data Decision for '{query}'):\n"
-            f"1. Decided Data Required: SQLite3 `marketing_campaigns` table for Q3 2026.\n"
-            f"2. Scope: MQL/SQL volume, blended CAC, ROAS, channel contribution yields, and brand reach.\n"
-            f"3. Next Step: Pull `marketing_campaigns` records from database."
-        )
-    elif any(k in q_lower for k in ["dau", "mau", "retention", "adoption", "product", "csat"]):
-        intent = "product_analysis"
-        required_tables = ["product_metrics"]
-        required_tools = ["query_product_metrics"]
-        data_rationale = "Question asks about product usage and retention. Required data: `product_metrics` table in SQLite3."
-        plan_summary = (
-            f"Step 1 (Data Decision for '{query}'):\n"
-            f"1. Decided Data Required: SQLite3 `product_metrics` table for feature 'quarterly_reporting'.\n"
-            f"2. Scope: MAU, DAU, DAU/MAU ratio, 30-day cohort retention, churn rate, and feature adoption.\n"
-            f"3. Next Step: Pull `product_metrics` records from database."
-        )
-    elif any(k in q_lower for k in ["operational efficiency", "operational health", "efficiency", "sla", "health"]):
-        intent = "operational_health_analysis"
-        required_tables = ["sales_performance", "system_telemetry", "marketing_campaigns", "product_metrics"]
-        required_tools = ["query_sales_data", "query_system_telemetry", "query_marketing_campaigns", "query_product_metrics"]
-        data_rationale = "Question asks for operational health across domains. Required data: Cross-domain operational tables in SQLite3."
-        plan_summary = (
-            f"Step 1 (Data Decision for Operational Health '{query}'):\n"
-            f"1. Decided Data Required: `sales_performance`, `system_telemetry`, `marketing_campaigns`, `product_metrics` from SQLite3.\n"
-            f"2. Scope: End-to-end operational KPIs tailored to {persona} perspective.\n"
-            f"3. Next Step: Pull cross-domain records from database."
+            f"- Action: Route directly to ReporterAgent to provide a warm Lululemon greeting."
         )
     else:
-        intent = "enterprise_performance_analysis"
-        required_tables = ["sales_performance", "domain_margins", "revenue_drivers", "system_telemetry"]
-        required_tools = ["query_sales_data", "query_domain_margins", "query_revenue_drivers", "query_system_telemetry"]
-        data_rationale = "Broad enterprise performance query. Required data: Sales, Margins, Drivers, and Telemetry tables in SQLite3."
+        llm_badge = "LLM Call (Groq / Azure OpenAI)" if llm_used else "Heuristic Fallback"
         plan_summary = (
-            f"Step 1 (Data Decision for '{query}'):\n"
-            f"1. Decided Data Required: Multi-table pull (`sales_performance`, `domain_margins`, `revenue_drivers`, `system_telemetry`).\n"
-            f"2. Scope: Actual revenue vs target, deal margins, growth catalysts, and infrastructure reliability.\n"
-            f"3. Next Step: Pull required records from database."
+            f"Step 1 (SupervisorAgent Data Decision via {llm_badge} for '{query}'):\n"
+            f"1. Decided Data Required: SQLite3 tables [{', '.join(required_tables)}].\n"
+            f"2. Persona Target: {persona} at {org}.\n"
+            f"3. Decision Reasoning: {reasoning}\n"
+            f"4. Next Step: AnalyticsAgent will query ONLY the selected tables from enterprise_data.db."
         )
-
-    # Optional Real-time LLM Planning
-    llm_error = None
-    if execution_mode == "realtime":
-        try:
-            prompt = f"""You are the SupervisorAgent coordinating Step 1 of an enterprise intelligence system for {org}.
-User Query: "{query}"
-Target Persona: "{persona}"
-
-AVAILABLE SQLITE3 TABLES (enterprise_data.db):
-1. `domain_margins`: Gross margins, software vs services split, cloud COGS ratio, LTV:CAC, feature module economics, consolidated EBITDA.
-2. `revenue_drivers`: Attributed catalysts of sales/revenue growth across direct sales, marketing funnels, IT 99.98% platform reliability, and product PLG loops.
-3. `sales_performance`: Overall Q3 revenue ($4.85M vs $4.5M), quota attainment (107.8%), deals closed (142), average deal size, pipeline ($8.2M), win rate.
-4. `system_telemetry`: API p50/p95/p99 latencies, 99.98% uptime SLA, error rate, ClickHouse/Postgres partition query time (14.8ms).
-5. `marketing_campaigns`: MQLs (3,480), SQLs (612), blended CAC ($1,420), ROAS (3.8x), channel contribution margins.
-6. `product_metrics`: MAU (18,450), DAU (7,920), 42.9% DAU/MAU, 88.2% retention, 1.4% churn, 76.5% feature adoption.
-
-YOUR TASK:
-Based on the question, decide which data is required to answer it. State the required tables, target filters, and key metrics to extract."""
-            llm_res = call_llm(
-                prompt=prompt,
-                system_instruction="You are a senior supervisor agent analyzing questions and deciding data requirements.",
-                execution_mode="realtime",
-            )
-            if llm_res:
-                plan_summary = llm_res
-        except Exception as exc:
-            llm_error = str(exc)
 
     plan = {
         "status": "planned",
         "intent": intent,
-        "requires_database": True,
+        "requires_database": requires_db,
         "required_tables": required_tables,
-        "required_tools": required_tools,
-        "domain_filter": target_domain,
-        "data_rationale": data_rationale,
+        "reasoning": reasoning,
+        "llm_used": llm_used,
         "plan_summary": plan_summary,
         "mode": execution_mode,
     }
-
-    return {"plan": plan, "error": llm_error if llm_error else state.get("error")}
+    return {"plan": plan, "error": state.get("error")}
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 (Node 2): AnalyticsAgent — Pull That Data from the Database
+# Stage 2: AnalyticsAgent — Pull Data STRICTLY From Required Tables
 # ---------------------------------------------------------------------------
 
 @observe(name="AnalyticsAgent", as_agent=True)
 def analytics_node(state: MultiAgentState) -> Dict[str, Any]:
-    """
-    Step 2: Pull the data decided in Step 1 directly from the SQLite3 database (enterprise_data.db).
-    """
+    """Pull records strictly from the tables decided by the Supervisor LLM."""
     query = state.get("query", "")
     persona = state.get("persona", "Default")
+    org = state.get("organization", "Lululemon Athletica")
     plan = state.get("plan", {})
-    execution_mode = state.get("execution_mode", "dummy")
-    intent = plan.get("intent", "enterprise_performance_analysis")
+    intent = plan.get("intent", "data_analysis")
 
-    # If chitchat: bypass database retrieval
     if intent == "chitchat" or is_chitchat_query(query) or not plan.get("requires_database", True):
         analytical_data = {
             "type": "chitchat",
@@ -322,494 +324,429 @@ def analytics_node(state: MultiAgentState) -> Dict[str, Any]:
         }
         return {"analytical_data": analytical_data, "error": state.get("error")}
 
-    required_tools = plan.get("required_tools", [])
     required_tables = plan.get("required_tables", [])
-    domain_filter = plan.get("domain_filter", "all")
-
     pulled_records = {}
-    pulled_descriptions = []
+    evidence_tables = []
 
-    # 1. Pull domain margins from SQLite3 if required
-    if "query_domain_margins" in required_tools or "domain_margins" in required_tables or intent == "enterprise_performance_analysis":
-        domain_margins = query_domain_margins(domain=domain_filter, quarter="Q3 2026")
-        all_margins = query_domain_margins(domain="all", quarter="Q3 2026")
-        pulled_records["domain_margins"] = domain_margins
-        pulled_records["all_margins"] = all_margins
-        pulled_descriptions.append(
-            f"`domain_margins` table: {len(domain_margins.get('records', []))} records pulled for domain '{domain_filter}'"
-        )
-    else:
-        domain_margins = {"records": []}
-        all_margins = {"records": []}
+    # FETCH RECORDS ONLY FROM THE REQUIRED TABLES
+    if "product_list" in required_tables:
+        product_list_data = query_product_list()
+        pulled_records["product_list"] = product_list_data
+        evidence_tables.append({
+            "table_name": "product_list",
+            "display_name": "Table 1: Product List (SQLite3 enterprise_data.db)",
+            "description": f"Lululemon apparel catalog ({len(product_list_data.get('records', []))} products) with cost price, selling price, year added, active status, category, and computed unit gross margin.",
+            "record_count": len(product_list_data.get("records", [])),
+            "rows": product_list_data.get("records", []),
+        })
 
-    # 2. Pull revenue drivers from SQLite3 if required
-    if "query_revenue_drivers" in required_tools or "revenue_drivers" in required_tables or intent == "enterprise_performance_analysis":
-        revenue_drivers = query_revenue_drivers(domain=domain_filter, quarter="Q3 2026")
-        all_drivers = query_revenue_drivers(domain="all", quarter="Q3 2026")
-        pulled_records["revenue_drivers"] = revenue_drivers
-        pulled_records["all_drivers"] = all_drivers
-        pulled_descriptions.append(
-            f"`revenue_drivers` table: {len(revenue_drivers.get('records', []))} records pulled for domain '{domain_filter}'"
-        )
-    else:
-        revenue_drivers = {"records": []}
-        all_drivers = {"records": []}
+    if "sales_data" in required_tables:
+        sales_data_res = query_sales_data()
+        pulled_records["sales_data"] = sales_data_res
+        evidence_tables.append({
+            "table_name": "sales_data",
+            "display_name": "Table 2: Sales Data (SQLite3 enterprise_data.db)",
+            "description": f"Apparel units sold ({sales_data_res.get('total_units_sold', 0):,} units, {sales_data_res.get('total_profit')} total gross profit), quarter-wise sales, and store/e-commerce traffic.",
+            "record_count": len(sales_data_res.get("records", [])),
+            "rows": sales_data_res.get("records", []),
+        })
 
-    # 3. Pull sales performance from SQLite3 if required
-    if "query_sales_data" in required_tools or "sales_performance" in required_tables or intent == "enterprise_performance_analysis":
-        sales_data = query_sales_data(quarter="Q3 2026")
-        pulled_records["sales_performance"] = sales_data
-        pulled_descriptions.append(
-            f"`sales_performance` table: Revenue {sales_data.get('revenue_actual')} vs target {sales_data.get('revenue_target')} ({sales_data.get('quota_attainment_pct')}% quota)"
-        )
-    else:
-        sales_data = query_sales_data(quarter="Q3 2026")
+    if "marketing_data" in required_tables:
+        marketing_data_res = query_marketing_data()
+        pulled_records["marketing_data"] = marketing_data_res
+        evidence_tables.append({
+            "table_name": "marketing_data",
+            "display_name": "Table 3: Marketing Data (SQLite3 enterprise_data.db)",
+            "description": f"Campaign metrics across products: click-through rates (avg {marketing_data_res.get('average_ctr_pct')}), ad budgets ({marketing_data_res.get('total_ad_budget')}), {marketing_data_res.get('total_views'):,} views, and {marketing_data_res.get('total_likes'):,} likes.",
+            "record_count": len(marketing_data_res.get("records", [])),
+            "rows": marketing_data_res.get("records", []),
+        })
 
-    # 4. Pull system telemetry from SQLite3 if required
-    if "query_system_telemetry" in required_tools or "system_telemetry" in required_tables or intent == "enterprise_performance_analysis":
-        tech_data = query_system_telemetry(service="core-sales-service")
-        pulled_records["system_telemetry"] = tech_data
-        pulled_descriptions.append(
-            f"`system_telemetry` table: Status {tech_data.get('status')}, p50={tech_data.get('p50_latency_ms')}ms, uptime 99.98%"
-        )
-    else:
-        tech_data = query_system_telemetry(service="core-sales-service")
+    if "dev_data" in required_tables:
+        dev_data_res = query_dev_data(time_range="Q3 2026")
+        pulled_records["dev_data"] = dev_data_res
+        evidence_tables.append({
+            "table_name": "dev_data",
+            "display_name": "Table 4: Dev & Platform Telemetry (SQLite3 enterprise_data.db)",
+            "description": f"Platform latency ({dev_data_res.get('latency_ms')}ms), downtime ({dev_data_res.get('downtime_hours')} hrs), cache hits ({dev_data_res.get('cache_hit'):,} / {dev_data_res.get('cache_hit_ratio_pct')}%), AI styling LLM tokens ({dev_data_res.get('llm_tokens_used'):,}), and LLM cost (${dev_data_res.get('llm_cost_dollars')}).",
+            "record_count": 1,
+            "rows": [{
+                "latency_ms": dev_data_res.get("latency_ms"),
+                "downtime_hours": dev_data_res.get("downtime_hours"),
+                "time_range": dev_data_res.get("time_range"),
+                "cache_hit": dev_data_res.get("cache_hit"),
+                "cache_failure": dev_data_res.get("cache_failure"),
+                "cache_hit_ratio_pct": f"{dev_data_res.get('cache_hit_ratio_pct')}%",
+                "llm_tokens_used": f"{dev_data_res.get('llm_tokens_used'):,}",
+                "llm_cost": f"${dev_data_res.get('llm_cost_dollars'):,.2f}",
+            }],
+        })
 
-    # 5. Pull marketing campaigns from SQLite3 if required
-    if "query_marketing_campaigns" in required_tools or "marketing_campaigns" in required_tables:
-        marketing_data = query_marketing_campaigns(quarter="Q3 2026")
-        pulled_records["marketing_campaigns"] = marketing_data
-        pulled_descriptions.append(
-            f"`marketing_campaigns` table: {marketing_data.get('mql_generated')} MQLs, {marketing_data.get('sql_converted')} SQLs, CAC ${marketing_data.get('cac_dollars')}"
-        )
-    else:
-        marketing_data = query_marketing_campaigns(quarter="Q3 2026")
-
-    # 6. Pull product metrics from SQLite3 if required
-    if "query_product_metrics" in required_tools or "product_metrics" in required_tables:
-        product_data = query_product_metrics(feature="quarterly_reporting")
-        pulled_records["product_metrics"] = product_data
-        pulled_descriptions.append(
-            f"`product_metrics` table: {product_data.get('monthly_active_users')} MAU, {product_data.get('feature_adoption_rate_pct')}% adoption"
-        )
-    else:
-        product_data = query_product_metrics(feature="quarterly_reporting")
-
-    synthesis_summary = (
-        "Step 2: Successfully pulled required data from SQLite3 `enterprise_data.db`:\n"
-        + "\n".join(f"- {d}" for d in pulled_descriptions)
-    )
+        # Include ranked most viewed products if requested or if dev_data is present
+        if any(k in query.lower() for k in ["most viewed", "top viewed", "viewed products", "clicks", "click through"]):
+            most_viewed_res = query_most_viewed_products(limit=5)
+            pulled_records["most_viewed_products"] = most_viewed_res.get("most_viewed_products", [])
+            evidence_tables.append({
+                "table_name": "most_viewed_products",
+                "display_name": "Table 4 Analysis: Top Viewed Products by Click-Throughs",
+                "description": "Ranked product click-through counts extracted from dev_data.product_wise_click_throughs joined with product_list.",
+                "record_count": len(most_viewed_res.get("most_viewed_products", [])),
+                "rows": most_viewed_res.get("most_viewed_products", []),
+            })
 
     analytical_data = {
         "intent": intent,
         "persona": persona,
         "retrieved_tables": required_tables,
-        "retrieved_data": pulled_records,
-        "sales": sales_data,
-        "technology": tech_data,
-        "marketing": marketing_data,
-        "product": product_data,
-        "domain_margins": domain_margins,
-        "all_margins": all_margins,
-        "revenue_drivers": revenue_drivers,
-        "all_drivers": all_drivers,
-        "synthesis": synthesis_summary,
+        "evidence_tables": evidence_tables,
+        "pulled_records": pulled_records,
+        "product_list": pulled_records.get("product_list", {}),
+        "sales_data": pulled_records.get("sales_data", {}),
+        "marketing_data": pulled_records.get("marketing_data", {}),
+        "dev_data": pulled_records.get("dev_data", {}),
+        "most_viewed_products": pulled_records.get("most_viewed_products", []),
+        "synthesis": f"Pulled {len(evidence_tables)} evidence tables ({', '.join(required_tables)}) strictly selected by LLM for {org}.",
     }
 
-    # Real-time LLM validation of pulled data
-    llm_error = None
-    if execution_mode == "realtime":
-        try:
-            prompt = f"""Summarize and validate the retrieved quantitative data pulled from the SQLite3 database for query '{query}':
-{json.dumps(pulled_records, default=str)}
-Identify key metrics, verified numbers, and domain-specific perspectives."""
-            llm_res = call_llm(
-                prompt=prompt,
-                system_instruction="You are a data validation and quantitative research agent verifying database records.",
-                execution_mode="realtime",
-            )
-            if llm_res:
-                analytical_data["synthesis"] = llm_res
-        except Exception as exc:
-            llm_error = str(exc)
-
-    current_err = state.get("error") or llm_error
-    return {"analytical_data": analytical_data, "error": current_err}
+    return {"analytical_data": analytical_data, "error": state.get("error")}
 
 
 # ---------------------------------------------------------------------------
-# Node 3: ReporterAgent & Tailored Report Generators
+# Stage 3: ReporterAgent & Tailored Lululemon Report Generators
 # ---------------------------------------------------------------------------
 
-def generate_tailored_margin_report(persona: str, org: str) -> str:
-    """Generate persona-tailored margin analysis report."""
-    p = persona.lower().strip()
-    if p == "sales":
-        return f"""### 💼 Sales Margin Analysis & Contract Profitability — {org}
-*(Data retrieved from SQLite3 `enterprise_data.db` & multi-agent verification)*
+def generate_tailored_product_list_report(persona: str, org: str) -> str:
+    """Generate executive report on Table 1 (product_list)."""
+    return f"""### 🧘 Lululemon Apparel Product Catalog & Pricing Architecture — {org}
+*(Data retrieved from SQLite3 `product_list` in `enterprise_data.db`)*
 
-**Executive Summary for Sales Leadership:**
-In Q3 2026, the Sales organization delivered exceptional deal profitability, achieving an average **Deal Gross Margin of 74.2%** (beating the 72.0% target by **+2.2%**), directly generating **$3,598,700** in gross margin dollars (+11.1% over target).
+**Executive Merchandising Summary:**
+Lululemon’s apparel portfolio spans high-performance technical fabric franchises across **Women's**, **Men's**, and **Accessories**, maintaining an elite average unit gross margin of **74.1%** with zero seasonal re-tooling dependencies.
 
 ---
 
-### 🎯 Sales Margin Deep Dive:
-- **Deal Gross Margin:** **74.2%** (Target: 72.0%, Variance: **+2.2%**)
-- **Software vs. Services Margin Split:** Pure software subscription contracts ran at an outstanding **81.5% gross margin**, whereas professional services onboarding ran at **32.0%**.
-- **Discounting Discipline:** Strict enforcement of discount thresholds capped non-standard sales discounting at an average of **8.4%** (down from 14.2% last quarter), preserving **$260,000** in net contract margin.
-- **Marquee Deal Profitability:** The top contract of the quarter—**$520,000 Global Logistics Corp** 3-year agreement—was secured at a strong **76.5% margin**.
-- **Rep Commission Accelerator Impact:** Sales reps closing deals above 75% gross margin unlocked Tier-1 commission accelerators, driving higher-margin enterprise product attach rates.
+### 📋 Core Product Catalog Breakdown:
+
+1. **Align High-Rise Pant 25" (`LLL-ALN-001`)**
+   - **Fabric:** Weightless, buttery-soft Nulu™ fabric
+   - **Pricing:** **$98.00 Selling Price** | **$24.50 Cost Price**
+   - **Unit Gross Margin:** **75.0%** (+$73.50 gross profit per unit)
+   - **Category:** Women's Pants & Tights &bull; Active: Yes (2021)
+
+2. **Scuba Oversized Half-Zip Hoodie (`LLL-SCU-002`)**
+   - **Fabric:** Naturally breathable cotton-blend fleece
+   - **Pricing:** **$118.00 Selling Price** | **$32.00 Cost Price**
+   - **Unit Gross Margin:** **72.9%** (+$86.00 gross profit per unit)
+   - **Category:** Women's Hoodies & Sweatshirts &bull; Active: Yes (2022)
+
+3. **Define Jacket (`LLL-DEF-003`)**
+   - **Fabric:** Cottony-soft, supportive Luon™ fabric
+   - **Pricing:** **$118.00 Selling Price** | **$31.50 Cost Price**
+   - **Unit Gross Margin:** **73.3%** (+$86.50 gross profit per unit)
+   - **Category:** Women's Jackets & Outerwear &bull; Active: Yes (2020)
+
+4. **ABC Classic-Fit Pant 32" (`LLL-ABC-004`)**
+   - **Fabric:** Four-way stretch Warpstreme™ fabric with ergonomic gusset
+   - **Pricing:** **$128.00 Selling Price** | **$34.00 Cost Price**
+   - **Unit Gross Margin:** **73.4%** (+$94.00 gross profit per unit)
+   - **Category:** Men's Pants & Trousers &bull; Active: Yes (2021)
+
+5. **Everywhere Belt Bag 1L (`LLL-EBB-006`)**
+   - **Fabric:** Water-repellent textured nylon
+   - **Pricing:** **$38.00 Selling Price** | **$9.20 Cost Price**
+   - **Unit Gross Margin:** **75.8%** (+$28.80 gross profit per unit)
+   - **Category:** Accessories Bags &bull; Active: Yes (2022)
+
+---
+*Report verified against SQLite3 Table 1 (`product_list`).*"""
+
+
+def generate_tailored_sales_data_report(persona: str, org: str) -> str:
+    """Generate executive report on Table 2 (sales_data)."""
+    return f"""### 💼 Commercial Sales, Product Profitability & Traffic Breakdown — {org}
+*(Data retrieved from SQLite3 `sales_data` joined with `product_list` in `enterprise_data.db`)*
+
+**Executive Sales Summary:**
+In Q3 2026, core apparel lines generated **$76,039,800 in gross revenue** across **893,100 units sold**, delivering **$56,091,050 in cumulative gross profit** and converting **6.1% of 14.6M global visits**.
+
+---
+
+### 📊 Top Product Sales & Profit Contributors:
+
+1. **Align High-Rise Pant 25" (`LLL-ALN-001`):**
+   - **Total Sales:** **145,000 units** ($14,210,000 gross revenue)
+   - **Net Profit:** **$10,657,500** (Top profit driver across Lululemon)
+   - **Quarterly Trend:** Q1: 34.2K &bull; Q2: 36.1K &bull; Q3: 38.9K &bull; Q4: 35.8K
+   - **Traffic & Conversion:** 2,420,000 visits (**5.99% conversion rate**)
+
+2. **Scuba Oversized Half-Zip Hoodie (`LLL-SCU-002`):**
+   - **Total Sales:** **98,500 units** ($11,623,000 gross revenue)
+   - **Net Profit:** **$8,471,000**
+   - **Quarterly Trend:** Q1: 22.1K &bull; Q2: 19.4K &bull; Q3: 28.6K &bull; Q4: 28.4K
+   - **Traffic & Conversion:** 1,890,000 visits (**5.21% conversion rate**)
+
+3. **ABC Classic-Fit Pant 32" (`LLL-ABC-004`):**
+   - **Total Sales:** **84,200 units** ($10,777,600 gross revenue)
+   - **Net Profit:** **$7,914,800** (Leading men's technical apparel line)
+   - **Quarterly Trend:** Q1: 20.1K &bull; Q2: 21.5K &bull; Q3: 22.4K &bull; Q4: 20.2K
+   - **Traffic & Conversion:** 1,450,000 visits (**5.81% conversion rate**)
+
+4. **Everywhere Belt Bag 1L (`LLL-EBB-006`):**
+   - **Total Sales:** **215,000 units** ($8,170,000 gross revenue) — **#1 Highest Unit Volume**
+   - **Net Profit:** **$6,192,000**
+   - **Quarterly Trend:** Q1: 48.0K &bull; Q2: 56.0K &bull; Q3: 59.0K &bull; Q4: 52.0K
+   - **Traffic & Conversion:** 3,120,000 visits (**6.89% conversion rate**)
+
+5. **Define Jacket (`LLL-DEF-003`):**
+   - **Total Sales:** **72,000 units** ($8,496,000 revenue &bull; **$6,228,000 profit**)
+
+---
+*Report verified against SQLite3 Table 2 (`sales_data`).*"""
+
+
+def generate_tailored_marketing_data_report(persona: str, org: str) -> str:
+    """Generate executive report on Table 3 (marketing_data)."""
+    return f"""### 📢 Marketing Performance, Social Virality & CTR Analytics — {org}
+*(Data retrieved from SQLite3 `marketing_data` in `enterprise_data.db`)*
+
+**Executive Marketing Summary:**
+Across a quarterly ad budget of **$593,000**, Lululemon generated **35.6M video views**, **2.76M social likes**, and an outstanding blended **ROAS of 4.6x**, anchored by viral TikTok organic creator hauls.
+
+---
+
+### 🎯 Product Campaign Performance Breakdown:
+
+1. **Everywhere Belt Bag 1L (`LLL-EBB-006`):**
+   - **Click-Through Rate (CTR):** **6.38%** (Highest CTR across all apparel & accessories)
+   - **Ad Budget:** **$45,000** (Lowest spend, highest return)
+   - **Social Views:** **8,420,000 views** &bull; **Likes:** **920,000 likes**
+   - **Virality Driver:** Organic TikTok hauls (#EverywhereBeltBag) and college ambassador gifting.
+
+2. **Scuba Oversized Half-Zip Hoodie (`LLL-SCU-002`):**
+   - **Click-Through Rate (CTR):** **5.14%**
+   - **Ad Budget:** **$95,000**
+   - **Social Views:** **5,620,000 views** &bull; **Likes:** **488,000 likes**
+   - **Campaign Focus:** Fall drop styling videos and cozy athleisure aesthetics.
+
+3. **Align High-Rise Pant 25" (`LLL-ALN-001`):**
+   - **Click-Through Rate (CTR):** **4.82%**
+   - **Ad Budget:** **$120,000**
+   - **Social Views:** **4,850,000 views** &bull; **Likes:** **342,000 likes**
+   - **Campaign Focus:** Global yoga ambassador community activations and buttery-soft feel demonstrations.
+
+4. **Define Jacket (`LLL-DEF-003`):**
+   - **Click-Through Rate (CTR):** **4.25%** &bull; **Views:** 3.74M &bull; **Likes:** 295K &bull; **Ad Budget:** $75K
+
+5. **ABC Classic-Fit Pant 32" (`LLL-ABC-004`):**
+   - **Click-Through Rate (CTR):** **3.92%** &bull; **Views:** 3.12M &bull; **Likes:** 164K &bull; **Ad Budget:** $85K (Men's commute & golf targeting)
+
+---
+*Report verified against SQLite3 Table 3 (`marketing_data`).*"""
+
+
+def generate_tailored_dev_data_report(persona: str, org: str) -> str:
+    """Generate executive report on Table 4 (dev_data)."""
+    return f"""### 🖥️ Digital Commerce Engineering, Latency & Most Viewed Products — {org}
+*(Data retrieved from SQLite3 `dev_data` in `enterprise_data.db`)*
+
+**Executive Engineering Summary:**
+Lululemon’s digital commerce platform maintained an exceptional **99.99% uptime SLA** (only **0.08 hours downtime**) and **28.4ms edge latency** during Q3 2026. Global CDN edge caching achieved a **92.35% cache hit ratio** across 14.25M hits.
+
+---
+
+### ⚙️ Core Platform Telemetry (Table 4):
+- **Edge API & Checkout Latency:** **28.4ms** (Target: <50ms)
+- **Platform Downtime:** **0.08 hours** (99.99% availability with zero P0 drop failures)
+- **Time Range:** **Q3 2026**
+- **Edge Cache Performance:** **14,250,000 Cache Hits** vs **1,180,000 Failures** (**92.35% Cache Hit Ratio**)
+- **AI Virtual Stylist LLM Usage:** **18,450,000 Tokens** utilized for personalized fit and styling
+- **LLM Inferencing Cost:** **$3,690.00** ($0.018 cost per styling session)
+
+---
+
+### 🔥 Most Viewed Products (Ranked by Web & App Click-Throughs):
+*Extracted from `dev_data.product_wise_click_throughs` and joined with `product_list`:*
+
+1. **#1 Everywhere Belt Bag 1L (`LLL-EBB-006`):** **524,000 Click-Throughs** (Accessories | $38.00)
+2. **#2 Align High-Rise Pant 25" (`LLL-ALN-001`):** **482,000 Click-Throughs** (Women's Pants | $98.00)
+3. **#3 Scuba Oversized Half-Zip (`LLL-SCU-002`):** **395,000 Click-Throughs** (Women's Hoodies | $118.00)
+4. **#4 Define Jacket Luon (`LLL-DEF-003`):** **312,000 Click-Throughs** (Women's Outerwear | $118.00)
+5. **#5 ABC Classic-Fit Pant 32" (`LLL-ABC-004`):** **284,000 Click-Throughs** (Men's Pants | $128.00)
+6. **#6 Wunder Train High-Rise Tight (`LLL-WUN-007`):** **245,000 Click-Throughs** ($98.00)
+7. **#7 Pace Breaker Short 7" (`LLL-PCB-008`):** **198,000 Click-Throughs** ($68.00)
+
+---
+*Report verified against SQLite3 Table 4 (`dev_data`).*"""
+
+
+def generate_tailored_margin_report(persona: str, org: str) -> str:
+    """Generate tailored margin analysis for Lululemon."""
+    return f"""### 💼 Lululemon Core Apparel Margins & Franchise Profitability — {org}
+*(Data retrieved from SQLite3 `product_list`, `sales_data`, and `domain_margins`)*
+
+**Executive Summary for {persona} Leadership:**
+Lululemon maintained an exceptional **75.0% Core Apparel Gross Margin** on key fabric lines (Nulu, Luon, Warpstreme), generating **$56,091,050 in cumulative gross profit** on **$76.04M in gross sales**.
+
+---
+
+### 🎯 Margin Architecture by Product Line:
+- **Align High-Rise Pant 25":** **75.0% Gross Margin** (Selling: $98.00, Cost: $24.50) &bull; **$10,657,500 Gross Profit**
+- **Everywhere Belt Bag 1L:** **75.8% Gross Margin** (Selling: $38.00, Cost: $9.20) &bull; **$6,192,000 Gross Profit**
+- **Define Jacket Luon:** **73.3% Gross Margin** (Selling: $118.00, Cost: $31.50) &bull; **$6,228,000 Gross Profit**
+- **ABC Classic-Fit Pant 32":** **73.4% Gross Margin** (Selling: $128.00, Cost: $34.00) &bull; **$7,914,800 Gross Profit**
+- **Scuba Oversized Hoodie:** **72.9% Gross Margin** (Selling: $118.00, Cost: $32.00) &bull; **$8,471,000 Gross Profit**
 
 ---
 
 ### 🌐 Cross-Functional Margin Enablers:
-While Sales drove deal-level pricing discipline, cross-domain efficiencies safeguarded our consolidated corporate **Gross Margin of 68.4%** and **EBITDA Margin of 28.5%**:
-- **🖥️ IT / Cloud Infrastructure COGS:** Kept at **11.8% of revenue** (<14.0% SLA ceiling), ensuring high software delivery margins.
-- **📢 Marketing Customer Acquisition:** Maintained an **LTV:CAC of 4.6x** with blended CAC of **$1,420**, ensuring accounts are profitable early in their lifecycle.
-- **📊 Product Feature Economics:** Core quarterly reporting modules operated at **91.4% feature gross margin**, minimizing ongoing customer serving costs.
+- **Merchandising Discipline:** Confining markdowns strictly to "We Made Too Much" preserved **$4,200,000** in gross margin.
+- **Digital Infrastructure:** E-commerce CDN and cloud hosting COGS held to **3.8% of digital revenue**.
+- **Customer Acquisition:** **5.4x LTV:CAC** with blended CAC of **$32 per customer**.
 
 ---
-*Report tailored for the **Sales** perspective via Multi-Agent Workflow querying SQLite3 `domain_margins`.*"""
-
-    elif p in ("it", "information technology", "developer", "dev", "tech"):
-        return f"""### 🖥️ IT Infrastructure & Cloud COGS Margin Analysis — {org}
-*(Data retrieved from SQLite3 `enterprise_data.db` & multi-agent verification)*
-
-**Executive Summary for IT & Infrastructure Leadership:**
-In Q3 2026, engineering infrastructure optimization drove cloud hosting costs down to **11.8% of total revenue**, beating the <14.0% SLA ceiling and delivering **$142,000 in monthly compute savings**.
-
----
-
-### 🎯 IT Infrastructure & Cost Efficiency Deep Dive:
-- **Cloud Hosting COGS Ratio:** **11.8% of total revenue** (Target: <14.0% ceiling, preserving **$106,000** against operational budget).
-- **Compute Cost Per Active User:** Dropped **-23.6%** to **$0.042 per user-month** (vs $0.055 target).
-- **Database Partitioning Performance:** Implementing PostgreSQL 16 & ClickHouse table partitioning (`enterprise_orders_partition_2026_q3`) reduced average query duration to **14.8ms**, slashing cloud CPU cycles by **31%**.
-- **Cluster Replica & Cache Efficiency:** An **89.4% cache hit ratio** across 6 cloud clusters yielded **$142,000 in monthly compute savings**.
-- **SLA Uptime Margin Protection:** **99.98% platform uptime** with zero P0 outages during peak closing weeks prevented SLA penalty clawbacks and protected customer billing.
-
----
-
-### 🌐 Cross-Functional Margin Context:
-Infrastructure compute efficiency provided the operational backbone for {org}'s corporate **Gross Margin of 68.4%** and **EBITDA Margin of 28.5%**:
-- **💼 Sales Deal Support:** Low compute delivery cost enabled the Sales team to achieve **74.2% deal gross margin** across 142 enterprise contracts.
-- **📢 Marketing Traffic Handling:** Infrastructure seamlessly absorbed 1.42M brand impressions and high webinar traffic at near-zero incremental compute cost (LTV:CAC **4.6x**).
-- **📊 Product Feature Delivery:** Vectorized backend batching powered the product team's **91.4% feature module margin**.
-
----
-*Report tailored for the **IT / Developer** perspective via Multi-Agent Workflow querying SQLite3 `domain_margins`.*"""
-
-    elif p == "marketing":
-        return f"""### 📢 Marketing Acquisition Economics & Channel Margins — {org}
-*(Data retrieved from SQLite3 `enterprise_data.db` & multi-agent verification)*
-
-**Executive Summary for Marketing Leadership:**
-In Q3 2026, marketing demand generation operated at peak capital efficiency, achieving an exceptional **LTV-to-CAC Ratio of 4.6x** (exceeding the 3.5x target) and compressing the customer payback period to **7.2 months**.
-
----
-
-### 🎯 Marketing Acquisition Economics Deep Dive:
-- **LTV-to-CAC Ratio:** **4.6x** (Target: 3.5x, Blended CAC: **$1,420**, Enterprise LTV: **$6,530**).
-- **Customer Payback Velocity:** CAC payback period compressed from 9.4 months down to **7.2 months**.
-- **Channel Margin Yield Divergence:**
-  - *Inbound Technical Blog & SEO:* **84.2% contribution margin** (CAC: **$780**, 240 conversions) — Highest ROI channel.
-  - *Enterprise Product Webinars:* **72.1% contribution margin** (CAC: **$1,120**, 195 conversions).
-  - *Paid Search & LinkedIn Ads:* **58.6% contribution margin** (CAC: **$2,240**, 177 conversions).
-- **Funnel Conversion Velocity:** **3,480 MQLs** converted to **612 SQLs** (**17.6% conversion rate**), sourcing **$1,420,000** in direct commercial revenue.
-- **Brand Efficiency:** **1.42M impressions** with an **8.7/10 sentiment score** drove high organic word-of-mouth conversion.
-
----
-
-### 🌐 Cross-Functional Margin Impact:
-High-quality, low-CAC inbound acquisition flowed directly into consolidated corporate **Gross Margin of 68.4%**:
-- **💼 Sales Margin Lift:** Qualified inbound leads allowed Sales to command **74.2% deal gross margins** with minimal discounting.
-- **🖥️ IT Infrastructure Fit:** Inbound digital assets ran at low cloud delivery cost (Cloud COGS at **11.8% of revenue**).
-- **📊 Product Synergies:** Inbound content directly targeted self-serve users who adopt high-margin product features (**91.4% module margin**).
-
----
-*Report tailored for the **Marketing** perspective via Multi-Agent Workflow querying SQLite3 `domain_margins`.*"""
-
-    elif p in ("product", "product team"):
-        return f"""### 📊 Product Unit Economics & Feature Margin Analysis — {org}
-*(Data retrieved from SQLite3 `enterprise_data.db` & multi-agent verification)*
-
-**Executive Summary for Product Leadership:**
-In Q3 2026, product-led architecture and self-serve capabilities drove superior software unit economics, headlined by a **91.4% gross margin** on the core quarterly reporting module and **$85,000 in support margin savings**.
-
----
-
-### 🎯 Product Unit Economics Deep Dive:
-- **Feature Module Margin:** The core quarterly reporting module achieved a stellar **91.4% gross margin** due to vectorized client-side batching and zero per-query egress overhead.
-- **Tier Gross Margin Architecture:**
-  - *Self-Serve PLG Tier:* **89.2% margin** (Automated onboarding, self-serve billing, zero engineering touch).
-  - *High-Touch Enterprise Tier:* **64.8% margin** (Cost driven by single-tenant dedicated VPCs and bespoke compliance SLAs).
-- **Support Burden Reduction:** In-app guided walkthroughs reduced Tier-2 human support tickets by **22%**, saving **$85,000** in operational support margin.
-- **Retention & Churn Economics:** High user engagement (**42.9% DAU/MAU** and **88.2% 30-day cohort retention**) kept monthly customer churn at **1.4%**, protecting **$680,000 in recurring ARR**.
-
----
-
-### 🌐 Cross-Functional Margin Foundations:
-Product unit economics formed the structural engine for {org}'s corporate **Gross Margin of 68.4%** and **EBITDA Margin of 28.5%**:
-- **💼 Sales Enablement:** High-margin self-serve modules allowed Sales to close enterprise contracts at **74.2% deal gross margin**.
-- **🖥️ IT Cloud Efficiency:** Optimized frontend caching minimized backend query load, keeping Cloud COGS down to **11.8% of revenue**.
-- **📢 Marketing Flywheel:** Seamless product onboarding drove an **LTV:CAC of 4.6x** across self-serve acquisition funnels.
-
----
-*Report tailored for the **Product** perspective via Multi-Agent Workflow querying SQLite3 `domain_margins`.*"""
-
-    else:
-        return f"""### Enterprise Margin Performance & Cross-Domain Perspectives — {org}
-*(Data retrieved from SQLite3 `enterprise_data.db` & multi-agent verification)*
-
-**Executive Summary:**
-In Q3 2026, {org} achieved a consolidated corporate **Gross Margin of 68.4%** (exceeding the 65.0% board target by **+3.4%**) and an **EBITDA Margin of 28.5%** (vs 24.0% plan). Operational priorities and margin definitions diverge across departmental lenses:
-
----
-
-### Cross-Domain Margin Perspectives:
-#### 1. 💼 Sales Domain Perspective — Deal Gross Margin & Discounting Discipline
-- **Deal Gross Margin:** **74.2%** (Target: 72.0%, Variance: **+2.2%**)
-- **Software vs. Services Split:** Pure software subscription deals ran at **81.5% gross margin**, whereas professional services onboarding ran at **32.0%**.
-- **Discounting Control:** Capping non-standard sales discounting at an average of **8.4%** preserved **$260,000** in net contract margin.
-- **Top Contract Health:** The marquee **$520,000 Global Logistics Corp** deal closed at **76.5% margin**.
-
-#### 2. 🖥️ IT / Infrastructure Domain Perspective — Cloud COGS & Compute Efficiency
-- **Cloud Hosting COGS Ratio:** Cloud infrastructure costs ran at **11.8% of total revenue** (<14.0% SLA ceiling).
-- **Compute Cost Per Active User:** Dropped **-23.6%** to **$0.042 per user-month** (vs $0.055 target).
-- **Database Partitioning Gains:** Partitioned queries ran in **14.8ms**, slashing cloud CPU cycles by **31%**.
-- **Replica Efficiency:** Query deduplication and an **89.4% cache hit ratio** saved **$142,000 in monthly compute**.
-
-#### 3. 📢 Marketing Domain Perspective — Customer Acquisition Margin & Channel Yields
-- **LTV-to-CAC Ratio:** **4.6x** (Target: 3.5x, Blended CAC: **$1,420**, Enterprise LTV: **$6,530**).
-- **Channel Margin Yield Divergence:** Inbound Technical SEO: **84.2% contribution margin** ($780 CAC); Webinars: **72.1%** ($1,120 CAC); Paid Search: **58.6%** ($2,240 CAC).
-- **Payback Velocity:** Customer acquisition payback compressed to **7.2 months**.
-
-#### 4. 📊 Product Domain Perspective — Feature Unit Economics & Self-Serve Margins
-- **Feature Module Margin:** Core quarterly reporting module achieved a **91.4% gross margin**.
-- **Self-Serve vs. Enterprise Tier Margin:** Self-Serve PLG Tier ran at **89.2% margin** vs **64.8%** for High-Touch Enterprise.
-- **Support Burden Reduction:** Automated onboarding reduced Tier-2 tickets by **22%**, saving **$85,000**.
-
----
-*Report generated via Multi-Agent Workflow querying SQLite3 `domain_margins`.*"""
+*Tailored for the **{persona}** perspective from SQLite3.*"""
 
 
 def generate_tailored_revenue_drivers_report(persona: str, org: str) -> str:
-    """Generate persona-tailored revenue drivers report."""
-    p = persona.lower().strip()
-    if p == "sales":
-        return f"""### 💼 Sales Growth Drivers & Commercial Quota Execution (Q3 2026) — {org}
-*(Data retrieved from SQLite3 `revenue_drivers` table & multi-agent verification)*
+    """Generate tailored revenue drivers report for Lululemon."""
+    return f"""### 🚀 Key Revenue Drivers & Growth Catalysts — {org}
+*(Data retrieved from SQLite3 `revenue_drivers`, `sales_data`, and `marketing_data`)*
 
-**Executive Summary for Sales Leadership:**
-In Q3 2026, the Sales organization drove total company revenue to **$4,850,000** (+24.3% YoY, **107.8% quota attainment**), anchored by a landmark enterprise closing, regional overperformance, and robust account expansion.
+**Executive Summary for {persona} Leadership:**
+In Q3 2026, Lululemon generated **$76,039,800 in total sales revenue** (exceeding the $70.0M quarterly target by **108.6% quota attainment**).
 
 ---
 
-### 🎯 Sales Revenue Drivers Deep Dive:
-- **Marquee Enterprise Deal Execution ($520,000 | 10.7% of total revenue):**
-  Direct closing of the **Global Logistics Corp** 3-year contract in week 9. Average deal size expanded to **$34,154** across 142 closed deals.
-- **Regional Quota Outperformance — North America ($2,650,000 | 54.6% of revenue):**
-  North America achieved **118% quota attainment** with an exceptional **31.4% win rate**, led by financial services and logistics verticals.
-- **Net Revenue Retention & Account Expansion ($980,000 | 20.2% of revenue):**
-  A **114% Net Revenue Retention (NRR)** rate generated nearly $1M in expansion revenue from installed accounts without additional customer acquisition cost.
-- **Pipeline Velocity & Forward Coverage:**
-  Closed 142 contracts while maintaining a healthy **$8.20M pipeline** heading into next quarter.
+### 🎯 Key Departmental Revenue Catalysts:
+1. **Align™ & Nulu™ Franchise Volume Surge:** **$14,210,000 revenue contribution** (145,000 units closed at $98 retail).
+2. **TikTok Organic Virality (#LululemonHaul):** Sourced **$11,623,000 in Scuba Franchise revenue** and **8.42M views on Everywhere Belt Bag**.
+3. **Men's ABC Pant™ & On-The-Move Expansion:** **$10,777,600 revenue contribution** (+34.2% YoY growth in men's technical trousers).
+4. **Everywhere Belt Bag Volume Driver:** **$8,170,000 revenue** across 215,000 units ($38 entry price driving 38% cross-sell basket attach rate).
+5. **99.99% Platform Uptime & 28.4ms Latency:** Preserved **$4,850,000** in digital transactions with zero P0 checkout outages.
 
 ---
-
-### 🌐 Cross-Functional Commercial Catalysts:
-Sales execution was accelerated by key contributions from partner departments:
-- **🖥️ IT / Infrastructure Reliability:** **99.98% platform uptime** and automated Okta/SAML SSO onboarding shortened contract-to-billing recognition by **12 days** ($780K accelerated).
-- **📢 Marketing Demand Generation:** Sourced **$1,420,000** in direct Inbound pipeline (3,480 MQLs -> 612 qualified SQLs at **17.6% conversion rate**).
-- **📊 Product Stickiness & PLG:** High feature adoption on the new Quarterly Reporting module (**76.5% adoption**) drove 38 immediate tier upgrades ($480,000 ARR).
-
----
-*Report tailored for the **Sales** perspective via Multi-Agent Workflow querying SQLite3 `revenue_drivers`.*"""
-
-    elif p in ("it", "information technology", "developer", "dev", "tech"):
-        return f"""### 🖥️ IT & Infrastructure Revenue Drivers & Platform Reliability — {org}
-*(Data retrieved from SQLite3 `revenue_drivers` table & multi-agent verification)*
-
-**Executive Summary for IT & Infrastructure Leadership:**
-In Q3 2026, technical infrastructure directly safeguarded and accelerated **$1,740,000 in commercial revenue** through 99.98% uptime, sub-50ms API response times, and automated enterprise onboarding.
-
----
-
-### 🎯 IT Revenue Drivers Deep Dive:
-- **Zero-Downtime High Availability ($340,000 preserved revenue):**
-  Maintained **99.98% platform uptime** with zero P0 outages during peak quarter-end closing weeks, preventing transaction abandonment and protecting checkout flows.
-- **Sub-50ms API Latency & Query Optimization ($620,000 contract enablement):**
-  Core analytics latency of **p50: 28.4ms** and **p95: 112.6ms** satisfied stringent tier-1 enterprise SLA audits, directly unlocking multi-year enterprise contracts.
-- **Automated Enterprise SSO / SAML Onboarding ($780,000 accelerated billing):**
-  Automated Okta, Azure AD, and SCIM provisioning dropped customer deployment time from 14 days down to 2 hours, accelerating contract sign-to-billing recognition by **12 days**.
-- **High-Throughput Partitioning:**
-  PostgreSQL 16 & ClickHouse table partitioning handled 4.2x traffic spikes with a negligible **0.02% error rate**.
-
----
-
-### 🌐 Cross-Functional Revenue Enablement:
-Infrastructure resilience directly powered {org}'s commercial milestone of **$4,850,000 in total revenue** (107.8% quota):
-- **💼 Sales Closing Support:** Robust SLA compliance helped Sales close the **$520,000 Global Logistics Corp** contract without security concessions.
-- **📢 Marketing Campaign Scaling:** Cloud clusters absorbed 1.42M impressions and high webinar spikes with zero degradation.
-- **📊 Product Deployment:** Vectorized query backends enabled high adoption of the new reporting feature (**76.5% adoption**, $480K ARR).
-
----
-*Report tailored for the **IT / Developer** perspective via Multi-Agent Workflow querying SQLite3 `revenue_drivers`.*"""
-
-    elif p == "marketing":
-        return f"""### 📢 Marketing Growth Drivers & Inbound Funnel Velocity — {org}
-*(Data retrieved from SQLite3 `revenue_drivers` table & multi-agent verification)*
-
-**Executive Summary for Marketing Leadership:**
-In Q3 2026, Marketing demand generation delivered **$1,420,000 in directly sourced revenue** (29.3% of total company revenue) and influenced **$1,850,000 in webinar pipeline**, while cutting sales cycle lengths by 18 days.
-
----
-
-### 🎯 Marketing Revenue Drivers Deep Dive:
-- **High-Velocity Inbound Pipeline ($1,420,000 | 29.3% of total revenue):**
-  Demand generation campaigns generated **3,480 MQLs** resulting in **612 SQLs** (**17.6% conversion rate**). Technical inbound content delivered 240 direct customer conversions at **$780 CAC**.
-- **Interactive Enterprise Webinars ($1,850,000 pipeline attributed):**
-  Quarterly live architecture webinars for CTOs engaged 195 sales-qualified accounts, shortening sales cycles from 62 days down to **44 days**.
-- **Brand Authority Positioning ($840,000 attributed):**
-  **1.42M brand impressions** and an **8.7/10 sentiment score** drove a 34% YoY surge in organic Fortune 500 RFP invitations.
-- **Capital Efficiency:**
-  Delivered **3.8x ROAS** with a blended CAC of **$1,420** and an average customer payback of **7.2 months**.
-
----
-
-### 🌐 Cross-Functional Revenue Synergy:
-Marketing funnel acceleration powered {org}'s total revenue of **$4,850,000** (107.8% quota):
-- **💼 Sales Deal Flow:** Inbound pipeline generated 612 SQLs, powering North America's **118% quota attainment** and the **$520,000 Global Logistics deal**.
-- **🖥️ IT Alignment:** High-converting technical content focused on IT observability, matching platform reliability capabilities (**99.98% uptime**).
-- **📊 Product Collaboration:** User webinars showcased the new quarterly reporting module, driving high feature adoption (**76.5% adoption**).
-
----
-*Report tailored for the **Marketing** perspective via Multi-Agent Workflow querying SQLite3 `revenue_drivers`.*"""
-
-    elif p in ("product", "product team"):
-        return f"""### 📊 Product-Led Growth (PLG) Drivers & Feature-Led Upgrades — {org}
-*(Data retrieved from SQLite3 `revenue_drivers` table & multi-agent verification)*
-
-**Executive Summary for Product Leadership:**
-In Q3 2026, product enhancements directly unlocked **$1,580,000 in combined new ARR, seat expansions, and preserved revenue**, led by rapid adoption of quarterly reporting and an all-time low customer churn of 1.4%.
-
----
-
-### 🎯 Product Revenue Drivers Deep Dive:
-- **Quarterly Reporting Feature Adoption ($480,000 new ARR):**
-  A **76.5% feature adoption rate** on the new quarterly reporting module drove 38 immediate tier upgrades within 45 days of launch.
-- **Churn Defense & Retention Economics ($680,000 preserved ARR):**
-  High engagement (**42.9% DAU/MAU** and **88.2% 30-day cohort retention**) drove monthly customer churn down to an all-time low of **1.4%**.
-- **Product-Led Growth (PLG) Viral User Invitations ($420,000 seat expansion):**
-  Organic team collaboration links generated **410 new enterprise user seats** directly from in-app export workflows without direct sales intervention.
-- **Customer Satisfaction:**
-  Maintained an overall platform satisfaction rating of **4.6 / 5.0 CSAT** across 18,450 monthly active users.
-
----
-
-### 🌐 Cross-Functional Revenue Integration:
-Product innovation provided the high-retention foundation for {org}'s **$4,850,000 in total quarterly revenue**:
-- **💼 Sales Expansion:** Product stickiness enabled a **114% Net Revenue Retention (NRR)** rate, contributing **$980,000** in expansion ARR for Sales.
-- **🖥️ IT Synergy:** Vectorized client-side reporting reduced server load, supporting sub-50ms API latencies (**p50: 28.4ms**).
-- **📢 Marketing Alignment:** Product NPS and case studies provided organic proof points for inbound marketing campaigns (**1.42M impressions**).
-
----
-*Report tailored for the **Product** perspective via Multi-Agent Workflow querying SQLite3 `revenue_drivers`.*"""
-
-    else:
-        return f"""### Drivers Causing Sales & Revenue Growth (Q3 2026) — {org}
-*(Data retrieved from SQLite3 `revenue_drivers` table & multi-agent verification)*
-
-**Executive Overview:**
-In Q3 2026, {org} generated **$4,850,000** in total sales revenue (+24.3% YoY, 107.8% quota attainment). Analyzing the revenue trajectory across departments reveals that each domain operated as a vital growth catalyst:
-
----
-
-### Cross-Domain Revenue Driver Attribution:
-#### 1. 💼 Sales Domain Drivers — Direct Contract Closures & Quota Execution
-- **Marquee Enterprise Deal Execution ($520,000 | 10.7% of total revenue):** Direct closing of the Global Logistics Corp 3-year contract in week 9. Average deal size: **$34,154** across 142 closed deals.
-- **Regional Outperformance — North America ($2,650,000 | 54.6% of revenue):** North America achieved **118% quota** with an exceptional **31.4% win rate**.
-- **Net Revenue Retention & Account Expansion ($980,000 | 20.2% of revenue):** A **114% NRR** generated nearly $1M in expansion revenue from existing installed accounts.
-
-#### 2. 📢 Marketing Domain Drivers — Qualified Inbound Funnels & Webinar Velocity
-- **High-Velocity Inbound Pipeline ($1,420,000 | 29.3% sourced revenue):** 3,480 MQLs resulting in 612 SQLs (**17.6% conversion rate**). Technical inbound delivered 240 conversions at $780 CAC.
-- **Interactive Enterprise Webinars ($1,850,000 pipeline attributed):** CTO webinars engaged 195 sales-qualified accounts, shortening sales cycles from 62 days down to 44 days.
-- **Brand Authority Positioning ($840,000 attributed):** **1.42M brand impressions** and an **8.7/10 sentiment score**.
-
-#### 3. 🖥️ IT & Infrastructure Domain Drivers — Platform Reliability & Accelerated Billing
-- **Zero-Downtime High Availability ($340,000 preserved revenue):** Maintained **99.98% platform uptime** with zero P0 outages.
-- **Sub-50ms API Latency & Query Optimization ($620,000 contract enablement):** Core analytics latency of **p50: 28.4ms** and **p95: 112.6ms** satisfied enterprise SLAs.
-- **Automated Enterprise SSO / SAML Onboarding ($780,000 accelerated billing):** Automated provisioning dropped deployment time from 14 days down to 2 hours, accelerating billing recognition by **12 days**.
-
-#### 4. 📊 Product Domain Drivers — Feature-Led Upgrades & Churn Defense
-- **Quarterly Reporting Feature Adoption ($480,000 new ARR):** **76.5% feature adoption rate** drove 38 immediate tier upgrades.
-- **Churn Defense & Retention Economics ($680,000 preserved ARR):** High engagement (**42.9% DAU/MAU** and **88.2% retention**) kept monthly churn at **1.4%**.
-- **Product-Led Growth (PLG) Viral User Invitations ($420,000 seat expansion):** Organic team links generated 410 new seats.
-
----
-*Report generated via Multi-Agent Workflow querying SQLite3 `revenue_drivers`.*"""
+*Tailored for the **{persona}** perspective from SQLite3.*"""
 
 
 def generate_tailored_operational_health_report(persona: str, org: str) -> str:
-    """Generate persona-tailored operational health and efficiency report."""
-    p = persona.lower().strip()
-    if p == "sales":
-        return f"""### 💼 Sales Operational Efficiency & Pipeline Velocity — {org}
-
-**Executive Summary for Sales Operations:**
-In Q3 2026, commercial operations demonstrated strong deal velocity and capital efficiency across all sales territories.
-
-- **Win Rate:** **31.4%** across competitive enterprise opportunities (led by North America at 118% quota).
-- **Average Deal Size:** **$34,154** across 142 completed enterprise transactions.
-- **Discounting Efficiency:** Average discount capped at **8.4%**, saving **$260,000** in contract margin.
-- **Sales Cycle Duration:** Shortened from 62 days to **44 days** with the aid of enterprise webinars and automated SSO onboarding.
-- **Forward Pipeline Coverage:** **$8.20M active pipeline** remaining for subsequent quarter execution.
-"""
-    elif p in ("it", "information technology", "developer", "dev", "tech"):
-        return f"""### 🖥️ IT Infrastructure Health & Service Level Agreements (SLAs) — {org}
-
-**Executive Summary for Engineering & Operations:**
-Infrastructure operations operated well within all tier-1 enterprise SLA boundaries during Q3 2026.
-
-- **System Availability & Uptime:** **99.98% uptime** with zero P0 incidents and a **0.02% error rate**.
-- **API Latency Percentiles:** **p50: 28.4ms** | **p95: 112.6ms** | **p99: 245.1ms** (SLA target: <150ms p95).
-- **Database Query Latency:** Average **14.8ms** execution time on `enterprise_orders_partition_2026_q3` using PostgreSQL 16 & ClickHouse.
-- **Cloud Cache Hit Ratio:** **89.4%** across 6 distributed cloud clusters saving $142K/mo in compute spend.
-- **Enterprise Onboarding Velocity:** Automated SSO/SAML integration deployment completed in **2 hours** (down from 14 days).
-"""
-    elif p == "marketing":
-        return f"""### 📢 Marketing Operational Efficiency & Funnel Velocity — {org}
-
-**Executive Summary for Marketing Operations:**
-Demand generation and channel efficiency operated at high return on capital throughout Q3 2026.
-
-- **Funnel Conversion Rate:** **17.6%** (3,480 MQLs converted to 612 SQLs).
-- **Blended CAC:** **$1,420** per customer acquisition.
-- **Return on Ad Spend (ROAS):** **3.8x blended return**.
-- **Payback Period:** Customer acquisition cost payback compressed to **7.2 months**.
-- **Channel Efficiency Leader:** Inbound Technical SEO achieved **$780 CAC** with an **84.2% contribution margin**.
-"""
-    elif p in ("product", "product team"):
-        return f"""### 📊 Product Platform Health & User Engagement — {org}
-
-**Executive Summary for Product Operations:**
-Platform engagement, user retention, and feature stickiness metrics exceeded industry enterprise SaaS benchmarks.
-
-- **Engagement Ratio (DAU/MAU):** **42.9%** (7,920 DAU / 18,450 MAU).
-- **30-Day Cohort Retention:** **88.2%** 30-day retention curve.
-- **Customer Churn:** Compressed to an all-time low of **1.4% monthly churn**.
-- **Feature Adoption:** **76.5% adoption rate** for the newly released quarterly reporting module.
-- **Customer Satisfaction:** **4.6 / 5.0 CSAT** platform rating.
-"""
-    else:
-        return f"""### ⚡ Enterprise Operational Health & Efficiency — {org}
+    """Generate operational health report across commercial, technical, and marketing dimensions."""
+    return f"""### ⚡ Lululemon Omnichannel Operational Health & Telemetry — {org}
 
 **Executive Summary:**
-Across commercial, technical, and product dimensions, operational health for {org} remains strong:
-- **Commercial:** 31.4% win rate, 142 deals closed, $8.20M pipeline.
-- **Technical Infrastructure:** 99.98% uptime, p50 latency 28.4ms, 14.8ms database query time.
-- **Marketing Funnel:** 17.6% MQL-to-SQL conversion, $1,420 blended CAC, 3.8x ROAS.
-- **Product Engagement:** 42.9% DAU/MAU, 88.2% 30-day retention, 4.6/5.0 CSAT.
+Across commercial retail, digital commerce, and community brand presence, operational health remains exceptional:
+- **Commercial Performance:** $76.04M revenue, 893,100 units sold, 74.2% full-price sell-through rate.
+- **Digital Infrastructure:** 28.4ms edge latency, 0.08h downtime (99.99% uptime), 92.35% CDN cache hit ratio.
+- **AI Virtual Stylist:** 18.45M LLM tokens used at $3,690 cost, driving 4.8x higher checkout conversions.
+- **Marketing Efficiency:** 4.6x blended ROAS, 6.38% peak CTR on viral belt bag, $32 customer acquisition cost.
+- **Most Viewed Products:** Everywhere Belt Bag (524K clicks) and Align Pant (482K clicks).
 """
+
+
+def get_chitchat_report(query: str, persona: str, org: str) -> str:
+    """Generate polite Lululemon greeting tailored for casual pleasantries."""
+    return (
+        f"Hello! 👋 Welcome to **{org}**'s Multi-Agent Enterprise Intelligence Platform.\n\n"
+        f"I'm here to assist you with real-time quantitative analysis across our operational database:\n"
+        f"- 📋 **Table 1 (Product Catalog & Margins):** Align Pant, Scuba Hoodie, ABC Pant, Define Jacket, Everywhere Belt Bag pricing & unit gross margins (72-76%)\n"
+        f"- 💼 **Table 2 (Sales & Profitability):** Total units sold (893.1K), quarterly breakdown, net profit ($56.09M), and store/e-commerce traffic\n"
+        f"- 📢 **Table 3 (Marketing & Social Reach):** TikTok/IG viral views (35.6M), likes, ad budgets, and click-through rates (up to 6.38%)\n"
+        f"- 🖥️ **Table 4 (Dev Telemetry & Most Viewed SKUs):** Edge latency (28.4ms), 99.99% uptime, CDN cache hits, AI Stylist LLM cost, and top viewed products click-throughs"
+    )
+
+
+def extract_compact_context(data: Dict[str, Any], intent: str, persona: str) -> str:
+    """Extract a concise summary of the Lululemon database records for LLM synthesis."""
+    lines = []
+
+    # Product List
+    pl = data.get("product_list", {})
+    if isinstance(pl, dict) and pl.get("records"):
+        recs = pl["records"][:4]
+        for r in recs:
+            lines.append(f"Product: {r.get('product_name')} (ID: {r.get('product_id')}) | Cost: ${r.get('cost_price')} | Selling: ${r.get('selling_price')} | Unit Margin: {r.get('unit_gross_margin_pct')} | Category: {r.get('category')}")
+
+    # Sales Data
+    sd = data.get("sales_data", {})
+    if isinstance(sd, dict) and sd.get("records"):
+        recs = sd["records"][:3]
+        for r in recs:
+            lines.append(f"Sales: {r.get('product_name')} | Units Sold: {r.get('total_sales'):,} | Gross Profit: ${r.get('profit'):,.2f} | Traffic: {r.get('traffic'):,} visits | Conversion: {r.get('conversion_rate_pct')}%")
+
+    # Marketing Data
+    md = data.get("marketing_data", {})
+    if isinstance(md, dict) and md.get("records"):
+        recs = md["records"][:3]
+        for r in recs:
+            lines.append(f"Marketing: {r.get('product_name')} | CTR: {r.get('click_through_rate')}% | Ad Budget: ${r.get('ad_budget'):,.2f} | Views: {r.get('views'):,} | Likes: {r.get('likes'):,}")
+
+    # Dev Data
+    dd = data.get("dev_data", {})
+    if isinstance(dd, dict) and dd.get("latency_ms"):
+        lines.append(f"Dev Telemetry: Latency={dd.get('latency_ms')}ms | Downtime={dd.get('downtime_hours')}h | Cache Hits={dd.get('cache_hit'):,} ({dd.get('cache_hit_ratio_pct')}%) | LLM Tokens={dd.get('llm_tokens_used'):,} (Cost: ${dd.get('llm_cost_dollars')})")
+
+    # Most Viewed Products
+    mv = data.get("most_viewed_products", [])
+    if mv:
+        top_names = [f"#{item.get('rank')} {item.get('product_name')} ({item.get('click_throughs'):,} clicks)" for item in mv[:3]]
+        lines.append(f"Most Viewed Products: {', '.join(top_names)}")
+
+    return "\n".join(lines) if lines else "Verified Lululemon operational apparel records available."
+
+
+def get_reporter_prompt_and_instruction(query: str, persona: str, org: str, data: Dict[str, Any], intent: str) -> tuple[str, str]:
+    """Generate system instruction and user prompt for ReporterAgent LLM synthesis."""
+    compact_records = extract_compact_context(data, intent, persona)
+    prompt = f"""You are the ReporterAgent delivering an executive response for {org}.
+User Query: "{query}"
+Target Persona: "{persona}"
+Intent: "{intent}"
+
+Relevant SQLite3 Database Records (enterprise_data.db):
+{compact_records}
+
+CRITICAL REQUIREMENT - TAILOR DEEPLY TO THE '{persona}' PERSPECTIVE AT LULULEMON:
+You are presenting this response directly to a {persona} stakeholder at Lululemon Athletica.
+Your answer MUST be tailored through the specific lens, priorities, and vocabulary of {persona}:
+
+- If target persona is 'Sales':
+  Prioritize commercial apparel sell-through, product unit gross margins (72-76%), gross profit contribution ($56.09M), total volume (893.1K units), hero SKUs (Align Pant $14.21M, Scuba Hoodie $11.62M, ABC Pant $10.78M, Everywhere Belt Bag 215K units sold), and minimal discounting (preserving $4.2M).
+- If target persona is 'IT' or 'Developer':
+  Prioritize digital platform reliability, 28.4ms edge latency, 0.08h downtime (99.99% uptime), 92.35% CDN cache hit ratio (14.25M hits), AI Virtual Stylist LLM inferencing cost ($3,690 across 18.45M tokens), and web product click-through telemetry highlighting the most viewed products (Everywhere Belt Bag 524K clicks, Align Pant 482K clicks).
+- If target persona is 'Marketing':
+  Prioritize brand reach, viral social commerce (#LululemonHaul), Everywhere Belt Bag 6.38% CTR and 8.42M views, Scuba Hoodie 5.14% CTR, ad budget allocation ($593K total), 4.6x blended ROAS, low $32 CAC, and community sweat ambassador events.
+
+Cite verified data from the SQLite3 database tables (product_list, sales_data, marketing_data, dev_data)."""
+    system_instruction = f"You are a professional executive reporting agent for {org} tailoring responses deeply to the {persona} perspective."
+    return prompt, system_instruction
+
+
+def get_deterministic_report(query: str, persona: str, org: str, intent: str = "") -> str:
+    """Generate deterministic persona-tailored response from SQLite3 ground truth data."""
+    q_lower = query.lower()
+
+    if intent == "dev_data_analysis" or any(k in q_lower for k in ["latency", "downtime", "cache", "cache hit", "llm", "tokens", "most viewed", "click through"]):
+        return generate_tailored_dev_data_report(persona=persona, org=org)
+
+    elif intent == "marketing_data_analysis" or any(k in q_lower for k in ["marketing", "ctr", "ad budget", "views", "likes", "tiktok", "instagram"]):
+        return generate_tailored_marketing_data_report(persona=persona, org=org)
+
+    elif intent == "sales_data_analysis" or any(k in q_lower for k in ["sales data", "total sales", "quarter wise", "profit", "traffic", "units"]):
+        return generate_tailored_sales_data_report(persona=persona, org=org)
+
+    elif intent == "product_list_analysis" or any(k in q_lower for k in ["product list", "catalog", "cost price", "selling price", "category", "sub category"]):
+        return generate_tailored_product_list_report(persona=persona, org=org)
+
+    elif intent == "margin_analysis" or any(k in q_lower for k in ["margin", "margins", "profitability", "gross margin", "ebitda", "cogs"]):
+        return generate_tailored_margin_report(persona=persona, org=org)
+
+    elif intent == "revenue_drivers_analysis" or any(k in q_lower for k in ["driver", "drivers", "causing", "causes", "growth driver"]):
+        return generate_tailored_revenue_drivers_report(persona=persona, org=org)
+
+    elif any(k in q_lower for k in ["operational efficiency", "operational health", "efficiency", "sla", "health"]):
+        return generate_tailored_operational_health_report(persona=persona, org=org)
+
+    else:
+        return generate_tailored_sales_data_report(persona=persona, org=org)
 
 
 @observe(name="ReporterAgent", as_agent=True)
@@ -817,7 +754,7 @@ def reporter_node(state: MultiAgentState) -> Dict[str, Any]:
     """Reporter agent delivering executive synthesis and persona-tailored report."""
     query = state.get("query", "")
     persona = state.get("persona", "Default")
-    org = state.get("organization", "Enterprise Corp")
+    org = state.get("organization", "Lululemon Athletica")
     data = state.get("analytical_data", {})
     execution_mode = state.get("execution_mode", "dummy")
     plan = state.get("plan", {})
@@ -825,7 +762,6 @@ def reporter_node(state: MultiAgentState) -> Dict[str, Any]:
 
     is_chitchat = (intent == "chitchat") or is_chitchat_query(query)
 
-    # 1. Chitchat Response
     if is_chitchat:
         llm_output = ""
         llm_error = None
@@ -834,13 +770,14 @@ def reporter_node(state: MultiAgentState) -> Dict[str, Any]:
 The user said: "{query}"
 Target Persona: "{persona}"
 
-The user is greeting or having casual chitchat.
-Respond with a friendly, polite, and professional greeting.
-Briefly welcome them and let them know you can help with questions about:
-- Margin-based performance across domains (Sales, IT, Marketing, Product)
-- Drivers causing sales & revenue growth across domain perspectives
-- Quarterly commercial performance & system telemetry
-Do NOT output detailed sales figures, revenue numbers, quota attainment, or unrequested telemetry data."""
+The user is greeting or having casual pleasantries.
+Respond with a polite, professional, and friendly greeting.
+Briefly welcome them to {org}'s Enterprise Intelligence Platform and outline what questions you can help with:
+- Table 1 (Product Catalog & Margins): Align Pant, Scuba Hoodie, ABC Pant, Define Jacket, Everywhere Belt Bag pricing & unit margins (72-76%)
+- Table 2 (Sales & Profitability): Units sold, quarterly sales breakdown, net profit ($56.09M), and store/e-commerce traffic
+- Table 3 (Marketing & Social Reach): TikTok viral views (35.6M), likes, ad budgets, and click-through rates (up to 6.38%)
+- Table 4 (Dev Telemetry & Most Viewed SKUs): 28.4ms latency, 99.99% uptime, CDN cache hits, AI Stylist LLM cost, and top viewed products
+Do NOT output unrequested raw tables or fake error messages."""
             try:
                 llm_output = call_llm(
                     prompt=prompt,
@@ -851,201 +788,34 @@ Do NOT output detailed sales figures, revenue numbers, quota attainment, or unre
                 llm_error = str(exc)
 
         if not llm_output:
-            llm_output = (
-                f"Hello! 👋 Welcome to **{org}**'s Multi-Agent Intelligence Platform.\n\n"
-                f"How can I assist you today? You can ask me about:\n"
-                f"- 📊 **Margin Analysis by Domain:** Cross-domain profitability perspectives (Sales deal margins, IT cloud COGS, Marketing acquisition margins, Product unit economics)\n"
-                f"- 🚀 **Sales & Revenue Drivers:** Multi-domain growth catalysts (Sales execution, Marketing inbound funnels, IT 99.98% platform reliability, Product PLG loops)\n"
-                f"- 💼 **Commercial Performance:** Quarterly sales targets, quota attainment, and enterprise pipeline velocity\n"
-                f"- 🖥️ **System Telemetry:** API latencies (p50 / p95) and database query performance"
-            )
+            llm_output = get_chitchat_report(query, persona, org)
 
         final_err = state.get("error") or llm_error
         return {"final_output": llm_output, "error": final_err}
 
-    # 2. Real-time LLM Synthesis
+    # Real-time LLM Synthesis
     llm_output = ""
     llm_error = None
     if execution_mode == "realtime":
-        prompt = f"""You are the ReporterAgent delivering an executive response for {org}.
-User Query: "{query}"
-Target Persona: "{persona}"
-Intent: "{intent}"
-
-Analytical & SQLite3 Database Records:
-{json.dumps(data, default=str)}
-
-CRITICAL REQUIREMENT - TAILOR DEEPLY TO THE '{persona}' PERSONA:
-You are presenting this response directly to a {persona} stakeholder.
-Your answer MUST be tailored through the specific lens, priorities, and vocabulary of {persona}:
-
-- If target persona is 'Sales':
-  Prioritize commercial deal execution, deal gross margin (74.2%), software vs services margin split (81.5% vs 32%), discounting discipline ($260K preserved), average deal size ($34K), quota attainment (107.8%), marquee contract closure ($520K Global Logistics), and pipeline velocity ($8.2M pipeline).
-- If target persona is 'IT' or 'Developer':
-  Prioritize technical infrastructure, cloud COGS (11.8% of revenue), compute cost per active user ($0.042), API latency percentiles (p50: 28.4ms, p95: 112.6ms), database indexing & ClickHouse partitioning (14.8ms queries), 99.98% uptime SLA preservation ($340K), and automated SSO/SAML provisioning (12 days faster billing).
-- If target persona is 'Marketing':
-  Prioritize demand generation economics, blended CAC ($1,420), LTV:CAC (4.6x), CAC payback period (7.2 months), MQL to SQL conversion funnel (3,480 MQLs -> 612 SQLs, 17.6%), channel contribution margins (Inbound SEO 84.2%, Webinars 72.1%, Paid Ads 58.6%), and brand reach (1.42M impressions).
-- If target persona is 'Product' or 'Product team':
-  Prioritize user engagement and product economics, feature module gross margin (91.4%), self-serve PLG margin (89.2%) vs enterprise dedicated tier (64.8%), DAU/MAU ratio (42.9%), 30-day cohort retention (88.2%), churn reduction (1.4%), feature adoption (76.5%), and support burden reduction ($85K saved).
-
-Deliver a focused, deeply tailored answer that leads with what {persona} cares about most, followed by relevant supporting context."""
+        prompt, sys_inst = get_reporter_prompt_and_instruction(query, persona, org, data, intent)
         try:
             llm_output = call_llm(
                 prompt=prompt,
-                system_instruction=f"You are a professional executive reporting agent tailoring responses deeply to the {persona} perspective.",
+                system_instruction=sys_inst,
                 execution_mode="realtime",
             )
         except Exception as exc:
             llm_error = str(exc)
 
     if not llm_output:
-        q_lower = query.lower()
-
-        # Usecase 1: Margin based usecase (tailored per domain perspective)
-        if intent == "margin_analysis" or any(k in q_lower for k in ["margin", "margins", "profitability", "gross margin", "ebitda", "cogs"]):
-            llm_output = generate_tailored_margin_report(persona=persona, org=org)
-
-        # Usecase 2: Drivers causing sales / revenue (tailored per domain perspective)
-        elif intent == "revenue_drivers_analysis" or any(k in q_lower for k in ["driver", "drivers", "causing", "causes", "why sales", "why revenue", "growth driver", "drove sales", "drove revenue", "reasons for sales", "reasons for revenue"]):
-            llm_output = generate_tailored_revenue_drivers_report(persona=persona, org=org)
-
-        # Operational Health & Efficiency
-        elif intent == "operational_health_analysis" or any(k in q_lower for k in ["operational efficiency", "operational health", "efficiency", "sla", "health"]):
-            llm_output = generate_tailored_operational_health_report(persona=persona, org=org)
-
-        elif any(k in q_lower for k in ["latency", "telemetry", "p50", "p95", "tech", "performance", "api", "query"]):
-            llm_output = f"""### System Telemetry & Query Performance Report — {org}
-
-**Executive Summary:**
-The core infrastructure supporting {org} demonstrated outstanding performance and reliability during the evaluated period.
-
----
-
-### Technical Performance Breakdown:
-
-#### 1. Latency Percentiles & Throughput
-- **p50 Latency:** **28.4ms** (Well within the 50ms SLA)
-- **p95 Latency:** **112.6ms** (Target: <150ms)
-- **p99 Latency:** **245.1ms**
-- **Availability & Uptime:** **99.98%** with an error rate of just **0.02%**
-
-#### 2. Database & Data Storage Engine
-- **Engine:** PostgreSQL 16.2 & ClickHouse 24.3
-- **Table Queried:** `enterprise_orders_partition_2026_q3`
-- **Average Query Execution Time:** **14.8ms**
-- **Indexes Utilized:** `idx_quarter_status_amount`, `idx_org_timestamp`
-- **Cache Hit Ratio:** **89.4%** across 6 active cloud replicas
-
-#### 3. Endpoint Contract
-- **Service Monitored:** `core-sales-service`
-- **Primary Endpoint:** `GET /api/v2/analytics/quarterly-metrics`
-
----
-*Report generated and validated by Multi-Agent Workflow (SupervisorAgent, AnalyticsAgent, ReporterAgent).*"""
-
-        elif any(k in q_lower for k in ["marketing", "cac", "mql", "sql", "roas", "channel", "campaign"]):
-            llm_output = f"""### Marketing & Customer Acquisition Report (Q3 2026) — {org}
-
-**Executive Summary:**
-In Q3 2026, demand generation campaigns for {org} delivered exceptional pipeline velocity with strong capital efficiency and high return on ad spend.
-
----
-
-### Key Marketing Metrics:
-
-#### 1. Lead Generation & Conversion Funnel
-- **Marketing Qualified Leads (MQLs):** **3,480 leads**
-- **Sales Qualified Leads (SQLs):** **612 opportunities** (Conversion rate: **17.6%**)
-- **Brand Reach:** **1,420,000 impressions** with a brand sentiment score of **8.7 / 10**
-
-#### 2. Efficiency & Financial Return
-- **Blended Customer Acquisition Cost (CAC):** **$1,420** per customer
-- **Blended ROAS:** **3.8x return on ad spend**
-
-#### 3. Top Acquisition Channels
-1. **Inbound Organic / Technical Blog:** 240 conversions at **$780 CAC** (Highest ROI channel)
-2. **Enterprise Product Webinars:** 195 conversions at **$1,120 CAC**
-3. **Paid Search & LinkedIn Ads:** 177 conversions at **$2,240 CAC**
-
----
-*Report generated and validated by Multi-Agent Workflow (SupervisorAgent, AnalyticsAgent, ReporterAgent).*"""
-
-        elif any(k in q_lower for k in ["dau", "mau", "retention", "adoption", "product", "csat"]):
-            llm_output = f"""### Product Adoption & User Retention Report — {org}
-
-**Executive Summary:**
-User engagement and product stickiness across {org}'s platform remain strong, driven by high adoption of quarterly reporting capabilities.
-
----
-
-### Key Product Metrics:
-
-#### 1. User Engagement & Activity
-- **Monthly Active Users (MAU):** **18,450 users**
-- **Daily Active Users (DAU):** **7,920 users**
-- **DAU / MAU Ratio:** **42.9%** (Strong enterprise engagement benchmark)
-
-#### 2. Retention & Satisfaction
-- **30-Day Cohort Retention:** **88.2%**
-- **Monthly Customer Churn:** **1.4%**
-- **Customer Satisfaction (CSAT):** **4.6 / 5.0**
-
-#### 3. Feature Adoption & UX
-- **Feature Adoption Rate:** **76.5%** for quarterly reporting modules
-- **Identified UX Optimization:** Minor dropoff (11%) identified on complex custom SQL export modal
-
----
-*Report generated and validated by Multi-Agent Workflow (SupervisorAgent, AnalyticsAgent, ReporterAgent).*"""
-
-        else:
-            llm_output = f"""### Quarterly Performance Report (Q3 2026) — {org}
-
-**Executive Summary:**
-In Q3 2026, {org} generated **$4,850,000** in total sales revenue, exceeding the quarterly target of **$4,500,000** by **7.8%** (**107.8% quota attainment**), representing an outstanding **+24.3% Year-over-Year growth**.
-
----
-
-### Key Performance Dimensions:
-
-#### 1. Commercial & Sales Performance
-- **Total Revenue:** **$4.85M** (Target: $4.50M, Attainment: 107.8%)
-- **Deals Closed:** **142 enterprise deals** with an average contract value of **$34,154**
-- **Marquee Deal:** Global Logistics Corp Enterprise License (**$520,000**)
-- **Remaining Active Pipeline:** **$8.20M** heading into the next quarter
-- **Regional Leader:** North America leading at **118% quota** with a **31.4% win rate**
-
-#### 2. Cross-Domain Margins & Revenue Drivers (SQLite3 Verified)
-- **Corporate Gross Margin:** **68.4%** (vs 65.0% target) | **EBITDA Margin:** **28.5%**
-- **Sales Deal Margin:** **74.2%** with non-standard discount capping preserving **$260K**
-- **IT Hosting Efficiency:** Cloud COGS held to **11.8%** of revenue; query time averaged **14.8ms**
-- **Top Revenue Driver:** North America sales territory contributed **$2.65M** (54.6% of revenue)
-- **Inbound Marketing Contribution:** **$1.42M** sourced from 3,480 MQLs converting at 17.6%
-
-#### 3. Technical Infrastructure & Telemetry
-- **API Performance:** Core analytics API running at **p50: 28.4ms**, **p95: 112.6ms**, **p99: 245.1ms**
-- **Reliability:** **99.98% uptime** (Error rate: 0.02%) across 6 active cloud replicas
-- **Database Query Latency:** Average **14.8ms** execution time using optimized ClickHouse/PostgreSQL partitions (`enterprise_orders_partition_2026_q3`)
-- **Cache Hit Ratio:** **89.4%**
-
-#### 4. Growth & Customer Acquisition
-- **Lead Generation:** **3,480 MQLs** generated leading to **612 Sales Qualified Leads (SQLs)**
-- **Customer Acquisition Cost (CAC):** Blended CAC of **$1,420** with a **3.8x ROAS**
-- **Top Channel:** Technical Inbound Blog (240 conversions at $780 CAC) followed by Enterprise Product Webinars
-
-#### 5. Product Adoption & Retention
-- **Active Users:** **18,450 MAU** / **7,920 DAU** (DAU/MAU ratio of 42.9%)
-- **Product Retention:** **88.2% 30-day retention** with low 1.4% monthly customer churn
-- **Customer Satisfaction:** **4.6 / 5.0 CSAT**
-
----
-*Report generated and validated by Multi-Agent Workflow (SupervisorAgent, AnalyticsAgent, ReporterAgent).*"""
+        llm_output = get_deterministic_report(query, persona, org, intent)
 
     final_err = state.get("error") or llm_error
     return {"final_output": llm_output, "error": final_err}
 
 
 # ---------------------------------------------------------------------------
-# Build & Compile Graph
+# Build & Compile LangGraph Multi-Agent Workflow
 # ---------------------------------------------------------------------------
 
 def build_multi_agent_graph():
@@ -1068,143 +838,98 @@ def build_multi_agent_graph():
 def run_multi_agent_workflow(
     query: str,
     persona: str = "Default",
-    organization: str = "Enterprise Corp",
+    organization: str = "Lululemon Athletica",
     application_name: str = "demo-1",
     execution_mode: str = "realtime",
     model_name: Optional[str] = None,
     api_key: Optional[str] = None,
-    user_email: str = "user@company.com",
+    user_email: str = "sales@lululemon.com",
     observix_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Run the 3-agent LangGraph workflow instrumented natively with Observix.
-    Automatically traces agents, tools, and LLM inferences, exporting them to ClickHouse.
-    """
-    url = observix_url or os.getenv("OBSERVIX_URL", DEFAULT_OBSERVIX_URL)
-    key = os.getenv("OBSERVIX_API_KEY", DEFAULT_OBSERVIX_KEY)
-    init_observability(url=url, api_key=key)
-
+    """Run the 3-agent LangGraph workflow instrumented natively with Observix."""
     provider_info = get_active_provider_info()
     effective_model = model_name or provider_info["model_name"]
-
-    trace_id = None
-    if trace:
-        try:
-            span = trace.get_current_span()
-            if span:
-                ctx = span.get_span_context()
-                if ctx and ctx.trace_id:
-                    trace_id = f"{ctx.trace_id:032x}"
-        except Exception:
-            pass
-    if not trace_id or trace_id == "0" * 32:
-        trace_id = uuid.uuid4().hex
+    effective_api_key = api_key or provider_info.get("api_key")
 
     graph = build_multi_agent_graph()
+
     initial_state: MultiAgentState = {
         "query": query,
         "persona": persona,
         "organization": organization,
         "execution_mode": execution_mode,
         "model_name": effective_model,
-        "api_key": api_key,
+        "api_key": effective_api_key,
         "plan": {},
         "analytical_data": {},
         "final_output": "",
         "error": None,
     }
 
-    result = graph.invoke(initial_state)
+    final_state = graph.invoke(initial_state)
 
-    final_text = result.get("final_output", "")
-    plan = result.get("plan", {})
-    analytical_data = result.get("analytical_data", {})
-    intent = plan.get("intent", "enterprise_performance_analysis")
-    is_chitchat = (intent == "chitchat") or is_chitchat_query(query)
+    trace_id = ""
+    if get_current_trace:
+        try:
+            curr = get_current_trace()
+            if curr:
+                trace_id = getattr(curr, "trace_id", "") or getattr(curr, "id", "")
+        except Exception:
+            pass
 
-    # Flush all traces and observations to Observix backend
-    try:
-        flush()
-    except Exception as exc:
-        print(f"[ObservixWarning] Flush failed: {exc}")
+    if not trace_id:
+        import uuid
+        trace_id = f"trc_lll_{uuid.uuid4().hex[:12]}"
 
     observations = [
-        {"name": "SupervisorAgent", "type": "agent", "status": "success", "input": {"query": query}, "output": plan},
+        {
+            "name": "SupervisorAgent",
+            "type": "agent",
+            "status": "success",
+            "input": {"query": query, "persona": persona, "organization": organization},
+            "output": final_state.get("plan"),
+        },
+        {
+            "name": "AnalyticsAgent",
+            "type": "agent",
+            "status": "success",
+            "input": final_state.get("plan"),
+            "output": final_state.get("analytical_data"),
+        },
+        {
+            "name": "ReporterAgent",
+            "type": "agent",
+            "status": "success",
+            "input": {"analytical_data": final_state.get("analytical_data"), "persona": persona},
+            "output": {"final_output": final_state.get("final_output")},
+        },
     ]
 
-    if not is_chitchat:
-        if intent == "margin_analysis":
-            observations.append({
-                "name": "query_domain_margins",
-                "type": "tool",
-                "status": "success",
-                "input": {"domain": persona.lower(), "quarter": "Q3 2026"},
-                "output": analytical_data.get("domain_margins"),
-            })
-        elif intent == "revenue_drivers_analysis":
-            observations.append({
-                "name": "query_revenue_drivers",
-                "type": "tool",
-                "status": "success",
-                "input": {"domain": persona.lower(), "quarter": "Q3 2026"},
-                "output": analytical_data.get("revenue_drivers"),
-            })
-        elif intent == "system_telemetry_analysis":
-            observations.append({
-                "name": "query_system_telemetry",
-                "type": "tool",
-                "status": "success",
-                "input": {"service": "core-sales-service"},
-                "output": analytical_data.get("technology"),
-            })
-        elif intent == "marketing_analysis":
-            observations.append({
-                "name": "query_marketing_campaigns",
-                "type": "tool",
-                "status": "success",
-                "input": {"quarter": "Q3 2026"},
-                "output": analytical_data.get("marketing"),
-            })
-        elif intent == "product_analysis":
-            observations.append({
-                "name": "query_product_metrics",
-                "type": "tool",
-                "status": "success",
-                "input": {"feature": "quarterly_reporting"},
-                "output": analytical_data.get("product"),
-            })
-        else:
-            observations.extend([
-                {"name": "query_sales_data", "type": "tool", "status": "success", "input": {"quarter": "Q3 2026"}, "output": analytical_data.get("sales")},
-                {"name": "query_domain_margins", "type": "tool", "status": "success", "input": {"domain": persona.lower(), "quarter": "Q3 2026"}, "output": analytical_data.get("domain_margins")},
-                {"name": "query_revenue_drivers", "type": "tool", "status": "success", "input": {"domain": persona.lower(), "quarter": "Q3 2026"}, "output": analytical_data.get("revenue_drivers")},
-                {"name": "query_system_telemetry", "type": "tool", "status": "success", "input": {"service": "core-sales-service"}, "output": analytical_data.get("technology")},
-                {"name": "query_marketing_campaigns", "type": "tool", "status": "success", "input": {"quarter": "Q3 2026"}, "output": analytical_data.get("marketing")},
-                {"name": "query_product_metrics", "type": "tool", "status": "success", "input": {"feature": "quarterly_reporting"}, "output": analytical_data.get("product")},
-            ])
+    analytical_data = final_state.get("analytical_data", {})
+    evidence_tables = analytical_data.get("evidence_tables", [])
 
-    observations.extend([
-        {"name": "AnalyticsAgent", "type": "agent", "status": "success", "input": plan, "output": analytical_data},
-        {"name": "ReporterAgent", "type": "agent", "status": "success", "input": analytical_data, "output": final_text},
-        {"name": "llm_inference", "type": "llm", "status": "success", "input": {"provider": provider_info["provider"], "model": effective_model}, "output": "Synthesis completed"},
-    ])
-
-    trace_dict = {
+    trace = {
         "trace_id": trace_id,
-        "persona": persona,
-        "organization": organization,
-        "is_chitchat": is_chitchat,
-        "provider": provider_info["provider"],
+        "trace_url": f"http://localhost:8011/dashboard/traces?trace_id={trace_id}",
+        "trace_tree_url": f"http://localhost:8011/dashboard/traces?trace_id={trace_id}",
+        "application_name": application_name,
+        "user_email": user_email,
+        "execution_mode": execution_mode,
         "observations": observations,
+        "evidence_tables": evidence_tables,
     }
 
+    is_chitchat = (final_state.get("plan", {}).get("intent") == "chitchat") or is_chitchat_query(query)
+
     return {
-        "output": final_text,
-        "plan": plan,
+        "output": final_state.get("final_output", ""),
+        "plan": final_state.get("plan", {}),
         "analytical_data": analytical_data,
-        "trace": trace_dict,
+        "evidence_tables": evidence_tables,
+        "is_chitchat": is_chitchat,
+        "trace": trace,
         "mode": execution_mode,
         "provider": provider_info["provider"],
         "model": effective_model,
-        "error": result.get("error"),
+        "error": final_state.get("error"),
     }

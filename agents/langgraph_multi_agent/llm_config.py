@@ -98,10 +98,14 @@ def call_llm(
     prompt: str,
     system_instruction: str = "",
     execution_mode: str = "dummy",
+    instrumented: bool = True,
 ) -> str:
     """
     Execute real-time LLM inference using the active provider configured in .env (Azure OpenAI or Groq).
     Falls back gracefully if execution_mode is 'dummy' or if real-time provider calls fail.
+
+    When instrumented=False (e.g. for evaluators/graders), uses standard openai client without Observix tracing,
+    preventing duplicate/stray root traces in the dashboard.
     """
     if execution_mode != "realtime":
         return ""
@@ -114,19 +118,24 @@ def call_llm(
 
     # --- Call Azure OpenAI ---
     if provider == "azure":
-        try:
-            from observix.llm.openai import AzureOpenAI
-        except ImportError:
+        if instrumented:
+            try:
+                from observix.llm.openai import AzureOpenAI
+            except ImportError:
+                from openai import AzureOpenAI
+        else:
             from openai import AzureOpenAI
 
         for attempt in range(3):
             try:
-                client = AzureOpenAI(
-                    azure_endpoint=provider_info["endpoint"],
-                    api_key=provider_info["api_key"],
-                    api_version=provider_info["api_version"],
-                    name=f"azure/{provider_info['deployment']}",
-                )
+                client_kwargs = {
+                    "azure_endpoint": provider_info["endpoint"],
+                    "api_key": provider_info["api_key"],
+                    "api_version": provider_info["api_version"],
+                }
+                if instrumented:
+                    client_kwargs["name"] = f"azure/{provider_info['deployment']}"
+                client = AzureOpenAI(**client_kwargs)
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
@@ -151,19 +160,24 @@ def call_llm(
 
     # --- Call Groq ---
     elif provider == "groq":
-        try:
-            from observix.llm.openai import OpenAI
-        except ImportError:
+        if instrumented:
+            try:
+                from observix.llm.openai import OpenAI
+            except ImportError:
+                from openai import OpenAI
+        else:
             from openai import OpenAI
 
         groq_model = provider_info["deployment"].replace("groq/", "")
         for attempt in range(3):
             try:
-                client = OpenAI(
-                    base_url=provider_info["endpoint"],
-                    api_key=provider_info["api_key"],
-                    name=f"groq/{groq_model}",
-                )
+                client_kwargs = {
+                    "base_url": provider_info["endpoint"],
+                    "api_key": provider_info["api_key"],
+                }
+                if instrumented:
+                    client_kwargs["name"] = f"groq/{groq_model}"
+                client = OpenAI(**client_kwargs)
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
@@ -187,3 +201,93 @@ def call_llm(
                 raise exc
 
     return ""
+
+
+def call_llm_stream(
+    prompt: str,
+    system_instruction: str = "",
+    execution_mode: str = "dummy",
+):
+    """
+    Execute streaming LLM inference using active provider configured in .env (Azure OpenAI or Groq).
+    Yields string chunks as they arrive.
+    """
+    if execution_mode != "realtime":
+        return
+
+    provider_info = get_active_provider_info()
+    if not provider_info.get("configured"):
+        return
+
+    provider = provider_info["provider"]
+
+    if provider == "azure":
+        try:
+            from observix.llm.openai import AzureOpenAI
+        except ImportError:
+            from openai import AzureOpenAI
+
+        client = AzureOpenAI(
+            azure_endpoint=provider_info["endpoint"],
+            api_key=provider_info["api_key"],
+            api_version=provider_info["api_version"],
+            name=f"azure/{provider_info['deployment']}",
+        )
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        resp = client.chat.completions.create(
+            model=provider_info["deployment"],
+            messages=messages,
+            temperature=0.2,
+            stream=True,
+        )
+        for chunk in resp:
+            if chunk.choices and chunk.choices[0].delta:
+                content = chunk.choices[0].delta.content or ""
+                if content:
+                    yield content
+
+    elif provider == "groq":
+        try:
+            from observix.llm.openai import OpenAI
+        except ImportError:
+            from openai import OpenAI
+
+        groq_model = provider_info["deployment"].replace("groq/", "")
+        client = OpenAI(
+            base_url=provider_info["endpoint"],
+            api_key=provider_info["api_key"],
+            name=f"groq/{groq_model}",
+        )
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        resp = client.chat.completions.create(
+            model=groq_model,
+            messages=messages,
+            temperature=0.2,
+            stream=True,
+        )
+        for chunk in resp:
+            if chunk.choices and chunk.choices[0].delta:
+                content = chunk.choices[0].delta.content or ""
+                if content:
+                    yield content
+
+
+def text_stream_generator(text: str, chunk_size: int = 3, delay: float = 0.015):
+    """
+    Yield chunks of text with a tiny delay to simulate smooth live streaming.
+    """
+    words = text.split(" ")
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i : i + chunk_size])
+        if i + chunk_size < len(words):
+            chunk += " "
+        yield chunk
+        time.sleep(delay)
